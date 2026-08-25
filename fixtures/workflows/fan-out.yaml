@@ -1,0 +1,381 @@
+{
+  "type": "graph",
+  "max_active_steps": 21,
+  "retry_policy": {
+    "limit": 0,
+    "interval_sec": 1
+  },
+  "catchup_window": "",
+  "overlap_policy": "skip",
+  "labels": {
+    "cairn_plan": "fan-out",
+    "cairn_generator": "4",
+    "cairn_engine": "2.11.0",
+    "cairn_graph_sha256": "22d2007fa505c72c4c0234315a0fa7dd1f76cb9c161aadbf9631f8e1a98a9ecc",
+    "cairn_body_sha256": "a053abf7eaa6bad3f452bcd838bf3068f2ba95842b079552a94019c6ca667049"
+  },
+  "params": [
+    {
+      "CAIRN_REPOSITORY": "/srv/work/product"
+    },
+    {
+      "CAIRN_PARENT_BRANCH": "main"
+    },
+    {
+      "CAIRN_OCCASION": ""
+    }
+  ],
+  "env": [
+    {
+      "PYTHONPATH": "/opt/cairn"
+    },
+    {
+      "CAIRN_RUNS_DIR": "/srv/work/product/.git/cairn/runs"
+    }
+  ],
+  "handler_on": {
+    "exit": {
+      "name": "lock_release",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn lock release"
+    }
+  },
+  "steps": [
+    {
+      "name": "lock_acquire",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn lock acquire --plan fan-out --run-timeout 29400"
+    },
+    {
+      "name": "work_extract_the_loader_interface",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 3600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/config/loader.py` to a state where it exposes a `load(path) -> dict` helper that every reader below uses.' --model sonnet --max-budget-usd 5.0",
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn marker absent --step extract_the_loader_interface --scope once"
+        }
+      ],
+      "continue_on": {
+        "failure": true,
+        "skipped": true
+      },
+      "depends": [
+        "lock_acquire"
+      ]
+    },
+    {
+      "name": "verify_extract_the_loader_interface",
+      "id": "verify_extract_the_loader_interface",
+      "run": "python3 -m pytest tests/config/test_loader.py -q",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "continue_on": {
+        "failure": true
+      },
+      "depends": [
+        "work_extract_the_loader_interface"
+      ]
+    },
+    {
+      "name": "mark_extract_the_loader_interface",
+      "run": "python3 -m cairn marker write --step extract_the_loader_interface --scope once",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify gate --step extract_the_loader_interface --position chain --verify-exit '${verify_extract_the_loader_interface.exit_code}'"
+        }
+      ],
+      "depends": [
+        "verify_extract_the_loader_interface"
+      ]
+    },
+    {
+      "name": "commit_extract_the_loader_interface",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn commit --message 'cairn(extract_the_loader_interface): Extract the loader interface'",
+      "depends": [
+        "mark_extract_the_loader_interface"
+      ]
+    },
+    {
+      "name": "setup_keymap_reader",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn worktree setup --plan fan-out --step keymap_reader --branch step/keymap_reader",
+      "depends": [
+        "commit_extract_the_loader_interface"
+      ]
+    },
+    {
+      "name": "work_keymap_reader",
+      "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/fan-out/keymap_reader",
+      "timeout_sec": 3600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/config/keymap.py` to a state where it reads `keys.toml` through the loader and rejects a duplicate binding.' --model sonnet --max-budget-usd 5.0",
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn marker absent --step keymap_reader --scope once"
+        }
+      ],
+      "continue_on": {
+        "failure": true,
+        "skipped": true
+      },
+      "depends": [
+        "setup_keymap_reader"
+      ]
+    },
+    {
+      "name": "verify_keymap_reader",
+      "id": "verify_keymap_reader",
+      "run": "python3 -m pytest tests/config/test_keymap.py -q",
+      "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/fan-out/keymap_reader",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "continue_on": {
+        "failure": true
+      },
+      "depends": [
+        "work_keymap_reader"
+      ]
+    },
+    {
+      "name": "mark_keymap_reader",
+      "run": "python3 -m cairn marker write --step keymap_reader --scope once",
+      "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/fan-out/keymap_reader",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify gate --step keymap_reader --position branch --verify-exit '${verify_keymap_reader.exit_code}'"
+        }
+      ],
+      "depends": [
+        "verify_keymap_reader"
+      ]
+    },
+    {
+      "name": "commit_keymap_reader",
+      "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/fan-out/keymap_reader",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn commit --message 'cairn(keymap_reader): Keymap reader'",
+      "continue_on": {
+        "skipped": true
+      },
+      "depends": [
+        "mark_keymap_reader"
+      ]
+    },
+    {
+      "name": "setup_theme_reader",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn worktree setup --plan fan-out --step theme_reader --branch step/theme_reader",
+      "depends": [
+        "commit_extract_the_loader_interface"
+      ]
+    },
+    {
+      "name": "work_theme_reader",
+      "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/fan-out/theme_reader",
+      "timeout_sec": 3600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/config/theme.py` to a state where it reads `theme.toml` through the loader and validates the palette keys.' --model sonnet --max-budget-usd 5.0",
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn marker absent --step theme_reader --scope once"
+        }
+      ],
+      "continue_on": {
+        "failure": true,
+        "skipped": true
+      },
+      "depends": [
+        "setup_theme_reader"
+      ]
+    },
+    {
+      "name": "verify_theme_reader",
+      "id": "verify_theme_reader",
+      "run": "python3 -m pytest tests/config/test_theme.py -q",
+      "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/fan-out/theme_reader",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "continue_on": {
+        "failure": true
+      },
+      "depends": [
+        "work_theme_reader"
+      ]
+    },
+    {
+      "name": "mark_theme_reader",
+      "run": "python3 -m cairn marker write --step theme_reader --scope once",
+      "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/fan-out/theme_reader",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify gate --step theme_reader --position branch --verify-exit '${verify_theme_reader.exit_code}'"
+        }
+      ],
+      "depends": [
+        "verify_theme_reader"
+      ]
+    },
+    {
+      "name": "commit_theme_reader",
+      "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/fan-out/theme_reader",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn commit --message 'cairn(theme_reader): Theme reader'",
+      "continue_on": {
+        "skipped": true
+      },
+      "depends": [
+        "mark_theme_reader"
+      ]
+    },
+    {
+      "name": "join_w2",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn wave join --wave 2 --branch step/keymap_reader --branch step/theme_reader",
+      "depends": [
+        "commit_keymap_reader",
+        "commit_theme_reader"
+      ]
+    },
+    {
+      "name": "merge_w2_1",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 4200,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn merge land --slot 1 --provider claude --branch step/keymap_reader --branch step/theme_reader",
+      "depends": [
+        "join_w2"
+      ]
+    },
+    {
+      "name": "verify_merge_w2_1",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn merge verify --merge merge_w2_1 --branch step/keymap_reader --branch step/theme_reader",
+      "depends": [
+        "merge_w2_1"
+      ]
+    },
+    {
+      "name": "merge_w2_2",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 4200,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn merge land --slot 2 --provider claude --branch step/keymap_reader --branch step/theme_reader",
+      "depends": [
+        "verify_merge_w2_1"
+      ]
+    },
+    {
+      "name": "verify_merge_w2_2",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn merge verify --merge merge_w2_2 --branch step/keymap_reader --branch step/theme_reader",
+      "depends": [
+        "merge_w2_2"
+      ]
+    },
+    {
+      "name": "prune_w2",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn worktree prune --plan fan-out --step keymap_reader --step theme_reader",
+      "depends": [
+        "verify_merge_w2_2"
+      ]
+    }
+  ]
+}

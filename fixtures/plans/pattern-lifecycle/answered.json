@@ -1,0 +1,123 @@
+{
+  "cairn_graph_version": 2,
+  "plan": {
+    "slug": "pattern-lifecycle",
+    "title": "pattern-lifecycle",
+    "source": "README.md",
+    "sources": [
+      {
+        "path": "README.md",
+        "sha256": "4ed53ef13c6e615e3e2a0729bfcc97dbaf8a6c2f1d60f80c58361f085f982400"
+      },
+      {
+        "path": "review-patterns.md",
+        "sha256": "8d10f73a611caf98c65ec6585b2d98755c0bdcca2e329ea8675d7cfb88563517"
+      },
+      {
+        "path": "plan-backlog.md",
+        "sha256": "d4fcb2b513ccd1fa7202185c05b0be77ddd1012f950d8334c4b67ecd2fd55ff9"
+      },
+      {
+        "path": "enforce-patterns.md",
+        "sha256": "86d787f3f45006087979b05382b1f40268147b253c8393a3eb134f3b6ffb4af9"
+      }
+    ],
+    "default_kind": "agent.claude",
+    "id_collisions": []
+  },
+  "steps": [
+    {
+      "id": "review_patterns",
+      "slug": "review-patterns",
+      "title": "review-patterns",
+      "task": "Audit a codebase against a set of patterns using a tiered micro\u2192macro fan-out, and emit findings a human can read and a downstream skill can task out. Pin the findings artifact contract the other two units consume.",
+      "deps": [],
+      "verify": "test -d \"$HOME/.claude/skills/review-patterns\"",
+      "assertion": {
+        "outcome": "accepted",
+        "proposed": "test -d \"$HOME/.claude/skills/review-patterns\"",
+        "reason": null
+      },
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600
+    },
+    {
+      "id": "plan_backlog",
+      "slug": "plan-backlog",
+      "title": "plan-backlog",
+      "task": "Turn a body of findings into a dependency-ordered backlog epic \u2014 an epic task plus sub-tasks, sequenced into waves by their implicit dependencies and natural implementation order.",
+      "deps": [
+        {
+          "id": "review_patterns",
+          "origin": "declared",
+          "evidence": "it defines the **findings artifact contract** that the other two consume. Its output shape must be pinned before the consumers are built."
+        }
+      ],
+      "verify": null,
+      "assertion": {
+        "outcome": "declined",
+        "proposed": null,
+        "reason": "the unit name is still undecided in the document, so no path can be asserted until it is settled"
+      },
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600
+    },
+    {
+      "id": "enforce_patterns",
+      "slug": "enforce-patterns",
+      "title": "enforce-patterns",
+      "task": "Institutionalise a pattern: map it to the cheapest reliable mechanism that keeps the codebase holding to it going forward, and supersede and absorb the existing `commands/enforce-pattern.md`.",
+      "deps": [
+        {
+          "id": "review_patterns",
+          "origin": "declared",
+          "evidence": "built last so it can target the settled findings contract"
+        }
+      ],
+      "verify": "test ! -e commands/enforce-pattern.md",
+      "assertion": {
+        "outcome": "accepted",
+        "proposed": "test ! -e commands/enforce-pattern.md",
+        "reason": null
+      },
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600
+    }
+  ],
+  "omissions": [],
+  "questions": [
+    {
+      "kind": "plan_gated",
+      "step": null,
+      "question": "Is this plan green-lit? The document says no unit is on a build worklist yet and gates the build on a choice nobody has recorded.",
+      "evidence": "Active plan. No unit is on a build worklist yet \u2014 this folder fixes the decomposition, contracts, and boundaries so the build can start from `review-patterns` when chosen.",
+      "proposed": null
+    },
+    {
+      "kind": "ambiguous_dependency",
+      "step": "enforce_patterns",
+      "question": "Does enforce-patterns need plan-backlog, or only review-patterns? The document orders it last and describes it feeding plan-backlog, which is the opposite direction.",
+      "evidence": "## Sequencing coupling (when it feeds plan-backlog)",
+      "proposed": null
+    },
+    {
+      "kind": "unresolved_reference",
+      "step": "plan_backlog",
+      "question": "Under which name does this step run? The document leaves it undecided, and the name is the step's identity in every worktree, branch, and marker.",
+      "evidence": "**Names are provisional.** `plan-backlog` vs `decompose-tasks` vs `taskify`;",
+      "proposed": null
+    }
+  ]
+}

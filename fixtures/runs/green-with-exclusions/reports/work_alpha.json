@@ -1,0 +1,16 @@
+{
+  "cause": null,
+  "detail": {
+    "command": "true",
+    "process_exit": 0,
+    "shell": "/bin/sh"
+  },
+  "duration": 0.32846381806302816,
+  "follow_up_work": [],
+  "needs_user_decision": false,
+  "run_id": "fixture-greenwithexclusions",
+  "status": "done",
+  "step_id": "work_alpha",
+  "summary": "command completed",
+  "working_directory": "/private/var/folders/tc/95b1f46j1g3cjktn__xcv6z80000gn/T/tmpe6akfik7/work"
+}

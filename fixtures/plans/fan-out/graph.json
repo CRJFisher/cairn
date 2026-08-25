@@ -1,0 +1,83 @@
+{
+  "cairn_graph_version": 2,
+  "plan": {
+    "slug": "fan-out",
+    "title": "Split the settings reader",
+    "source": "README.md",
+    "sources": [
+      {
+        "path": "README.md",
+        "sha256": "f0cd1245861c6c3de5d7ca83ebc001de09dbc7da7eaa7f213c68afbfab9f90f1"
+      }
+    ],
+    "default_kind": "agent.claude",
+    "id_collisions": []
+  },
+  "steps": [
+    {
+      "id": "extract_the_loader_interface",
+      "slug": "1. Extract the loader interface",
+      "title": "Extract the loader interface",
+      "task": "Bring `src/config/loader.py` to a state where it exposes a `load(path) -> dict` helper that every reader below uses.",
+      "deps": [],
+      "verify": "python3 -m pytest tests/config/test_loader.py -q",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600,
+      "max_budget_usd": 5.0,
+      "model": "sonnet"
+    },
+    {
+      "id": "theme_reader",
+      "slug": "2. Theme reader",
+      "title": "Theme reader",
+      "task": "Bring `src/config/theme.py` to a state where it reads `theme.toml` through the loader and validates the palette keys.",
+      "deps": [
+        {
+          "id": "extract_the_loader_interface",
+          "origin": "declared",
+          "evidence": "depends only on the loader"
+        }
+      ],
+      "verify": "python3 -m pytest tests/config/test_theme.py -q",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600,
+      "max_budget_usd": 5.0,
+      "model": "sonnet"
+    },
+    {
+      "id": "keymap_reader",
+      "slug": "3. Keymap reader",
+      "title": "Keymap reader",
+      "task": "Bring `src/config/keymap.py` to a state where it reads `keys.toml` through the loader and rejects a duplicate binding.",
+      "deps": [
+        {
+          "id": "extract_the_loader_interface",
+          "origin": "declared",
+          "evidence": "depends only on the loader, and touches no file that step 2 touches"
+        }
+      ],
+      "verify": "python3 -m pytest tests/config/test_keymap.py -q",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600,
+      "max_budget_usd": 5.0,
+      "model": "sonnet"
+    }
+  ],
+  "omissions": [],
+  "questions": []
+}

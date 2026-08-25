@@ -1,0 +1,91 @@
+{
+  "cairn_graph_version": 2,
+  "plan": {
+    "slug": "mixed-kinds",
+    "title": "Nightly index rebuild",
+    "source": "README.md",
+    "sources": [
+      {
+        "path": "README.md",
+        "sha256": "aa5f15571b69ff99427ae282a2e58c2178b69e004a3c4b064e62d7162e8debbc"
+      }
+    ],
+    "default_kind": "agent.claude",
+    "id_collisions": []
+  },
+  "steps": [
+    {
+      "id": "refresh_the_corpus",
+      "slug": "1. Refresh the corpus",
+      "title": "Refresh the corpus",
+      "task": "Bring `data/corpus/` to a state where it mirrors the current contents of the source bucket.",
+      "deps": [],
+      "verify": "test -f data/corpus/MANIFEST",
+      "assertion": null,
+      "kind": "agent.claude",
+      "scope": "weekly",
+      "tools": [
+        "Bash(rm:*)"
+      ],
+      "reads": [],
+      "retries": 0,
+      "timeout": 7200,
+      "max_budget_usd": 8.0,
+      "model": "opus"
+    },
+    {
+      "id": "rebuild_the_index",
+      "slug": "2. Rebuild the index",
+      "title": "Rebuild the index",
+      "task": "Run `bin/reindex --full`.",
+      "command": "bin/reindex --full",
+      "command_type": "exec",
+      "deps": [
+        {
+          "id": "refresh_the_corpus",
+          "origin": "declared",
+          "evidence": "depends on the refreshed corpus"
+        }
+      ],
+      "verify": "test -f var/index/.rebuild-started",
+      "assertion": null,
+      "kind": "command",
+      "scope": "inputs",
+      "reads": [
+        "data/corpus/"
+      ],
+      "tools": null,
+      "retries": 0,
+      "timeout": 600,
+      "max_budget_usd": null,
+      "model": null
+    },
+    {
+      "id": "wait_for_the_index_to_settle",
+      "slug": "3. Wait for the index to settle",
+      "title": "Wait for the index to settle",
+      "task": "Poll until `bin/index-status --quiet` succeeds, at most fifteen minutes.",
+      "command": "bin/index-status --quiet",
+      "command_type": "wait_until",
+      "deps": [
+        {
+          "id": "rebuild_the_index",
+          "origin": "declared",
+          "evidence": "depends on the rebuild"
+        }
+      ],
+      "verify": "bin/index-status --quiet",
+      "assertion": null,
+      "kind": "command",
+      "scope": "run",
+      "timeout": 900,
+      "tools": null,
+      "reads": [],
+      "retries": 0,
+      "max_budget_usd": null,
+      "model": null
+    }
+  ],
+  "omissions": [],
+  "questions": []
+}

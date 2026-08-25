@@ -1,0 +1,6 @@
+{
+  "shape": "crashed",
+  "run_id": "fixture-crashed",
+  "engine": "2.11.0",
+  "why": "the orchestrator was killed mid-run, so the engine's record says `running` with no finish time and will say so forever"
+}

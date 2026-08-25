@@ -1,0 +1,89 @@
+{
+  "cairn_graph_version": 2,
+  "plan": {
+    "slug": "cycle",
+    "title": "Circular plan",
+    "source": "README.md",
+    "sources": [
+      {
+        "path": "README.md",
+        "sha256": "99e9ded6af966747e4afea18cc37b5791a5f49e327eb82b82f5c025b291acac4"
+      }
+    ],
+    "default_kind": "agent.claude",
+    "id_collisions": []
+  },
+  "steps": [
+    {
+      "id": "parser",
+      "slug": "1. Parser",
+      "title": "Parser",
+      "task": "Bring `src/parse.py` to a state where it reads the emitter's token table.",
+      "deps": [
+        {
+          "id": "emitter",
+          "origin": "declared",
+          "evidence": "depends on the emitter"
+        }
+      ],
+      "verify": "python3 -m pytest tests/test_parser.py -q",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600,
+      "max_budget_usd": 5.0,
+      "model": "sonnet"
+    },
+    {
+      "id": "checker",
+      "slug": "2. Checker",
+      "title": "Checker",
+      "task": "Bring `src/check.py` to a state where it type-checks the parser's output.",
+      "deps": [
+        {
+          "id": "parser",
+          "origin": "declared",
+          "evidence": "depends on the parser"
+        }
+      ],
+      "verify": "python3 -m pytest tests/test_checker.py -q",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600,
+      "max_budget_usd": 5.0,
+      "model": "sonnet"
+    },
+    {
+      "id": "emitter",
+      "slug": "3. Emitter",
+      "title": "Emitter",
+      "task": "Bring `src/emit.py` to a state where it emits code for the checker's output.",
+      "deps": [
+        {
+          "id": "checker",
+          "origin": "declared",
+          "evidence": "depends on the checker"
+        }
+      ],
+      "verify": "python3 -m pytest tests/test_emitter.py -q",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600,
+      "max_budget_usd": 5.0,
+      "model": "sonnet"
+    }
+  ],
+  "omissions": [],
+  "questions": []
+}

@@ -1,0 +1,201 @@
+{
+  "cairn_graph_version": 2,
+  "plan": {
+    "slug": "worktree-hydration",
+    "title": "Worktree Hydration",
+    "source": "README.md",
+    "sources": [
+      {
+        "path": "README.md",
+        "sha256": "4b46eebd223a10e4b58426d05b6a1ff0a6f6294f18d95a4f433ef646e8a34edc"
+      },
+      {
+        "path": "01-config-schema.md",
+        "sha256": "0f1b124fd82e40e75fd2d8858cd8f06d690e3ae056d28ee0b9d02e17d4dc346a"
+      },
+      {
+        "path": "02-hydration-hook.md",
+        "sha256": "7f387dad29c8b2a52ce23c2e113f32c54ba93846b47e98ac7430521b86110721"
+      },
+      {
+        "path": "03-hydrate-setup-command.md",
+        "sha256": "a8aacd852213d67c6acc0eafa491b0b1ba9975d26683123f4570054c9ca3f5b9"
+      },
+      {
+        "path": "04-global-wiring.md",
+        "sha256": "58521dce619b9078476424532469257280b6b0f24283eaaf09f71848906c3eb6"
+      },
+      {
+        "path": "05-ariadne-migration.md",
+        "sha256": "fa647e93ec1dbece1115ca73afb60471dbff48098241daf3f7848cc11e5ab439"
+      }
+    ],
+    "default_kind": "agent.claude",
+    "id_collisions": []
+  },
+  "steps": [
+    {
+      "id": "config_schema",
+      "slug": "01-config-schema",
+      "title": "Config schema",
+      "task": "Define and document the `worktree.config.json` contract that the hook reads and the command writes.",
+      "deps": [],
+      "verify": "test -e config-schema.md",
+      "assertion": {
+        "outcome": "accepted",
+        "proposed": "test -e config-schema.md",
+        "reason": null
+      },
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600
+    },
+    {
+      "id": "hydration_hook",
+      "slug": "02-hydration-hook",
+      "title": "Hydration hook (detection only)",
+      "task": "Write the generic user-level hook that detects an unhydrated worktree and warns.",
+      "deps": [
+        {
+          "id": "config_schema",
+          "origin": "declared",
+          "evidence": "Task 01 (sentinel field). Independent of the command (Task 03)."
+        }
+      ],
+      "verify": "test -x claude-config/hooks/hydrate_worktree.sh",
+      "assertion": {
+        "outcome": "accepted",
+        "proposed": "test -x claude-config/hooks/hydrate_worktree.sh",
+        "reason": null
+      },
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600
+    },
+    {
+      "id": "hydrate_setup_command",
+      "slug": "03-hydrate-setup-command",
+      "title": "`/hydrate-setup` command",
+      "task": "Write the user-invoked command that bootstraps the config if missing, then runs the hydration recipe.",
+      "deps": [
+        {
+          "id": "config_schema",
+          "origin": "declared",
+          "evidence": "Task 01 (schema). Pairs with Task 02 (the warning names this command)."
+        }
+      ],
+      "verify": "test -e claude-config/commands/hydrate-setup.md",
+      "assertion": {
+        "outcome": "accepted",
+        "proposed": "test -e claude-config/commands/hydrate-setup.md",
+        "reason": null
+      },
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600
+    },
+    {
+      "id": "global_wiring",
+      "slug": "04-global-wiring",
+      "title": "Global settings wiring",
+      "task": "Wire the generic hook into user-level settings so it applies across all repos.",
+      "deps": [
+        {
+          "id": "hydration_hook",
+          "origin": "declared",
+          "evidence": "Tasks 02, 03."
+        },
+        {
+          "id": "hydrate_setup_command",
+          "origin": "declared",
+          "evidence": "Tasks 02, 03."
+        }
+      ],
+      "verify": "grep -q hydrate_worktree.sh \"$HOME/.claude/settings.json\"",
+      "assertion": {
+        "outcome": "accepted",
+        "proposed": "grep -q hydrate_worktree.sh \"$HOME/.claude/settings.json\"",
+        "reason": null
+      },
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600
+    },
+    {
+      "id": "ariadne_migration",
+      "slug": "05-ariadne-migration",
+      "title": "Ariadne migration",
+      "task": "Move ariadne onto the generic mechanism and delete its bespoke hydration code.",
+      "deps": [
+        {
+          "id": "hydration_hook",
+          "origin": "declared",
+          "evidence": "Tasks 02, 03, 04. This is the last step \u2014 it removes a currently-working hook."
+        },
+        {
+          "id": "hydrate_setup_command",
+          "origin": "declared",
+          "evidence": "Tasks 02, 03, 04. This is the last step \u2014 it removes a currently-working hook."
+        },
+        {
+          "id": "global_wiring",
+          "origin": "declared",
+          "evidence": "Tasks 02, 03, 04. This is the last step \u2014 it removes a currently-working hook."
+        }
+      ],
+      "verify": null,
+      "assertion": {
+        "outcome": "declined",
+        "proposed": null,
+        "reason": "the end state is behavioural parity inside another repository \u2014 working pnpm exec, vitest and commit hooks \u2014 which no command in this plan tree can assert"
+      },
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600
+    }
+  ],
+  "omissions": [
+    {
+      "slug": "lockfile-fingerprinting",
+      "title": "Lockfile fingerprinting",
+      "reason": "deferred",
+      "evidence": "**Lockfile fingerprinting** \u2014 store a hash of the lockfile(s) in the sentinel; re-hydrate when it changes, handling \"entered a worktree, then dependencies changed underneath.\" Adds complexity; not needed for v1."
+    },
+    {
+      "slug": "autohydrate-always",
+      "title": "`autoHydrate: \"always\"`",
+      "reason": "deferred",
+      "evidence": "**`autoHydrate: \"always\"`** \u2014 opt-in fresh-clone hydration for the main checkout, for repos that want it. v1 targets worktrees only."
+    },
+    {
+      "slug": "build-and-review-hydration-clause",
+      "title": "The hydration clause in the `build-and-review` skill",
+      "reason": "already_done",
+      "evidence": "**Done already:** the hydration clause in the `build-and-review` skill (Step 1) is removed."
+    }
+  ],
+  "questions": [
+    {
+      "kind": "non_convergent_task",
+      "step": "global_wiring",
+      "question": "Restate this convergently: adding the hook to `~/.claude/settings.json` leaves a second identical entry on a re-run. State the end state instead \u2014 the settings file carries exactly one entry for this hook on each trigger.",
+      "evidence": "Add to `~/.claude/settings.json`:",
+      "proposed": null
+    }
+  ]
+}

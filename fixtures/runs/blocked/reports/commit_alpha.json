@@ -1,0 +1,16 @@
+{
+  "cause": null,
+  "detail": {
+    "command": "true",
+    "process_exit": 0,
+    "shell": "/bin/sh"
+  },
+  "duration": 0.7816858449950814,
+  "follow_up_work": [],
+  "needs_user_decision": false,
+  "run_id": "fixture-blocked",
+  "status": "done",
+  "step_id": "commit_alpha",
+  "summary": "command completed",
+  "working_directory": "/private/var/folders/tc/95b1f46j1g3cjktn__xcv6z80000gn/T/tmpbbk7ozxz/work"
+}

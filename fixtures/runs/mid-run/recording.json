@@ -1,0 +1,7 @@
+{
+  "shape": "mid-run",
+  "run_id": "fixture-midrun",
+  "engine": "2.11.0",
+  "why": "sampled while the engine was still appending to it, so the file is many snapshots rather than the single compacted line a finished attempt leaves. Two steps are in flight and one has not started, which is the only place the difference between a sibling not yet started and a step downstream of a halt can be seen. Read cold its recording process is gone, so it reads as a crash unless a reader supplies a live process \u2014 which is the point: liveness is a property of now, never of the file",
+  "hand_set_fields": {}
+}

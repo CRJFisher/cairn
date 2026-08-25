@@ -1,0 +1,68 @@
+{
+  "cairn_graph_version": 2,
+  "plan": {
+    "slug": "dangling-dependency",
+    "title": "Dangling reference",
+    "source": "README.md",
+    "sources": [
+      {
+        "path": "README.md",
+        "sha256": "8341b83029ebdf779722ba1f890524e3baa7adfd62aa484a8d8a4eed4fe93bbd"
+      }
+    ],
+    "default_kind": "agent.claude",
+    "id_collisions": []
+  },
+  "steps": [
+    {
+      "id": "write_the_loader",
+      "slug": "1. Write the loader",
+      "title": "Write the loader",
+      "task": "Bring `src/load.py` to a state where it reads the manifest.",
+      "deps": [],
+      "verify": "python3 -m pytest tests/test_load.py -q",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600,
+      "max_budget_usd": 5.0,
+      "model": "sonnet"
+    },
+    {
+      "id": "write_the_renderer",
+      "slug": "2. Write the renderer",
+      "title": "Write the renderer",
+      "task": "Bring `src/render.py` to a state where it renders a loaded manifest.",
+      "deps": [
+        {
+          "id": "theme_compiler",
+          "origin": "declared",
+          "evidence": "depends on the theme compiler"
+        }
+      ],
+      "verify": "python3 -m pytest tests/test_render.py -q",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600,
+      "max_budget_usd": 5.0,
+      "model": "sonnet"
+    }
+  ],
+  "omissions": [],
+  "questions": [
+    {
+      "kind": "unresolved_reference",
+      "step": "write_the_renderer",
+      "question": "What is the theme compiler? The document names it as a predecessor and defines no step for it.",
+      "evidence": "depends on the theme compiler",
+      "proposed": null
+    }
+  ]
+}

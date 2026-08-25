@@ -1,0 +1,7 @@
+{
+  "shape": "all-no-op",
+  "run_id": "fixture-allnoop",
+  "engine": "2.11.0",
+  "why": "a recovery run in which every step's marker was still fresh, so the real marker gate skipped all of them and each left a no-op report naming the run that did the work. The engine spells this exactly as it spells a clean green",
+  "hand_set_fields": {}
+}

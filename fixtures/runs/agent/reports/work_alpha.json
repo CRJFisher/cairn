@@ -1,0 +1,40 @@
+{
+  "cause": null,
+  "detail": {
+    "cost_is_notional": true,
+    "deny_patterns": [],
+    "generated_session_id": "73429f28-2eef-4f96-8a54-fe8f1469a577",
+    "model": null,
+    "permission_denials": [],
+    "permission_mode": "auto",
+    "process_exit": 0,
+    "rate_limits": [
+      {
+        "rate_limit_info": {
+          "isUsingOverage": false,
+          "rateLimitType": "seven_day",
+          "resetsAt": 0,
+          "status": "allowed",
+          "utilization": 0.0
+        },
+        "session_id": "00000000-0000-0000-0000-000000000000",
+        "type": "rate_limit_event",
+        "uuid": "00000000-0000-0000-0000-000000000000"
+      }
+    ],
+    "resets_at": null,
+    "session_id": "73429f28-2eef-4f96-8a54-fe8f1469a577",
+    "subtype": "success",
+    "terminal_reason": "completed",
+    "total_cost_usd": 0.3193395,
+    "turn_count": 5
+  },
+  "duration": 36.68695438106079,
+  "follow_up_work": [],
+  "needs_user_decision": false,
+  "run_id": "fixture-agent",
+  "status": "done",
+  "step_id": "work_alpha",
+  "summary": "Checked the working tree before changing anything: it contained only README.md (\"fixture\"), an empty .steps/ directory, and a clean git tree at the seed commit \u2014 note.txt did not exist, so no part of the end state was already satisfied. Created note.txt containing the single word \"hello\" (with a trailing newline). No other files were modified.",
+  "working_directory": "/private/var/folders/tc/95b1f46j1g3cjktn__xcv6z80000gn/T/tmp3n5lmu5t/work"
+}

@@ -1,0 +1,134 @@
+"""The engine as a subprocess, the version it must be, and the two commands that gate a run.
+
+The engine is invoked as a binary and never imported: its API is GPL-3.0 and importing it
+would put the obligation on the combined work ([research-dagu.md]).
+
+**The gate is mandatory and it is not sufficient.** `dagu validate` is strict about shape and
+`dagu dry` builds an execution plan, so between them they catch an unknown key, a bad step
+id, a missing retry interval, a dangling dependency and a cycle. Between them they still pass
+an unresolved substitution, a missing working directory, `mark_success`, and a gate command
+that cannot launch — which is why the preflight runs first and refuses on its own authority.
+
+Both run against a scratch engine home rather than the operator's. Two reasons, and the
+second is the one that matters: `dagu dry` writes, and a `--dagu-home` the engine has never
+seen is created carrying `retry_policy: {limit: 3}` **active** — arming precisely the
+scheduler hazard that re-executes every failed run on the machine ([09]).
+"""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+
+from cairn.baseconfig import BASE_CONFIG_NAME, ensure_dag_retry_disabled
+from cairn.enginehome import ENGINE_BINARY
+from cairn.workflow.preflight import Fault
+from cairn.workflow.schema import ENGINE_VERSION
+
+GATE_TIMEOUT = 120
+
+
+class EngineUnavailable(Exception):
+    """No engine to gate against — never a gate that quietly passed."""
+
+
+def engine_path(binary: str | None = None) -> str:
+    resolved = binary or shutil.which(ENGINE_BINARY)
+    if not resolved:
+        raise EngineUnavailable(
+            f"no {ENGINE_BINARY!r} on PATH. Cairn generates for {ENGINE_BINARY} "
+            f"{ENGINE_VERSION} and validates every definition against it before a run, so "
+            "there is no path that skips the gate"
+        )
+    return resolved
+
+
+def engine_version(binary: str | None = None) -> str:
+    try:
+        completed = subprocess.run(
+            (engine_path(binary), "version"),
+            capture_output=True,
+            text=True,
+            timeout=GATE_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise EngineUnavailable(f"{ENGINE_BINARY} version could not be run: {exc}") from exc
+    if completed.returncode != 0:
+        raise EngineUnavailable(
+            f"{ENGINE_BINARY} version exited {completed.returncode}: {completed.stderr.strip()}"
+        )
+    return completed.stdout.strip()
+
+
+def assert_pinned(binary: str | None = None) -> None:
+    """Halt on any engine but the pinned one, naming both versions.
+
+    The workflow format carries no version field of its own, so the pin is the installed
+    binary and nothing else — and a mismatch presents as format drift rather than as a load
+    error. Exact equality, because a range would claim knowledge about versions nothing here
+    has been measured against.
+    """
+    found = engine_version(binary)
+    if found != ENGINE_VERSION:
+        raise EngineUnavailable(
+            f"cairn generates for {ENGINE_BINARY} {ENGINE_VERSION} and the binary on this "
+            f"machine is {found}. The workflow format carries no version of its own, so a "
+            "mismatch is a format question rather than a bug in this plan: install "
+            f"{ENGINE_VERSION}, or re-pin cairn deliberately and run its suite against the "
+            "new engine"
+        )
+
+
+def _scratch_home(root: Path) -> Path:
+    home = root / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    ensure_dag_retry_disabled(home / BASE_CONFIG_NAME)
+    return home
+
+
+def gate(path: Path, *, binary: str | None = None) -> list[Fault]:
+    """Run both engine checks against a scratch data directory, and name what failed.
+
+    The path is resolved before it is handed over: a relative path the engine cannot find is
+    silently re-resolved against its own `dags` directory, so a gate given one could validate
+    a different file entirely.
+    """
+    assert_pinned(binary)
+    engine = engine_path(binary)
+    target = path.resolve()
+    faults: list[Fault] = []
+    with tempfile.TemporaryDirectory(prefix="cairn-gate-") as scratch:
+        home = _scratch_home(Path(scratch))
+        for verb in ("validate", "dry"):
+            try:
+                completed = subprocess.run(
+                    (engine, verb, "--dagu-home", str(home), str(target)),
+                    capture_output=True,
+                    text=True,
+                    timeout=GATE_TIMEOUT,
+                    check=False,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise EngineUnavailable(
+                    f"{ENGINE_BINARY} {verb} did not finish: {exc}"
+                ) from exc
+            if completed.returncode != 0:
+                message = (completed.stderr or completed.stdout).strip()
+                faults.append(
+                    Fault(f"engine_{verb}", None, message[:600] or f"exited {completed.returncode}")
+                )
+                break
+    return faults
+
+
+__all__ = [
+    "ENGINE_BINARY",
+    "EngineUnavailable",
+    "assert_pinned",
+    "engine_path",
+    "engine_version",
+    "gate",
+]

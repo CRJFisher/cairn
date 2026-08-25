@@ -1,0 +1,311 @@
+{
+  "type": "graph",
+  "max_active_steps": 17,
+  "retry_policy": {
+    "limit": 0,
+    "interval_sec": 1
+  },
+  "catchup_window": "",
+  "overlap_policy": "skip",
+  "labels": {
+    "cairn_plan": "all-roots",
+    "cairn_generator": "4",
+    "cairn_engine": "2.11.0",
+    "cairn_graph_sha256": "cc6372f3b498c2ddcfba74e8669868fa4af2f475528d58748a3eb5a9056f632b",
+    "cairn_body_sha256": "6d45fefd96a9e88cc7c65f4431b0d6a9bad031157aea7124a5ed4b7756c30aeb"
+  },
+  "params": [
+    {
+      "CAIRN_REPOSITORY": "/srv/work/product"
+    },
+    {
+      "CAIRN_PARENT_BRANCH": "main"
+    },
+    {
+      "CAIRN_OCCASION": ""
+    }
+  ],
+  "env": [
+    {
+      "PYTHONPATH": "/opt/cairn"
+    },
+    {
+      "CAIRN_RUNS_DIR": "/srv/work/product/.git/cairn/runs"
+    }
+  ],
+  "handler_on": {
+    "exit": {
+      "name": "lock_release",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn lock release"
+    }
+  },
+  "steps": [
+    {
+      "name": "lock_acquire",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn lock acquire --plan all-roots --run-timeout 24000"
+    },
+    {
+      "name": "setup_drop_the_legacy_exporter",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn worktree setup --plan all-roots --step drop_the_legacy_exporter --branch step/drop_the_legacy_exporter",
+      "depends": [
+        "lock_acquire"
+      ]
+    },
+    {
+      "name": "work_drop_the_legacy_exporter",
+      "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/all-roots/drop_the_legacy_exporter",
+      "timeout_sec": 3600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/export/` to a state where `legacy.py` is gone and nothing imports it.' --model sonnet --max-budget-usd 5.0",
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn marker absent --step drop_the_legacy_exporter --scope once"
+        }
+      ],
+      "continue_on": {
+        "failure": true,
+        "skipped": true
+      },
+      "depends": [
+        "setup_drop_the_legacy_exporter"
+      ]
+    },
+    {
+      "name": "verify_drop_the_legacy_exporter",
+      "id": "verify_drop_the_legacy_exporter",
+      "run": "python3 -m pytest tests/export -q",
+      "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/all-roots/drop_the_legacy_exporter",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "continue_on": {
+        "failure": true
+      },
+      "depends": [
+        "work_drop_the_legacy_exporter"
+      ]
+    },
+    {
+      "name": "mark_drop_the_legacy_exporter",
+      "run": "python3 -m cairn marker write --step drop_the_legacy_exporter --scope once",
+      "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/all-roots/drop_the_legacy_exporter",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify gate --step drop_the_legacy_exporter --position branch --verify-exit '${verify_drop_the_legacy_exporter.exit_code}'"
+        }
+      ],
+      "depends": [
+        "verify_drop_the_legacy_exporter"
+      ]
+    },
+    {
+      "name": "commit_drop_the_legacy_exporter",
+      "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/all-roots/drop_the_legacy_exporter",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn commit --message 'cairn(drop_the_legacy_exporter): Drop the legacy exporter'",
+      "continue_on": {
+        "skipped": true
+      },
+      "depends": [
+        "mark_drop_the_legacy_exporter"
+      ]
+    },
+    {
+      "name": "setup_tighten_the_log_format",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn worktree setup --plan all-roots --step tighten_the_log_format --branch step/tighten_the_log_format",
+      "depends": [
+        "lock_acquire"
+      ]
+    },
+    {
+      "name": "work_tighten_the_log_format",
+      "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/all-roots/tighten_the_log_format",
+      "timeout_sec": 3600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/logging/format.py` to a state where every record carries a request id.' --model sonnet --max-budget-usd 5.0",
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn marker absent --step tighten_the_log_format --scope once"
+        }
+      ],
+      "continue_on": {
+        "failure": true,
+        "skipped": true
+      },
+      "depends": [
+        "setup_tighten_the_log_format"
+      ]
+    },
+    {
+      "name": "verify_tighten_the_log_format",
+      "id": "verify_tighten_the_log_format",
+      "run": "python3 -m pytest tests/test_logging.py -q",
+      "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/all-roots/tighten_the_log_format",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "continue_on": {
+        "failure": true
+      },
+      "depends": [
+        "work_tighten_the_log_format"
+      ]
+    },
+    {
+      "name": "mark_tighten_the_log_format",
+      "run": "python3 -m cairn marker write --step tighten_the_log_format --scope once",
+      "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/all-roots/tighten_the_log_format",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify gate --step tighten_the_log_format --position branch --verify-exit '${verify_tighten_the_log_format.exit_code}'"
+        }
+      ],
+      "depends": [
+        "verify_tighten_the_log_format"
+      ]
+    },
+    {
+      "name": "commit_tighten_the_log_format",
+      "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/all-roots/tighten_the_log_format",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn commit --message 'cairn(tighten_the_log_format): Tighten the log format'",
+      "continue_on": {
+        "skipped": true
+      },
+      "depends": [
+        "mark_tighten_the_log_format"
+      ]
+    },
+    {
+      "name": "join_w1",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn wave join --wave 1 --branch step/drop_the_legacy_exporter --branch step/tighten_the_log_format",
+      "depends": [
+        "commit_drop_the_legacy_exporter",
+        "commit_tighten_the_log_format"
+      ]
+    },
+    {
+      "name": "merge_w1_1",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 4200,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn merge land --slot 1 --provider claude --branch step/drop_the_legacy_exporter --branch step/tighten_the_log_format",
+      "depends": [
+        "join_w1"
+      ]
+    },
+    {
+      "name": "verify_merge_w1_1",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn merge verify --merge merge_w1_1 --branch step/drop_the_legacy_exporter --branch step/tighten_the_log_format",
+      "depends": [
+        "merge_w1_1"
+      ]
+    },
+    {
+      "name": "merge_w1_2",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 4200,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn merge land --slot 2 --provider claude --branch step/drop_the_legacy_exporter --branch step/tighten_the_log_format",
+      "depends": [
+        "verify_merge_w1_1"
+      ]
+    },
+    {
+      "name": "verify_merge_w1_2",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn merge verify --merge merge_w1_2 --branch step/drop_the_legacy_exporter --branch step/tighten_the_log_format",
+      "depends": [
+        "merge_w1_2"
+      ]
+    },
+    {
+      "name": "prune_w1",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn worktree prune --plan all-roots --step drop_the_legacy_exporter --step tighten_the_log_format",
+      "depends": [
+        "verify_merge_w1_2"
+      ]
+    }
+  ]
+}

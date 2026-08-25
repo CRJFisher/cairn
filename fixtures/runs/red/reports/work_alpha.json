@@ -1,0 +1,16 @@
+{
+  "cause": "command_failed",
+  "detail": {
+    "command": "false",
+    "process_exit": 1,
+    "shell": "/bin/sh"
+  },
+  "duration": 1.431184319080785,
+  "follow_up_work": [],
+  "needs_user_decision": false,
+  "run_id": "fixture-red",
+  "status": "failed",
+  "step_id": "work_alpha",
+  "summary": "command exited 1",
+  "working_directory": "/private/var/folders/tc/95b1f46j1g3cjktn__xcv6z80000gn/T/tmpocv2pbxk/work"
+}

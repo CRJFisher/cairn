@@ -1,0 +1,60 @@
+{
+  "cairn_graph_version": 2,
+  "plan": {
+    "slug": "unjustified-edge",
+    "title": "Two unrelated fixes",
+    "source": "README.md",
+    "sources": [
+      {
+        "path": "README.md",
+        "sha256": "62fa2d543bcef741d48242ffbb6ae447f792e73aefdb7d3999c754ba6cdf88b4"
+      }
+    ],
+    "default_kind": "agent.claude",
+    "id_collisions": []
+  },
+  "steps": [
+    {
+      "id": "fix_the_date_parser",
+      "slug": "1. Fix the date parser",
+      "title": "Fix the date parser",
+      "task": "Bring `src/dates.py` to a state where a two-digit year is rejected rather than guessed.",
+      "deps": [],
+      "verify": "python3 -m pytest tests/test_dates.py -q",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600,
+      "max_budget_usd": 5.0,
+      "model": "sonnet"
+    },
+    {
+      "id": "fix_the_csv_writer",
+      "slug": "2. Fix the CSV writer",
+      "title": "Fix the CSV writer",
+      "task": "Bring `src/csvout.py` to a state where an embedded newline is quoted.",
+      "deps": [
+        {
+          "id": "fix_the_date_parser",
+          "origin": "derived",
+          "evidence": ""
+        }
+      ],
+      "verify": "python3 -m pytest tests/test_csvout.py -q",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600,
+      "max_budget_usd": 5.0,
+      "model": "sonnet"
+    }
+  ],
+  "omissions": [],
+  "questions": []
+}

@@ -1,0 +1,20 @@
+{
+  "cause": null,
+  "detail": {
+    "commit": "a70031d7c6248e32508d0ba4afe1e2b9024d40f0",
+    "diffstat": {
+      "deletions": 0,
+      "files": 1,
+      "insertions": 1
+    },
+    "working_directory": "/private/var/folders/tc/95b1f46j1g3cjktn__xcv6z80000gn/T/tmp3n5lmu5t/work"
+  },
+  "duration": 0.1346264509484172,
+  "follow_up_work": [],
+  "needs_user_decision": false,
+  "run_id": "fixture-agent",
+  "status": "done",
+  "step_id": "commit_alpha",
+  "summary": "committed a70031d7c624",
+  "working_directory": "/private/var/folders/tc/95b1f46j1g3cjktn__xcv6z80000gn/T/tmp3n5lmu5t/work"
+}

@@ -1,0 +1,270 @@
+{
+  "type": "graph",
+  "max_active_steps": 13,
+  "retry_policy": {
+    "limit": 0,
+    "interval_sec": 1
+  },
+  "catchup_window": "",
+  "overlap_policy": "skip",
+  "labels": {
+    "cairn_plan": "linear-chain",
+    "cairn_generator": "4",
+    "cairn_engine": "2.11.0",
+    "cairn_graph_sha256": "e3d65104c52813021d28bd72bdf4067ac79e2b61e575c0982a5f94147997b9ce",
+    "cairn_body_sha256": "9752b8de6852010dc719f2b838181b43e88c1ee4076127d6b3c409e4ef64d3e7"
+  },
+  "params": [
+    {
+      "CAIRN_REPOSITORY": "/srv/work/product"
+    },
+    {
+      "CAIRN_PARENT_BRANCH": "main"
+    },
+    {
+      "CAIRN_OCCASION": ""
+    }
+  ],
+  "env": [
+    {
+      "PYTHONPATH": "/opt/cairn"
+    },
+    {
+      "CAIRN_RUNS_DIR": "/srv/work/product/.git/cairn/runs"
+    }
+  ],
+  "handler_on": {
+    "exit": {
+      "name": "lock_release",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn lock release"
+    }
+  },
+  "steps": [
+    {
+      "name": "lock_acquire",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn lock acquire --plan linear-chain --run-timeout 17400"
+    },
+    {
+      "name": "work_bucket_store",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 3600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/limiter/store.py` to a state where it holds a `TokenBucket` dataclass and an in-memory store keyed by client id, with refill computed from elapsed time rather than a background timer.' --model sonnet --max-budget-usd 5.0",
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn marker absent --step bucket_store --scope once"
+        }
+      ],
+      "continue_on": {
+        "failure": true,
+        "skipped": true
+      },
+      "depends": [
+        "lock_acquire"
+      ]
+    },
+    {
+      "name": "verify_bucket_store",
+      "id": "verify_bucket_store",
+      "run": "python3 -m pytest tests/test_store.py -q",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "continue_on": {
+        "failure": true
+      },
+      "depends": [
+        "work_bucket_store"
+      ]
+    },
+    {
+      "name": "mark_bucket_store",
+      "run": "python3 -m cairn marker write --step bucket_store --scope once",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify gate --step bucket_store --position chain --verify-exit '${verify_bucket_store.exit_code}'"
+        }
+      ],
+      "depends": [
+        "verify_bucket_store"
+      ]
+    },
+    {
+      "name": "commit_bucket_store",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn commit --message 'cairn(bucket_store): Bucket store'",
+      "depends": [
+        "mark_bucket_store"
+      ]
+    },
+    {
+      "name": "work_middleware",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 3600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/limiter/middleware.py` to a state where every inbound request consumes one token and a depleted bucket returns 429 with a `Retry-After` header.' --model sonnet --max-budget-usd 5.0",
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn marker absent --step middleware --scope once"
+        }
+      ],
+      "continue_on": {
+        "failure": true,
+        "skipped": true
+      },
+      "depends": [
+        "commit_bucket_store"
+      ]
+    },
+    {
+      "name": "verify_middleware",
+      "id": "verify_middleware",
+      "run": "python3 -m pytest tests/test_middleware.py -q",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "continue_on": {
+        "failure": true
+      },
+      "depends": [
+        "work_middleware"
+      ]
+    },
+    {
+      "name": "mark_middleware",
+      "run": "python3 -m cairn marker write --step middleware --scope once",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify gate --step middleware --position chain --verify-exit '${verify_middleware.exit_code}'"
+        }
+      ],
+      "depends": [
+        "verify_middleware"
+      ]
+    },
+    {
+      "name": "commit_middleware",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn commit --message 'cairn(middleware): Middleware'",
+      "depends": [
+        "mark_middleware"
+      ]
+    },
+    {
+      "name": "work_gateway_wiring",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 3600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/gateway/app.py` to a state where the middleware is installed ahead of routing and its limits come from `config/limits.toml`.' --model sonnet --max-budget-usd 5.0",
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn marker absent --step gateway_wiring --scope once"
+        }
+      ],
+      "continue_on": {
+        "failure": true,
+        "skipped": true
+      },
+      "depends": [
+        "commit_middleware"
+      ]
+    },
+    {
+      "name": "verify_gateway_wiring",
+      "id": "verify_gateway_wiring",
+      "run": "python3 -m pytest tests/test_gateway.py -q",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "continue_on": {
+        "failure": true
+      },
+      "depends": [
+        "work_gateway_wiring"
+      ]
+    },
+    {
+      "name": "mark_gateway_wiring",
+      "run": "python3 -m cairn marker write --step gateway_wiring --scope once",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify gate --step gateway_wiring --position chain --verify-exit '${verify_gateway_wiring.exit_code}'"
+        }
+      ],
+      "depends": [
+        "verify_gateway_wiring"
+      ]
+    },
+    {
+      "name": "commit_gateway_wiring",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn commit --message 'cairn(gateway_wiring): Gateway wiring'",
+      "depends": [
+        "mark_gateway_wiring"
+      ]
+    }
+  ]
+}

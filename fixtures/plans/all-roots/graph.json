@@ -1,0 +1,62 @@
+{
+  "cairn_graph_version": 2,
+  "plan": {
+    "slug": "all-roots",
+    "title": "Two independent cleanups",
+    "source": "README.md",
+    "sources": [
+      {
+        "path": "README.md",
+        "sha256": "9c8aad170ddfdf87800ed3696ecf23f4688fe96b040de351d29463f6f4d9d1c4"
+      }
+    ],
+    "default_kind": "agent.claude",
+    "id_collisions": []
+  },
+  "steps": [
+    {
+      "id": "drop_the_legacy_exporter",
+      "slug": "1. Drop the legacy exporter",
+      "title": "Drop the legacy exporter",
+      "task": "Bring `src/export/` to a state where `legacy.py` is gone and nothing imports it.",
+      "deps": [],
+      "verify": "python3 -m pytest tests/export -q",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600,
+      "max_budget_usd": 5.0,
+      "model": "sonnet"
+    },
+    {
+      "id": "tighten_the_log_format",
+      "slug": "2. Tighten the log format",
+      "title": "Tighten the log format",
+      "task": "Bring `src/logging/format.py` to a state where every record carries a request id.",
+      "deps": [],
+      "verify": "python3 -m pytest tests/test_logging.py -q",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600,
+      "max_budget_usd": 5.0,
+      "model": "sonnet"
+    }
+  ],
+  "omissions": [],
+  "questions": [
+    {
+      "kind": "unjustified_edge",
+      "step": "tighten_the_log_format",
+      "question": "Does the log format work need the exporter gone first? Document order is not dependency order, so the edge was dropped rather than kept.",
+      "evidence": "The second is listed after the first because it was noticed second, not because it needs it.",
+      "proposed": null
+    }
+  ]
+}

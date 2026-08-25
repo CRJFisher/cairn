@@ -1,0 +1,69 @@
+{
+  "cairn_graph_version": 2,
+  "plan": {
+    "slug": "non-convergent",
+    "title": "Changelog and audit trail",
+    "source": "README.md",
+    "sources": [
+      {
+        "path": "README.md",
+        "sha256": "f151e7c2c2d32b5ec52f1aa120db135d07ea4fbfc5e662d57a21528c8af71488"
+      }
+    ],
+    "default_kind": "agent.claude",
+    "id_collisions": []
+  },
+  "steps": [
+    {
+      "id": "append_a_section_to_changelog_md",
+      "slug": "1. Append a section to `CHANGELOG.md`",
+      "title": "Append a section to `CHANGELOG.md`",
+      "task": "Append a section to `CHANGELOG.md` describing this release.",
+      "deps": [],
+      "verify": "grep -q \"## Unreleased\" CHANGELOG.md",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600,
+      "max_budget_usd": 5.0,
+      "model": "sonnet"
+    },
+    {
+      "id": "create_a_new_audit_log_file",
+      "slug": "2. Create a new audit log file",
+      "title": "Create a new audit log file",
+      "task": "Create a new audit log file under `var/audit/` and add an entry recording the release.",
+      "deps": [],
+      "verify": "test -d var/audit",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600,
+      "max_budget_usd": 5.0,
+      "model": "sonnet"
+    }
+  ],
+  "omissions": [],
+  "questions": [
+    {
+      "kind": "non_convergent_task",
+      "step": "append_a_section_to_changelog_md",
+      "question": "Restate this convergently: \"append a section\" adds a second copy of the section on a re-run. State the end state instead \u2014 `CHANGELOG.md` carries exactly one section for this release.",
+      "evidence": "**Append a section to `CHANGELOG.md`** describing this release.",
+      "proposed": null
+    },
+    {
+      "kind": "non_convergent_task",
+      "step": "create_a_new_audit_log_file",
+      "question": "Restate this convergently: \"create a new audit log file\" leaves a second file on a re-run. State the end state instead \u2014 one audit log exists under `var/audit/` carrying one entry for this release.",
+      "evidence": "**Create a new audit log file** under `var/audit/` and add an entry recording the release.",
+      "proposed": null
+    }
+  ]
+}

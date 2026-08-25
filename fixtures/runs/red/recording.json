@@ -1,0 +1,6 @@
+{
+  "shape": "red",
+  "run_id": "fixture-red",
+  "engine": "2.11.0",
+  "why": "a step fails, and everything behind it never runs"
+}

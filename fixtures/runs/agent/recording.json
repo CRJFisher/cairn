@@ -1,0 +1,11 @@
+{
+  "shape": "agent",
+  "run_id": "fixture-agent",
+  "engine": "2.11.0",
+  "why": "one real paid agent step, so the corpus carries a step's receipts \u2014 its cost, its session identity, its turn count and its model \u2014 rather than only their absence. Everything else here is a command step, which can never populate them",
+  "hand_set_fields": {
+    "work_alpha": {
+      "rate_limits": "redacted"
+    }
+  }
+}

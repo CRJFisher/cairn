@@ -1,0 +1,6 @@
+{
+  "shape": "green-with-exclusions",
+  "run_id": "fixture-greenwithexclusions",
+  "engine": "2.11.0",
+  "why": "the engine reports a clean Succeeded with exit 0 over an excluded step, because every node either succeeded or skipped and none failed. This is I5's regression fixture and the reason the verdict is derived by walking nodes"
+}

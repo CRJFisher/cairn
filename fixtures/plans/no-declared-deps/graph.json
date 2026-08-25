@@ -1,0 +1,111 @@
+{
+  "cairn_graph_version": 2,
+  "plan": {
+    "slug": "no-declared-deps",
+    "title": "Release checklist",
+    "source": "README.md",
+    "sources": [
+      {
+        "path": "README.md",
+        "sha256": "b5678b4328b88e201e6c430dcb04fce8c53227806e4109fc293dffb577a68b34"
+      }
+    ],
+    "default_kind": "agent.claude",
+    "id_collisions": []
+  },
+  "steps": [
+    {
+      "id": "bump_the_version",
+      "slug": "1. Bump the version",
+      "title": "Bump the version",
+      "task": "Bring `pyproject.toml` to a state where its version field reads the release number.",
+      "deps": [],
+      "verify": "grep -q \"version = \\\"2.4.0\\\"\" pyproject.toml",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600,
+      "max_budget_usd": 5.0,
+      "model": "sonnet"
+    },
+    {
+      "id": "regenerate_the_changelog",
+      "slug": "2. Regenerate the changelog",
+      "title": "Regenerate the changelog",
+      "task": "Regenerate `CHANGELOG.md` from the commits since the last tag, under a heading for the version in `pyproject.toml`.",
+      "deps": [
+        {
+          "id": "bump_the_version",
+          "origin": "derived",
+          "evidence": "under a heading for the version in `pyproject.toml`"
+        }
+      ],
+      "verify": "grep -q \"## 2.4.0\" CHANGELOG.md",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600,
+      "max_budget_usd": 5.0,
+      "model": "sonnet"
+    },
+    {
+      "id": "build_the_wheel",
+      "slug": "3. Build the wheel",
+      "title": "Build the wheel",
+      "task": "Build the wheel into `dist/`, named for the version in `pyproject.toml`.",
+      "deps": [
+        {
+          "id": "bump_the_version",
+          "origin": "derived",
+          "evidence": "named for the version in `pyproject.toml`"
+        }
+      ],
+      "verify": "test -f dist/tool-2.4.0-py3-none-any.whl",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600,
+      "max_budget_usd": 5.0,
+      "model": "sonnet"
+    },
+    {
+      "id": "publish_the_release_notes",
+      "slug": "4. Publish the release notes",
+      "title": "Publish the release notes",
+      "task": "Publish the release notes to the docs site from `CHANGELOG.md`, attaching the wheel from `dist/`.",
+      "deps": [
+        {
+          "id": "regenerate_the_changelog",
+          "origin": "derived",
+          "evidence": "to the docs site from `CHANGELOG.md`"
+        },
+        {
+          "id": "build_the_wheel",
+          "origin": "derived",
+          "evidence": "attaching the wheel from `dist/`"
+        }
+      ],
+      "verify": "curl -sf https://docs.example.com/releases/2.4.0",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600,
+      "max_budget_usd": 5.0,
+      "model": "sonnet"
+    }
+  ],
+  "omissions": [],
+  "questions": []
+}

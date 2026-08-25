@@ -1,0 +1,130 @@
+{
+  "type": "graph",
+  "max_active_steps": 5,
+  "retry_policy": {
+    "limit": 0,
+    "interval_sec": 1
+  },
+  "catchup_window": "",
+  "overlap_policy": "skip",
+  "labels": {
+    "cairn_plan": "single-step",
+    "cairn_generator": "4",
+    "cairn_engine": "2.11.0",
+    "cairn_graph_sha256": "2de07876c148d4e7548342ce0306d3c9f2412d5f20ce131def8dcda8e9fd7cdb",
+    "cairn_body_sha256": "a74cd9554ceb45182ccda5ba464c2a1d07a37ac9848173e88b189220f21ea2d5"
+  },
+  "params": [
+    {
+      "CAIRN_REPOSITORY": "/srv/work/product"
+    },
+    {
+      "CAIRN_PARENT_BRANCH": "main"
+    },
+    {
+      "CAIRN_OCCASION": ""
+    }
+  ],
+  "env": [
+    {
+      "PYTHONPATH": "/opt/cairn"
+    },
+    {
+      "CAIRN_RUNS_DIR": "/srv/work/product/.git/cairn/runs"
+    }
+  ],
+  "handler_on": {
+    "exit": {
+      "name": "lock_release",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn lock release"
+    }
+  },
+  "steps": [
+    {
+      "name": "lock_acquire",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn lock acquire --plan single-step --run-timeout 6600"
+    },
+    {
+      "name": "work_manifest_writer",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 3600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/release/manifest.py` to a state where it writes `dist/manifest.json` holding every artefact'\"'\"'s name, size and sha256.' --model sonnet --max-budget-usd 5.0",
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn marker absent --step manifest_writer --scope once"
+        }
+      ],
+      "continue_on": {
+        "failure": true,
+        "skipped": true
+      },
+      "depends": [
+        "lock_acquire"
+      ]
+    },
+    {
+      "name": "verify_manifest_writer",
+      "id": "verify_manifest_writer",
+      "run": "python3 -m pytest tests/test_manifest.py -q",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "continue_on": {
+        "failure": true
+      },
+      "depends": [
+        "work_manifest_writer"
+      ]
+    },
+    {
+      "name": "mark_manifest_writer",
+      "run": "python3 -m cairn marker write --step manifest_writer --scope once",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify gate --step manifest_writer --position chain --verify-exit '${verify_manifest_writer.exit_code}'"
+        }
+      ],
+      "depends": [
+        "verify_manifest_writer"
+      ]
+    },
+    {
+      "name": "commit_manifest_writer",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn commit --message 'cairn(manifest_writer): Manifest writer'",
+      "depends": [
+        "mark_manifest_writer"
+      ]
+    }
+  ]
+}

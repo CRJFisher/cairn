@@ -1,0 +1,521 @@
+{
+  "type": "graph",
+  "max_active_steps": 29,
+  "retry_policy": {
+    "limit": 0,
+    "interval_sec": 1
+  },
+  "catchup_window": "",
+  "overlap_policy": "skip",
+  "labels": {
+    "cairn_plan": "multi-wave",
+    "cairn_generator": "4",
+    "cairn_engine": "2.11.0",
+    "cairn_graph_sha256": "221a5b31f57a7f14a327b478a0b3912ef489418538aea036fc338a63fadb65d3",
+    "cairn_body_sha256": "6feb824e388b94457fe116678736814439b04dc828cd42f30746467695653397"
+  },
+  "params": [
+    {
+      "CAIRN_REPOSITORY": "/srv/work/product"
+    },
+    {
+      "CAIRN_PARENT_BRANCH": "main"
+    },
+    {
+      "CAIRN_OCCASION": ""
+    }
+  ],
+  "env": [
+    {
+      "PYTHONPATH": "/opt/cairn"
+    },
+    {
+      "CAIRN_RUNS_DIR": "/srv/work/product/.git/cairn/runs"
+    }
+  ],
+  "handler_on": {
+    "exit": {
+      "name": "lock_release",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn lock release"
+    }
+  },
+  "steps": [
+    {
+      "name": "lock_acquire",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn lock acquire --plan multi-wave --run-timeout 40200"
+    },
+    {
+      "name": "work_export_schema",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 3600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `schema/export.json` to a state where it pins the export envelope: workspace id, revision, and an ordered item list.' --model sonnet --max-budget-usd 5.0",
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn marker absent --step export_schema --scope once"
+        }
+      ],
+      "continue_on": {
+        "failure": true,
+        "skipped": true
+      },
+      "depends": [
+        "lock_acquire"
+      ]
+    },
+    {
+      "name": "verify_export_schema",
+      "id": "verify_export_schema",
+      "run": "python3 -m jsonschema --instance fixtures/export.json schema/export.json",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "continue_on": {
+        "failure": true
+      },
+      "depends": [
+        "work_export_schema"
+      ]
+    },
+    {
+      "name": "mark_export_schema",
+      "run": "python3 -m cairn marker write --step export_schema --scope once",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify gate --step export_schema --position chain --verify-exit '${verify_export_schema.exit_code}'"
+        }
+      ],
+      "depends": [
+        "verify_export_schema"
+      ]
+    },
+    {
+      "name": "commit_export_schema",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn commit --message 'cairn(export_schema): Export schema'",
+      "depends": [
+        "mark_export_schema"
+      ]
+    },
+    {
+      "name": "work_writer",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 3600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/export/writer.py` to a state where it emits an envelope conforming to the schema for any workspace on disk.' --model sonnet --max-budget-usd 5.0",
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn marker absent --step writer --scope once"
+        }
+      ],
+      "continue_on": {
+        "failure": true,
+        "skipped": true
+      },
+      "depends": [
+        "commit_export_schema"
+      ]
+    },
+    {
+      "name": "verify_writer",
+      "id": "verify_writer",
+      "run": "python3 -m pytest tests/export/test_writer.py -q",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "continue_on": {
+        "failure": true
+      },
+      "depends": [
+        "work_writer"
+      ]
+    },
+    {
+      "name": "mark_writer",
+      "run": "python3 -m cairn marker write --step writer --scope once",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify gate --step writer --position chain --verify-exit '${verify_writer.exit_code}'"
+        }
+      ],
+      "depends": [
+        "verify_writer"
+      ]
+    },
+    {
+      "name": "commit_writer",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn commit --message 'cairn(writer): Writer'",
+      "depends": [
+        "mark_writer"
+      ]
+    },
+    {
+      "name": "setup_reader",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn worktree setup --plan multi-wave --step reader --branch step/reader",
+      "depends": [
+        "commit_writer"
+      ]
+    },
+    {
+      "name": "work_reader",
+      "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/multi-wave/reader",
+      "timeout_sec": 3600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/export/reader.py` to a state where it parses an envelope back into a workspace.' --model sonnet --max-budget-usd 5.0",
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn marker absent --step reader --scope once"
+        }
+      ],
+      "continue_on": {
+        "failure": true,
+        "skipped": true
+      },
+      "depends": [
+        "setup_reader"
+      ]
+    },
+    {
+      "name": "verify_reader",
+      "id": "verify_reader",
+      "run": "python3 -m pytest tests/export/test_reader.py -q",
+      "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/multi-wave/reader",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "continue_on": {
+        "failure": true
+      },
+      "depends": [
+        "work_reader"
+      ]
+    },
+    {
+      "name": "mark_reader",
+      "run": "python3 -m cairn marker write --step reader --scope once",
+      "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/multi-wave/reader",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify gate --step reader --position branch --verify-exit '${verify_reader.exit_code}'"
+        }
+      ],
+      "depends": [
+        "verify_reader"
+      ]
+    },
+    {
+      "name": "commit_reader",
+      "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/multi-wave/reader",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn commit --message 'cairn(reader): Reader'",
+      "continue_on": {
+        "skipped": true
+      },
+      "depends": [
+        "mark_reader"
+      ]
+    },
+    {
+      "name": "setup_zip_packer",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn worktree setup --plan multi-wave --step zip_packer --branch step/zip_packer",
+      "depends": [
+        "commit_writer"
+      ]
+    },
+    {
+      "name": "work_zip_packer",
+      "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/multi-wave/zip_packer",
+      "timeout_sec": 3600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/export/pack.py` to a state where an export directory becomes one `.wsx` archive with a manifest at its root.' --model sonnet --max-budget-usd 5.0",
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn marker absent --step zip_packer --scope once"
+        }
+      ],
+      "continue_on": {
+        "failure": true,
+        "skipped": true
+      },
+      "depends": [
+        "setup_zip_packer"
+      ]
+    },
+    {
+      "name": "verify_zip_packer",
+      "id": "verify_zip_packer",
+      "run": "python3 -m pytest tests/export/test_pack.py -q",
+      "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/multi-wave/zip_packer",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "continue_on": {
+        "failure": true
+      },
+      "depends": [
+        "work_zip_packer"
+      ]
+    },
+    {
+      "name": "mark_zip_packer",
+      "run": "python3 -m cairn marker write --step zip_packer --scope once",
+      "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/multi-wave/zip_packer",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify gate --step zip_packer --position branch --verify-exit '${verify_zip_packer.exit_code}'"
+        }
+      ],
+      "depends": [
+        "verify_zip_packer"
+      ]
+    },
+    {
+      "name": "commit_zip_packer",
+      "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/multi-wave/zip_packer",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn commit --message 'cairn(zip_packer): Zip packer'",
+      "continue_on": {
+        "skipped": true
+      },
+      "depends": [
+        "mark_zip_packer"
+      ]
+    },
+    {
+      "name": "join_w3",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn wave join --wave 3 --branch step/reader --branch step/zip_packer",
+      "depends": [
+        "commit_reader",
+        "commit_zip_packer"
+      ]
+    },
+    {
+      "name": "merge_w3_1",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 4200,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn merge land --slot 1 --provider claude --branch step/reader --branch step/zip_packer",
+      "depends": [
+        "join_w3"
+      ]
+    },
+    {
+      "name": "verify_merge_w3_1",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn merge verify --merge merge_w3_1 --branch step/reader --branch step/zip_packer",
+      "depends": [
+        "merge_w3_1"
+      ]
+    },
+    {
+      "name": "merge_w3_2",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 4200,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn merge land --slot 2 --provider claude --branch step/reader --branch step/zip_packer",
+      "depends": [
+        "verify_merge_w3_1"
+      ]
+    },
+    {
+      "name": "verify_merge_w3_2",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn merge verify --merge merge_w3_2 --branch step/reader --branch step/zip_packer",
+      "depends": [
+        "merge_w3_2"
+      ]
+    },
+    {
+      "name": "prune_w3",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn worktree prune --plan multi-wave --step reader --step zip_packer",
+      "depends": [
+        "verify_merge_w3_2"
+      ]
+    },
+    {
+      "name": "work_reconcile",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 3600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/sync/reconcile.py` to a state where an imported archive merges into the live workspace, newest revision winning per item.' --model sonnet --max-budget-usd 5.0",
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn marker absent --step reconcile --scope once"
+        }
+      ],
+      "continue_on": {
+        "failure": true,
+        "skipped": true
+      },
+      "depends": [
+        "prune_w3"
+      ]
+    },
+    {
+      "name": "verify_reconcile",
+      "id": "verify_reconcile",
+      "run": "python3 -m pytest tests/sync/test_reconcile.py -q",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "continue_on": {
+        "failure": true
+      },
+      "depends": [
+        "work_reconcile"
+      ]
+    },
+    {
+      "name": "mark_reconcile",
+      "run": "python3 -m cairn marker write --step reconcile --scope once",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify gate --step reconcile --position chain --verify-exit '${verify_reconcile.exit_code}'"
+        }
+      ],
+      "depends": [
+        "verify_reconcile"
+      ]
+    },
+    {
+      "name": "commit_reconcile",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn commit --message 'cairn(reconcile): Reconcile'",
+      "depends": [
+        "mark_reconcile"
+      ]
+    }
+  ]
+}

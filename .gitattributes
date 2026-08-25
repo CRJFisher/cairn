@@ -1,0 +1,3 @@
+# The recorded workflows are compared byte for byte by the suite, so a checkout that
+# translated their line endings would fail it with a diff that renders as identical.
+fixtures/workflows/*.yaml -text

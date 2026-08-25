@@ -1,0 +1,134 @@
+{
+  "cairn_graph_version": 2,
+  "plan": {
+    "slug": "multi-wave",
+    "title": "Offline export",
+    "source": "README.md",
+    "sources": [
+      {
+        "path": "README.md",
+        "sha256": "98ca5dbdacb384e1f1666b6bae1d59e51a19842a3696c85e19e678e2c1655c7a"
+      }
+    ],
+    "default_kind": "agent.claude",
+    "id_collisions": []
+  },
+  "steps": [
+    {
+      "id": "export_schema",
+      "slug": "1. Export schema",
+      "title": "Export schema",
+      "task": "Bring `schema/export.json` to a state where it pins the export envelope: workspace id, revision, and an ordered item list.",
+      "deps": [],
+      "verify": "python3 -m jsonschema --instance fixtures/export.json schema/export.json",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600,
+      "max_budget_usd": 5.0,
+      "model": "sonnet"
+    },
+    {
+      "id": "writer",
+      "slug": "2. Writer",
+      "title": "Writer",
+      "task": "Bring `src/export/writer.py` to a state where it emits an envelope conforming to the schema for any workspace on disk.",
+      "deps": [
+        {
+          "id": "export_schema",
+          "origin": "declared",
+          "evidence": "depends on the export schema"
+        }
+      ],
+      "verify": "python3 -m pytest tests/export/test_writer.py -q",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600,
+      "max_budget_usd": 5.0,
+      "model": "sonnet"
+    },
+    {
+      "id": "zip_packer",
+      "slug": "3. Zip packer",
+      "title": "Zip packer",
+      "task": "Bring `src/export/pack.py` to a state where an export directory becomes one `.wsx` archive with a manifest at its root.",
+      "deps": [
+        {
+          "id": "writer",
+          "origin": "declared",
+          "evidence": "depends on the writer"
+        }
+      ],
+      "verify": "python3 -m pytest tests/export/test_pack.py -q",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600,
+      "max_budget_usd": 5.0,
+      "model": "sonnet"
+    },
+    {
+      "id": "reader",
+      "slug": "4. Reader",
+      "title": "Reader",
+      "task": "Bring `src/export/reader.py` to a state where it parses an envelope back into a workspace.",
+      "deps": [
+        {
+          "id": "writer",
+          "origin": "declared",
+          "evidence": "depends on the writer, and is independent of the zip packer"
+        }
+      ],
+      "verify": "python3 -m pytest tests/export/test_reader.py -q",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600,
+      "max_budget_usd": 5.0,
+      "model": "sonnet"
+    },
+    {
+      "id": "reconcile",
+      "slug": "5. Reconcile",
+      "title": "Reconcile",
+      "task": "Bring `src/sync/reconcile.py` to a state where an imported archive merges into the live workspace, newest revision winning per item.",
+      "deps": [
+        {
+          "id": "zip_packer",
+          "origin": "declared",
+          "evidence": "depends on both the zip packer and the reader"
+        },
+        {
+          "id": "reader",
+          "origin": "declared",
+          "evidence": "depends on both the zip packer and the reader"
+        }
+      ],
+      "verify": "python3 -m pytest tests/sync/test_reconcile.py -q",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600,
+      "max_budget_usd": 5.0,
+      "model": "sonnet"
+    }
+  ],
+  "omissions": [],
+  "questions": []
+}

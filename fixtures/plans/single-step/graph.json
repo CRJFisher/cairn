@@ -1,0 +1,37 @@
+{
+  "cairn_graph_version": 2,
+  "plan": {
+    "slug": "single-step",
+    "title": "Release manifest",
+    "source": "README.md",
+    "sources": [
+      {
+        "path": "README.md",
+        "sha256": "8f95bc70ddc43b935546092339a2bc4d18b0fa2ba7c1af2506718485a09288d7"
+      }
+    ],
+    "default_kind": "agent.claude",
+    "id_collisions": []
+  },
+  "steps": [
+    {
+      "id": "manifest_writer",
+      "slug": "1. Manifest writer",
+      "title": "Manifest writer",
+      "task": "Bring `src/release/manifest.py` to a state where it writes `dist/manifest.json` holding every artefact's name, size and sha256.",
+      "deps": [],
+      "verify": "python3 -m pytest tests/test_manifest.py -q",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600,
+      "max_budget_usd": 5.0,
+      "model": "sonnet"
+    }
+  ],
+  "omissions": [],
+  "questions": []
+}

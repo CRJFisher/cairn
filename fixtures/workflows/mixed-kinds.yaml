@@ -1,0 +1,270 @@
+{
+  "type": "graph",
+  "max_active_steps": 13,
+  "retry_policy": {
+    "limit": 0,
+    "interval_sec": 1
+  },
+  "catchup_window": "",
+  "overlap_policy": "skip",
+  "labels": {
+    "cairn_plan": "mixed-kinds",
+    "cairn_generator": "4",
+    "cairn_engine": "2.11.0",
+    "cairn_graph_sha256": "f86117b75b6850768a2ca72e2f8375b3a8d304ba21fdc11c3527783fcdf21be8",
+    "cairn_body_sha256": "bec6dc34a7dc66f54db86ec97371dfa57a86f7db6bf6a78a3f5945630109f599"
+  },
+  "params": [
+    {
+      "CAIRN_REPOSITORY": "/srv/work/product"
+    },
+    {
+      "CAIRN_PARENT_BRANCH": "main"
+    },
+    {
+      "CAIRN_OCCASION": ""
+    }
+  ],
+  "env": [
+    {
+      "PYTHONPATH": "/opt/cairn"
+    },
+    {
+      "CAIRN_RUNS_DIR": "/srv/work/product/.git/cairn/runs"
+    }
+  ],
+  "handler_on": {
+    "exit": {
+      "name": "lock_release",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn lock release"
+    }
+  },
+  "steps": [
+    {
+      "name": "lock_acquire",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn lock acquire --plan mixed-kinds --run-timeout 15315"
+    },
+    {
+      "name": "work_refresh_the_corpus",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 7200,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `data/corpus/` to a state where it mirrors the current contents of the source bucket.' --model opus --max-budget-usd 8.0 --tool 'Bash(rm:*)'",
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn marker absent --step refresh_the_corpus --scope weekly"
+        }
+      ],
+      "continue_on": {
+        "failure": true,
+        "skipped": true
+      },
+      "depends": [
+        "lock_acquire"
+      ]
+    },
+    {
+      "name": "verify_refresh_the_corpus",
+      "id": "verify_refresh_the_corpus",
+      "run": "test -f data/corpus/MANIFEST",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "continue_on": {
+        "failure": true
+      },
+      "depends": [
+        "work_refresh_the_corpus"
+      ]
+    },
+    {
+      "name": "mark_refresh_the_corpus",
+      "run": "python3 -m cairn marker write --step refresh_the_corpus --scope weekly",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify gate --step refresh_the_corpus --position chain --verify-exit '${verify_refresh_the_corpus.exit_code}'"
+        }
+      ],
+      "depends": [
+        "verify_refresh_the_corpus"
+      ]
+    },
+    {
+      "name": "commit_refresh_the_corpus",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn commit --message 'cairn(refresh_the_corpus): Refresh the corpus'",
+      "depends": [
+        "mark_refresh_the_corpus"
+      ]
+    },
+    {
+      "name": "work_rebuild_the_index",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn exec --command 'bin/reindex --full'",
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn marker absent --step rebuild_the_index --scope inputs --reads data/corpus/"
+        }
+      ],
+      "continue_on": {
+        "failure": true,
+        "skipped": true
+      },
+      "depends": [
+        "commit_refresh_the_corpus"
+      ]
+    },
+    {
+      "name": "verify_rebuild_the_index",
+      "id": "verify_rebuild_the_index",
+      "run": "test -f var/index/.rebuild-started",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "continue_on": {
+        "failure": true
+      },
+      "depends": [
+        "work_rebuild_the_index"
+      ]
+    },
+    {
+      "name": "mark_rebuild_the_index",
+      "run": "python3 -m cairn marker write --step rebuild_the_index --scope inputs --reads data/corpus/",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify gate --step rebuild_the_index --position chain --verify-exit '${verify_rebuild_the_index.exit_code}'"
+        }
+      ],
+      "depends": [
+        "verify_rebuild_the_index"
+      ]
+    },
+    {
+      "name": "commit_rebuild_the_index",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn commit --message 'cairn(rebuild_the_index): Rebuild the index'",
+      "depends": [
+        "mark_rebuild_the_index"
+      ]
+    },
+    {
+      "name": "work_wait_for_the_index_to_settle",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 915,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn wait --until 'bin/index-status --quiet' --timeout 900",
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn marker absent --step wait_for_the_index_to_settle --scope run"
+        }
+      ],
+      "continue_on": {
+        "failure": true,
+        "skipped": true
+      },
+      "depends": [
+        "commit_rebuild_the_index"
+      ]
+    },
+    {
+      "name": "verify_wait_for_the_index_to_settle",
+      "id": "verify_wait_for_the_index_to_settle",
+      "run": "bin/index-status --quiet",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "continue_on": {
+        "failure": true
+      },
+      "depends": [
+        "work_wait_for_the_index_to_settle"
+      ]
+    },
+    {
+      "name": "mark_wait_for_the_index_to_settle",
+      "run": "python3 -m cairn marker write --step wait_for_the_index_to_settle --scope run",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify gate --step wait_for_the_index_to_settle --position chain --verify-exit '${verify_wait_for_the_index_to_settle.exit_code}'"
+        }
+      ],
+      "depends": [
+        "verify_wait_for_the_index_to_settle"
+      ]
+    },
+    {
+      "name": "commit_wait_for_the_index_to_settle",
+      "working_dir": "${CAIRN_REPOSITORY}",
+      "timeout_sec": 600,
+      "retry_policy": {
+        "limit": 0,
+        "interval_sec": 1
+      },
+      "run": "python3 -m cairn commit --message 'cairn(wait_for_the_index_to_settle): Wait for the index to settle'",
+      "depends": [
+        "mark_wait_for_the_index_to_settle"
+      ]
+    }
+  ]
+}

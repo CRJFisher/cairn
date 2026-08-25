@@ -1,0 +1,9 @@
+{
+  "ok": false,
+  "errors": [
+    "unresolved_dependency"
+  ],
+  "warnings": [
+    "open_questions"
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "shape": "blocked",
+  "run_id": "fixture-blocked",
+  "engine": "2.11.0",
+  "why": "a step is blocked on a human decision. The engine run and every other report are real; the work step's own `needs_user_decision` is set here after the fact, because no free provider can produce an agent that asks for a decision",
+  "hand_set_fields": {
+    "work_alpha": {
+      "needs_user_decision": true,
+      "summary": "the schema change needs a call on the sentinel's default"
+    }
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "cairn_graph_version": 2,
+  "plan": {
+    "slug": "no-verify",
+    "title": "Documentation refresh",
+    "source": "README.md",
+    "sources": [
+      {
+        "path": "README.md",
+        "sha256": "5f5b3f51ab86009977e4fdd539b15451a1a653e5645f2c3811f2bd576d194e0c"
+      }
+    ],
+    "default_kind": "agent.claude",
+    "id_collisions": []
+  },
+  "steps": [
+    {
+      "id": "rewrite_the_getting_started_guide",
+      "slug": "1. Rewrite the getting-started guide",
+      "title": "Rewrite the getting-started guide",
+      "task": "Rewrite the getting-started guide so a new reader can install and run the tool without opening any other page.",
+      "deps": [],
+      "verify": null,
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600,
+      "max_budget_usd": 5.0,
+      "model": "sonnet"
+    },
+    {
+      "id": "bring_the_architecture_page_into_line_with_the_current_module_layout",
+      "slug": "2. Bring the architecture page into line with the current module layout",
+      "title": "Bring the architecture page into line with the current module layout",
+      "task": "Bring the architecture page into line with the current module layout.",
+      "deps": [
+        {
+          "id": "rewrite_the_getting_started_guide",
+          "origin": "derived",
+          "evidence": "after the getting-started rewrite settles the vocabulary"
+        }
+      ],
+      "verify": null,
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "timeout": 3600,
+      "max_budget_usd": 5.0,
+      "model": "sonnet"
+    }
+  ],
+  "omissions": [],
+  "questions": [
+    {
+      "kind": "missing_verify",
+      "step": "rewrite_the_getting_started_guide",
+      "question": "What command asserts that the getting-started guide reached its end state?",
+      "evidence": "Neither states a checkable end state, and the plan offers no command.",
+      "proposed": null
+    },
+    {
+      "kind": "missing_verify",
+      "step": "bring_the_architecture_page_into_line_with_the_current_module_layout",
+      "question": "What command asserts that the architecture page matches the current module layout?",
+      "evidence": "Neither states a checkable end state, and the plan offers no command.",
+      "proposed": null
+    }
+  ]
+}

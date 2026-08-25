@@ -1,0 +1,38 @@
+{
+  "cairn_graph_version": 2,
+  "plan": {
+    "slug": "already-done",
+    "title": "Search reindex",
+    "source": "README.md",
+    "sources": [
+      {
+        "path": "README.md",
+        "sha256": "e31449ec38fe65a5778f8995fe3b9a920b8d99376c42eb00c204ddb754951325"
+      }
+    ],
+    "default_kind": "agent.claude",
+    "id_collisions": []
+  },
+  "steps": [],
+  "omissions": [
+    {
+      "slug": "1. Schema migration",
+      "title": "Schema migration",
+      "reason": "already_done",
+      "evidence": "✅ **Schema migration** — the `documents` table carries a `tsv` column."
+    },
+    {
+      "slug": "2. Backfill",
+      "title": "Backfill",
+      "reason": "already_done",
+      "evidence": "✅ **Backfill** — every existing row has a populated `tsv`."
+    },
+    {
+      "slug": "3. Query path",
+      "title": "Query path",
+      "reason": "already_done",
+      "evidence": "✅ **Query path** — search reads the index rather than scanning."
+    }
+  ],
+  "questions": []
+}

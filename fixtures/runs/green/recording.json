@@ -1,0 +1,6 @@
+{
+  "shape": "green",
+  "run_id": "fixture-green",
+  "engine": "2.11.0",
+  "why": "every step verified, nothing excluded, nothing left to do"
+}
