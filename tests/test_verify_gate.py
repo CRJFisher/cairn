@@ -40,7 +40,9 @@ from cairn.verify import (
     EXCLUSION_CAUSES,
     GATE_EXCLUDE_IT,
     GATE_RECORD_IT,
+    REPORTED_NOTHING,
     Divergence,
+    divergence_line,
     exit_status_reference,
     judge,
     mark_name,
@@ -70,13 +72,19 @@ NODE_STATUS = re.compile(r"^[├└│─ ]+([a-z_0-9]+)(?: \([^)]*\))? \[(\w+)\
 REAL_PLANS = ("worktree-hydration", "pattern-lifecycle")
 
 
-def report(status: str = "done", summary: str = "did it", blocked: bool = False) -> dict[str, Any]:
+def report(
+    status: str = "done",
+    summary: str = "did it",
+    blocked: bool = False,
+    cause: str | None = None,
+) -> dict[str, Any]:
     return {
         "step_id": "a",
         "run_id": "run-1",
         "status": status,
         "summary": summary,
         "needs_user_decision": blocked,
+        "cause": cause,
     }
 
 
@@ -858,6 +866,56 @@ class WhatTheCorpusStates(unittest.TestCase):
         self.assertIn(f"{real} of those {unasserted}", text)
 
 
+class AStepThatReportedNothingIsNotAStepThatReportedFailure(unittest.TestCase):
+    """The runtime writes `failed` for a session that ended without reporting, because that
+    is the only status a report can carry when there is nothing to carry. Reading it back as
+    a veto tells a person their session claimed a failure it never claimed ([19 D])."""
+
+    def test_the_cause_is_the_protocol_failure_rather_than_a_veto(self) -> None:
+        found = judge(0, report(status="failed", cause="provider_protocol"))
+        self.assertEqual(found["cause"], "provider_protocol")
+        self.assertNotIn("reported failure", found["summary"])
+
+    def test_the_divergence_is_kept_and_says_the_step_said_nothing(self) -> None:
+        """It is the only channel the fact has: a mark report contributes its cause, its
+        position and its divergence to the record, and neither the gate's summary nor the
+        assertion's exit status reaches it. Without this, a step whose work is sitting
+        verified in the tree is indistinguishable from one that did nothing."""
+        found = judge(0, report(status="failed", cause="provider_protocol"))
+        self.assertIsNotNone(found["divergence"])
+        divergence = cast(Divergence, found["divergence"])
+        self.assertEqual(divergence["reported"], REPORTED_NOTHING)
+        self.assertTrue(divergence["asserted"])
+        self.assertIn("ended without reporting", divergence_line(divergence))
+        self.assertNotIn("'failed'", divergence_line(divergence))
+
+    def test_a_failing_assertion_leaves_nothing_to_diverge_from(self) -> None:
+        found = judge(1, report(status="failed", cause="provider_protocol"))
+        self.assertEqual(found["cause"], "provider_protocol")
+        self.assertIsNone(found["divergence"])
+
+    def test_a_step_that_really_reported_failure_is_unchanged(self) -> None:
+        """This is what keeps the seam narrow. Without it `judge` would drift into carrying
+        any cause through, which would need every runtime cause in the frozen set."""
+        found = judge(0, report(status="failed", cause="command_failed"))
+        self.assertEqual(found["cause"], "reported_failure")
+        self.assertIsNotNone(found["divergence"])
+        self.assertEqual(cast(Divergence, found["divergence"])["reported"], "failed")
+
+    def test_a_report_carrying_no_cause_is_read_as_the_steps_own_veto(self) -> None:
+        found = judge(0, report(status="failed"))
+        self.assertEqual(found["cause"], "reported_failure")
+
+    def test_the_gate_still_closes_over_a_step_that_said_nothing(self) -> None:
+        """What must not change: a step that did not say what it did is not recorded done."""
+        for verify_exit in (None, 0, 1):
+            with self.subTest(verify_exit=verify_exit):
+                found = judge(
+                    verify_exit, report(status="failed", cause="provider_protocol")
+                )
+                self.assertFalse(found["record"])
+
+
 class TheGateIsStatedOnce(unittest.TestCase):
     def test_the_frozen_set_is_exactly_these_causes(self) -> None:
         """Iterating the tuple can only catch an addition; a literal catches a removal too."""
@@ -866,6 +924,7 @@ class TheGateIsStatedOnce(unittest.TestCase):
             (
                 "verify_failed",
                 "reported_failure",
+                "provider_protocol",
                 "user_decision_required",
                 "not_reached",
                 "gate_indeterminate",

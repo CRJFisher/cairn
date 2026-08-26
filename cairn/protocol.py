@@ -27,6 +27,12 @@ is already correct, and do not assume you are looking at an empty tree.
 Do not record your own completion anywhere. Completion is recorded by the verification
 that follows you, never by you.
 
+This session is one shot: the process ends when your turn ends, and nothing re-invokes
+you for a background shell. Subagents and `Monitor` are yours to use — a background
+subagent is waited for, and `Monitor` blocks — but anything you start with `Bash`'s
+`run_in_background` dies unread when your turn ends. Wait for whatever you start, and
+end only by reporting.
+
 Report through the structured output you are constrained to. `status` is `done` when the
 end state now holds, `noop` when it already held and you changed nothing, and `failed`
 when you could not reach it. List work you found but did not do in `follow_up_work`. Set
@@ -34,6 +40,16 @@ when you could not reach it. List work you found but did not do in `follow_up_wo
 proceed; that blocks the step rather than failing it.
 
 The task:
+"""
+
+# What a session that ended a turn without reporting is asked, once. It is a request for
+# the account it owes, never an instruction to do more work: the step's assertion has
+# already run or is about to, and a resumed session that started editing again would be
+# doing unpriced work outside the shape the offer stated.
+RESUME_FOR_REPORT = """\
+This session is ending now and nothing will re-invoke it. Do no further work.
+
+Report what you have already done, through the structured output you are constrained to.
 """
 
 STEP_REPORT_SCHEMA: dict[str, Any] = {

@@ -89,6 +89,7 @@ The gate reads two things and opens only when both agree:
 | -------------- | --------------------- | -------- | ------------------------ | ---------------------------------------- |
 | exit 0         | `done` or `noop`      | opens    | —                        | —                                        |
 | exit 0         | `failed`              | closes   | `reported_failure`       | **yes** — verified true, reported failed |
+| either         | `failed`, `provider_protocol` | closes | `provider_protocol` | **yes** where the assertion passed — verified true, reported nothing |
 | nonzero        | `done` or `noop`      | closes   | `verify_failed`          | **yes** — reported done, verified false  |
 | nonzero        | `failed`              | closes   | `reported_failure`       | — they agree                             |
 | either         | `needs_user_decision` | closes   | `user_decision_required` | —                                        |
@@ -123,6 +124,7 @@ never reached from one killed before it could write.
 | ------------------------ | ---------------------------------------------------- | -------------- |
 | `verify_failed`          | the assertion exited nonzero                         | the gate       |
 | `reported_failure`       | the step's own report vetoed it                      | the gate       |
+| `provider_protocol`      | the step's session ended without reporting at all    | the gate       |
 | `user_decision_required` | the step is blocked on a human decision              | the gate       |
 | `not_reached`            | the step left no report of this run, so it never ran | the gate       |
 | `gate_indeterminate`     | the gate could not establish what happened           | the gate       |
@@ -132,6 +134,23 @@ never reached from one killed before it could write.
 
 `gate_indeterminate` exists because folding an unreadable report into `not_reached` would
 claim a step never ran when it may have done all of its work.
+
+`provider_protocol` exists for the same shape of reason one row up. A session that ends a
+turn without producing its structured report is written `failed` by the runtime, because
+that is the only status a report can carry when there is nothing to carry — and reading
+that back as `reported_failure` tells the person their session claimed a failure it never
+claimed. It is also the more expensive mistake: measured, a step whose session ended without
+reporting had done the work and its assertion passed, and the divergence recorded against it
+said _"the step reported 'failed' over an assertion that passed"_ about a step that reported
+nothing at all. The word appears in two vocabularies, as `reported_failure` and
+`user_decision_required` already do — a report cause ([cli-contract.md](cli-contract.md))
+seen from the runtime's side, and an exclusion cause seen from the gate's.
+
+**Where the assertion passed, the divergence is still recorded**, with the step's own word
+given as `nothing`. That is the only channel the fact has: a mark report contributes its
+cause, its position and its divergence to the run record, and neither the gate's summary nor
+the assertion's exit status reaches it. Without the divergence, a step whose work is sitting
+verified in the tree would be indistinguishable from one that did nothing.
 
 **A marker that outlived its work is surfaced, not repaired.** A step whose marker is fresh
 is skipped, and its assertion still runs; if the tree has since regressed the assertion

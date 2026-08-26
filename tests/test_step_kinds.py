@@ -9,7 +9,7 @@ import tempfile
 import threading
 import time
 import unittest
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import chdir, contextmanager, redirect_stderr, redirect_stdout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -30,7 +30,13 @@ from cairn.emitters import KIND_EMITTERS, emit_step, emit_verify
 from cairn.layout import reports_directory
 from cairn.plan.schema import normalise
 from cairn.protocol import compose_prompt
-from cairn.providers import PROVIDER_RUNNERS, run_claude, run_provider
+from cairn.providers import (
+    NEVER_DELIVERED,
+    PROVIDER_RUNNERS,
+    ended_without_reporting,
+    run_claude,
+    run_provider,
+)
 
 
 def run_echo(
@@ -805,8 +811,12 @@ class FakeProcess:
         self.stdin = FakeInput()
         self.stdout = FakeOutput(json.dumps(self.output()) + "\n")
 
+    def session(self) -> str:
+        flag = "--session-id" if "--session-id" in self.command else "--resume"
+        return self.command[self.command.index(flag) + 1]
+
     def output(self) -> dict[str, Any]:
-        session_id = self.command[self.command.index("--session-id") + 1]
+        session_id = self.session()
         return {
             "type": "result",
             "subtype": "success",
@@ -845,6 +855,34 @@ class FakeProcess:
 
 
 class ProviderBehavior(unittest.TestCase):
+    def test_the_deny_list_names_only_what_a_session_cannot_wait_for(self) -> None:
+        """Measured under `claude -p`: nothing ever fires a scheduled wakeup and nothing
+        drains a cron, so both are promises the harness cannot keep. `Monitor` blocks and a
+        background subagent re-invokes the session on completion — three in parallel all
+        arrived — so denying either would take away the two ways a step has of waiting for
+        concurrent work, to prevent a leak neither of them causes ([19 D])."""
+        self.assertEqual(NEVER_DELIVERED, ("ScheduleWakeup", "Cron*"))
+        self.assertNotIn("Monitor", NEVER_DELIVERED)
+        self.assertNotIn("Agent", NEVER_DELIVERED)
+
+    def test_the_record_shows_what_the_session_was_actually_denied(self) -> None:
+        """A record naming only the plan's half would understate the run."""
+        made: list[FakeProcess] = []
+
+        def factory(command: list[str], **kwargs: object) -> FakeProcess:
+            process = FakeProcess(command, **kwargs)
+            made.append(process)
+            return process
+
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            result = run_claude(
+                "do work", Path("/tmp"), "auto", None, None, ["Bash(rm:*)"], factory
+            )
+        self.assertEqual(
+            result.detail["deny_patterns"], [*NEVER_DELIVERED, "Bash(rm:*)"]
+        )
+
     def test_plain_invocation_and_optional_flags(self) -> None:
         made: list[FakeProcess] = []
 
@@ -872,9 +910,16 @@ class ProviderBehavior(unittest.TestCase):
         self.assertEqual(command[command.index("--permission-mode") + 1], "auto")
         self.assertEqual(command[command.index("--model") + 1], "opus")
         self.assertEqual(command[command.index("--max-budget-usd") + 1], "2.5")
-        self.assertEqual(command.count("--disallowedTools"), 1)
+        denied = [
+            command[index + 1]
+            for index, word in enumerate(command)
+            if word == "--disallowedTools"
+        ]
+        # Cairn's own patterns lead and the plan's are added to them, never in place of
+        # them: a plan cannot hand a step back a tool whose contract it cannot keep.
+        self.assertEqual(denied, [*NEVER_DELIVERED, "Bash(rm:*)"])
         self.assertEqual(
-            command[command.index("--disallowedTools") + 1],
+            denied[-1],
             "Bash(rm:*)",
         )
         self.assertNotIn("start_new_session", made[0].kwargs)
@@ -1157,6 +1202,120 @@ class ProviderBehavior(unittest.TestCase):
                 report["detail"]["working_directory_seen"],
                 str(Path(temporary).resolve()),
             )
+
+
+class ASessionThatEndedWithoutReportingIsResumedOnce(unittest.TestCase):
+    """A session that ended a turn without reporting is not a session that failed.
+
+    Measured: the alternative was discarding $10.89 of work an assertion had just proved.
+    """
+
+    def _scripted(
+        self, *replies: dict[str, Any]
+    ) -> tuple[Callable[..., FakeProcess], list[FakeProcess]]:
+        made: list[FakeProcess] = []
+        pending = list(replies)
+
+        def factory(command: list[str], **kwargs: object) -> FakeProcess:
+            process = FakeProcess(command, **kwargs)
+            if pending:
+                said = {**process.output(), **pending.pop(0)}
+                process.stdout = FakeOutput(json.dumps(said) + "\n")
+            made.append(process)
+            return process
+
+        return factory, made
+
+    def _ran(self, factory: Callable[..., FakeProcess], budget: float | None = 5.0):
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            return run_claude(
+                "do work", Path("/tmp"), "auto", "sonnet", budget, [], factory
+            )
+
+    UNREPORTED: ClassVar[dict[str, Any]] = {
+        "stop_reason": "tool_use",
+        "structured_output": None,
+    }
+
+    def test_a_correct_report_also_stops_for_a_tool_call_and_is_never_resumed(self) -> None:
+        """The trap the discrimination exists for. A structured report *is* a tool call, so
+        `stop_reason` alone says nothing — a rescue keyed on it would resume every step."""
+        self.assertFalse(
+            ended_without_reporting(
+                0, {"stop_reason": "tool_use", "structured_output": {"status": "done"}}
+            )
+        )
+        factory, made = self._scripted({"stop_reason": "tool_use"})
+        result = self._ran(factory)
+        self.assertEqual(len(made), 1)
+        self.assertEqual(result.status, "done")
+        self.assertNotIn("resumed_for_report", result.detail)
+
+    def test_a_session_that_reported_nothing_is_resumed_for_its_report(self) -> None:
+        factory, made = self._scripted(self.UNREPORTED)
+        result = self._ran(factory)
+        self.assertEqual(len(made), 2, "the session was not resumed exactly once")
+        self.assertEqual(result.status, "done")
+        self.assertIs(result.detail["resumed_for_report"], True)
+
+    def test_the_resume_continues_the_session_rather_than_opening_another(self) -> None:
+        factory, made = self._scripted(self.UNREPORTED)
+        self._ran(factory)
+        opened, resumed = made[0].command, made[1].command
+        self.assertIn("--session-id", opened)
+        self.assertNotIn("--resume", opened)
+        self.assertIn("--resume", resumed)
+        self.assertNotIn("--session-id", resumed)
+        self.assertEqual(
+            resumed[resumed.index("--resume") + 1],
+            opened[opened.index("--session-id") + 1],
+        )
+
+    def test_the_resume_runs_under_what_is_left_of_the_steps_ceiling(self) -> None:
+        """The offer priced one ceiling for this step; a second pass carrying a fresh full
+        budget would double the ceiling the person agreed to."""
+        factory, made = self._scripted(self.UNREPORTED)
+        self._ran(factory, budget=5.0)
+        resumed = made[1].command
+        self.assertEqual(float(resumed[resumed.index("--max-budget-usd") + 1]), 4.75)
+
+    def test_a_step_with_nothing_left_to_spend_is_not_resumed(self) -> None:
+        factory, made = self._scripted({**self.UNREPORTED, "total_cost_usd": 5.0})
+        with self.assertRaises(CairnError) as caught:
+            self._ran(factory, budget=5.0)
+        self.assertEqual(len(made), 1)
+        self.assertEqual(caught.exception.cause, "provider_protocol")
+        self.assertEqual(
+            caught.exception.detail["resumed_for_report"], "budget_exhausted"
+        )
+
+    def test_the_recorded_cost_and_turns_are_both_passes(self) -> None:
+        """A record naming only the second pass would under-report what the step spent."""
+        factory, _ = self._scripted(self.UNREPORTED)
+        result = self._ran(factory)
+        self.assertAlmostEqual(result.detail["total_cost_usd"], 0.50)
+        self.assertEqual(result.detail["turn_count"], 4)
+        self.assertAlmostEqual(result.detail["abandoned_cost_usd"], 0.25)
+
+    def test_a_resume_that_also_reports_nothing_is_the_failure_it_was(self) -> None:
+        """One resume, never a loop — and the outcome is never worse for having tried."""
+        factory, made = self._scripted(self.UNREPORTED, self.UNREPORTED)
+        with self.assertRaises(CairnError) as caught:
+            self._ran(factory)
+        self.assertEqual(len(made), 2)
+        self.assertEqual(caught.exception.cause, "provider_protocol")
+
+    def test_the_resume_carries_the_same_bounds_as_the_session_it_continues(self) -> None:
+        factory, made = self._scripted(self.UNREPORTED)
+        self._ran(factory)
+        opened, resumed = made[0].command, made[1].command
+        for flag in ("--model", "--json-schema", "--permission-mode", "--settings"):
+            with self.subTest(flag=flag):
+                self.assertEqual(
+                    resumed[resumed.index(flag) + 1], opened[opened.index(flag) + 1]
+                )
+        self.assertEqual(resumed.count("--disallowedTools"), opened.count("--disallowedTools"))
 
 
 class EmitterContract(unittest.TestCase):

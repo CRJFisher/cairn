@@ -187,6 +187,12 @@ is already correct, and do not assume you are looking at an empty tree.
 Do not record your own completion anywhere. Completion is recorded by the verification
 that follows you, never by you.
 
+This session is one shot: the process ends when your turn ends, and nothing re-invokes
+you for a background shell. Subagents and `Monitor` are yours to use — a background
+subagent is waited for, and `Monitor` blocks — but anything you start with `Bash`'s
+`run_in_background` dies unread when your turn ends. Wait for whatever you start, and
+end only by reporting.
+
 Report through the structured output you are constrained to. `status` is `done` when the
 end state now holds, `noop` when it already held and you changed nothing, and `failed`
 when you could not reach it. List work you found but did not do in `follow_up_work`. Set
@@ -287,6 +293,26 @@ Cairn has no resume command, because re-running is resume.
 committed with the work. Nothing else is consulted and no execution state has to survive
 for correctness, which is what makes a dead orchestrator an observability problem rather
 than a recovery problem.
+
+**Resuming a session for its report** is the one exception, and it is not a re-run. A
+session that ends a turn without producing its structured output has not failed — it may
+have done every bit of the work and simply stopped short of saying so. Measured: a step
+that did exactly this had made its edit, and the assertion that followed it passed; what
+the missing report cost was $10.89 of proven work, the chain behind it, and a run record
+claiming the step had "reported failure" when it had reported nothing at all.
+
+So such a session is continued exactly once, with one message asking for the account it
+owes and telling it to do no further work. It runs under **what is left** of the step's own
+dollar ceiling, because the offer priced one ceiling for the step and a second pass carrying
+a fresh one would double what the person agreed to; both passes are summed into the record's
+cost and turn count. If it reports, the step is recorded as it should have been. If it does
+not, the outcome is exactly the `provider_protocol` failure it already was, with the attempt
+recorded beside it — the rescue can never make the outcome worse than not attempting it.
+
+The discrimination is narrow and it is measured: a **correct** structured report is itself a
+tool call, so a session that reported returns `stop_reason: "tool_use"` too. The stop reason
+decides nothing on its own; the absent `structured_output` beside it is what says the session
+never reported.
 
 **Resuming a step killed mid-work** is the worktree's own contents. The marker is absent
 because verification never ran, the partial edits are still there because the worktree is

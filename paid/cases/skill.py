@@ -71,7 +71,6 @@ from cairn.record.model import RunRecord, StepRecord
 from cairn.record.vocabulary import VERDICT_ALL_NO_OP, VERDICT_GREEN
 from cairn.skill.consent import acceptance_of, offers_directory, read_offer
 from cairn.workflow.stamp import workflow_path
-
 from paid.engine import divergences, record_of, steps_of
 from paid.harness import Harness, Turn
 from paid.measure import Measurement, Unit, bounded, ending_of

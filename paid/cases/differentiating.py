@@ -29,7 +29,6 @@ from cairn.record.model import RunRecord, StepRecord
 from cairn.record.vocabulary import OUTCOME_EXCLUDED, VERDICT_GREEN_WITH_EXCLUSIONS
 from cairn.verify import VERIFY_FAILED
 from cairn.workflow.schema import OCCASION_PARAM, PARENT_BRANCH_PARAM
-
 from paid.engine import definition, record_of, start, steps_of, write_definition
 from paid.harness import Harness
 from paid.measure import Unit, ending_of

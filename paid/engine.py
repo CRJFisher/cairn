@@ -37,7 +37,6 @@ from cairn.topology import derive
 from cairn.verify import NOT_REACHED
 from cairn.workflow.build import build
 from cairn.workflow.schema import CAIRN_INVOCATION, EngineStep, Workflow, is_agent_body
-
 from paid.session import Group, GroupFactory, stop_group
 
 MERGE_SUBCOMMAND = ("merge", "land")

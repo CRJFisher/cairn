@@ -32,7 +32,6 @@ from cairn.gitio import runs_root
 from cairn.skill.consent import offers_directory
 from cairn.skill.vocabulary import CAPABILITY_RUN
 from cairn.workflow.stamp import workflow_path
-
 from paid.harness import Harness, Turn
 from paid.measure import Unit, ending_of
 from paid.observe import Observed, invoked, reply_of

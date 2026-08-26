@@ -104,6 +104,9 @@ from cairn.verify import (
     ORCHESTRATOR_DIED,
     USER_DECISION_REQUIRED,
 )
+from cairn.verify import (
+    divergence_line as _divergence_line,
+)
 from cairn.workflow.schema import ENGINE_VERSION, OCCASION_PARAM, REPOSITORY_PARAM
 
 # The role whose failure costs a run its worktrees and nothing else. Every other piece of
@@ -459,11 +462,7 @@ def derive_attention(
                 Attention(
                     kind=ATTENTION_DIVERGENCE,
                     subject=step["step_id"],
-                    summary=(
-                        f"the step reported {step['divergence']['reported']!r} over an "
-                        f"assertion that "
-                        f"{'passed' if step['divergence']['asserted'] else 'failed'}"
-                    ),
+                    summary=_divergence_line(step["divergence"]),
                     cause=step["cause"],
                 )
             )

@@ -53,7 +53,6 @@ from cairn.report.spine import (
     SECTIONS,
     SINKS,
 )
-
 from tests.test_run_record import PACKAGE_ROOT, SHAPES, alive_copy, load, record_of
 
 DOCUMENT = PACKAGE_ROOT / "docs" / "report.md"

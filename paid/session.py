@@ -36,7 +36,6 @@ from pathlib import Path
 from typing import Any, NamedTuple, Protocol, cast
 
 from cairn.core import CairnError, launch
-
 from paid.spend import Launch
 
 PROVIDER_BINARY = "claude"

@@ -71,6 +71,9 @@ from cairn.verify import (
     ORCHESTRATOR_DIED as CAUSE_ORCHESTRATOR_DIED,
 )
 from cairn.verify import (
+    PROVIDER_PROTOCOL as CAUSE_PROVIDER_PROTOCOL,
+)
+from cairn.verify import (
     REPORTED_FAILURE as CAUSE_REPORTED_FAILURE,
 )
 from cairn.verify import (
@@ -151,6 +154,11 @@ SENTENCE_BY_CAUSE: dict[str, str] = {
     CAUSE_REPORTED_FAILURE: (
         "the step's own report vetoed it. A step's account of itself can lower its outcome "
         "and never raise it"
+    ),
+    CAUSE_PROVIDER_PROTOCOL: (
+        "the step's session ended a turn without the structured report it is constrained to "
+        "give, so nothing said what it did. This is not a step that reported failure — it "
+        "is a step whose account is missing, and its work may be sitting in the tree"
     ),
     CAUSE_USER_DECISION_REQUIRED: (
         "the step reached a decision it cannot make for itself, so it left the run rather "

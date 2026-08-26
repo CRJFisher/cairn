@@ -39,6 +39,7 @@ from cairn.plan.schema import (
 # the process that would have was killed under it.
 VERIFY_FAILED = "verify_failed"
 REPORTED_FAILURE = "reported_failure"
+PROVIDER_PROTOCOL = "provider_protocol"
 USER_DECISION_REQUIRED = "user_decision_required"
 NOT_REACHED = "not_reached"
 GATE_INDETERMINATE = "gate_indeterminate"
@@ -48,6 +49,7 @@ ORCHESTRATOR_DIED = "orchestrator_died"
 EXCLUSION_CAUSES: tuple[str, ...] = (
     VERIFY_FAILED,
     REPORTED_FAILURE,
+    PROVIDER_PROTOCOL,
     USER_DECISION_REQUIRED,
     NOT_REACHED,
     GATE_INDETERMINATE,
@@ -75,8 +77,23 @@ GATE_RECORD_IT = EXIT_OK
 GATE_EXCLUDE_IT = EXIT_FAILED
 
 
+# What a divergence records where the step gave no account of itself at all. A step whose
+# session ended without reporting is written `failed` by the runtime, because that is the
+# only status a report can carry when there is nothing to carry — and quoting `failed` back
+# puts a verdict in the session's mouth that it never gave ([19 D]).
+REPORTED_NOTHING = "nothing"
+
+
 class Divergence(TypedDict):
-    """Two accounts of one step that do not agree, kept side by side and never resolved."""
+    """Two accounts of one step that do not agree, kept side by side and never resolved.
+
+    `reported` is the step's own word for itself, or `REPORTED_NOTHING` where it gave none.
+    The second is still a divergence worth recording: the assertion found the end state
+    holding, and nothing said so — which is the difference between work that is merely
+    unrecorded and work that was never done. It is also the only channel that fact has. The
+    gate's own summary never reaches the record, and neither does the assertion's exit
+    status; a mark report contributes exactly its cause, its position and this.
+    """
 
     reported: str
     asserted: bool
@@ -89,6 +106,21 @@ class Verdict(TypedDict):
     cause: str | None
     divergence: Divergence | None
     summary: str
+
+
+def divergence_line(divergence: Divergence) -> str:
+    """The one sentence weighing two accounts of a step against each other.
+
+    Stated once because there are two renderings of it — the run record's attention section
+    and `cairn explain exclusion` — and they must not phrase one fact two ways. A divergence
+    is recorded and never resolved ([docs/verify-gate.md]), so the sentence weighs the two
+    accounts rather than settling them, and it never makes a step that said nothing appear
+    to have said the word "nothing".
+    """
+    asserted = "passed" if divergence["asserted"] else "did not pass"
+    if divergence["reported"] == REPORTED_NOTHING:
+        return f"the step's session ended without reporting, and its assertion {asserted}"
+    return f"the step reported {divergence['reported']!r} while its assertion {asserted}"
 
 
 def work_name(step_id: str) -> str:
@@ -152,6 +184,22 @@ def judge(verify_exit: int | None, report: dict[str, Any] | None) -> Verdict:
             cause="user_decision_required",
             divergence=None,
             summary="the step is blocked on a human decision",
+        )
+    if reported == "failed" and report.get("cause") == PROVIDER_PROTOCOL:
+        # The step did not report failure; it reported nothing. Reading the runtime's own
+        # `failed` as a veto records a divergence over an assertion nobody contradicted,
+        # and tells the person their session claimed something it never claimed.
+        return Verdict(
+            record=False,
+            cause=PROVIDER_PROTOCOL,
+            divergence=Divergence(reported=REPORTED_NOTHING, asserted=True)
+            if asserted
+            else None,
+            summary=(
+                "the step's session ended without reporting, over an assertion that passed"
+                if asserted
+                else "the step's session ended without reporting, so nothing said what it did"
+            ),
         )
     if reported == "failed":
         return Verdict(
@@ -303,8 +351,11 @@ __all__ = [
     "GATE_RECORD_IT",
     "ORCHESTRATOR_DIED",
     "POSITIONS",
+    "PROVIDER_PROTOCOL",
+    "REPORTED_NOTHING",
     "Divergence",
     "Verdict",
+    "divergence_line",
     "exit_status_reference",
     "gate_main",
     "judge",

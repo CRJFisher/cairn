@@ -22,7 +22,8 @@ from cairn.core import (
     PopenFactory,
     launch,
 )
-from cairn.protocol import STEP_REPORT_SCHEMA, compose_prompt
+from cairn.hooks import HOOK_VERB, STOP_EVENT
+from cairn.protocol import RESUME_FOR_REPORT, STEP_REPORT_SCHEMA, compose_prompt
 
 PROMPT_WRITER_JOIN_SECONDS = 5.0
 PROVIDER_EXIT_GRACE_SECONDS = 30.0
@@ -237,38 +238,56 @@ def _send_prompt(stream: TextIO, prompt: str) -> None:
 
 PROVIDER_BINARY = "claude"
 
+# Denied in every step's session, ahead of whatever the plan denies. These are the tools
+# whose whole meaning is "something will re-invoke you later", and under `claude -p` nothing
+# ever does: a session that arms one waits for an event that cannot arrive and ends its turn
+# holding work nobody will read.
+#
+# **`Monitor` and `Agent` are deliberately absent, and that is the measured half.** A monitor
+# *blocks* — an until-loop over a file waited twelve seconds and the session read the file in
+# the same turn — and a background subagent holds the process open and re-invokes the session
+# once per completion, three in parallel all arriving. Both have a blocking form, so denying
+# them would take away the two ways a step has of waiting for concurrent work in order to
+# prevent a leak neither of them causes. What actually leaks is a background shell, which
+# cannot be denied by name without denying `Bash` — so the preamble carries that one.
+#
+# Measured against the installed CLI: with these patterns passed, `ScheduleWakeup` and all
+# three `Cron*` tools are gone from the session's tool list and `Monitor` and `Agent` remain.
+# An unmatched deny pattern is silently a no-op, which reads as protection while being none.
+NEVER_DELIVERED: tuple[str, ...] = ("ScheduleWakeup", "Cron*")
 
-def run_claude(
+
+def hook_settings() -> str:
+    """The `--settings` document arming the one hook a step's session runs under.
+
+    Composed per invocation and passed as an argument, so nothing is written to any settings
+    file on the machine — a step arms its own session and leaves nothing behind. Measured: a
+    hook armed this way fires under `-p` and works independently of `--setting-sources`.
+
+    `sys.executable` rather than a bare `python3`: the hook runs as a grandchild of this
+    process, and naming the running interpreter removes the one PATH dependency it would
+    otherwise carry.
+    """
+    command = f"{shlex.quote(sys.executable)} -m cairn {HOOK_VERB} {STOP_EVENT}"
+    return json.dumps(
+        {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": command}]}]}},
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _session_in(
+    command: list[str],
     prompt: str,
     working_directory: Path,
-    permission_mode: str,
-    model: str | None,
-    budget: float | None,
-    tools: list[str],
-    popen_factory: PopenFactory = subprocess.Popen,
-) -> CommandResult:
-    """Run the selected plain-CLI path and translate its two status channels."""
-    session_id = str(uuid.uuid4())
-    command = [
-        PROVIDER_BINARY,
-        "-p",
-        "--output-format",
-        "stream-json",
-        "--verbose",
-        "--json-schema",
-        json.dumps(STEP_REPORT_SCHEMA, separators=(",", ":"), sort_keys=True),
-        "--session-id",
-        session_id,
-        "--permission-mode",
-        permission_mode,
-    ]
-    if model is not None:
-        command.extend(("--model", model))
-    if budget is not None:
-        command.extend(("--max-budget-usd", str(budget)))
-    for pattern in tools:
-        command.extend(("--disallowedTools", pattern))
+    popen_factory: PopenFactory,
+) -> tuple[int, dict[str, Any], list[dict[str, Any]], str | None, bool]:
+    """One provider invocation, drained to its result message.
 
+    Factored out because a session may have to be opened twice — once for the work and once
+    to collect a report it ended a turn without giving ([19 D]) — and the pipe handling here
+    is exactly the part that must not be written twice.
+    """
     process = launch(
         popen_factory,
         command,
@@ -312,21 +331,143 @@ def run_claude(
             process.stdin.close()
         if process.stdout is not None:
             process.stdout.close()
-    translated = _translate_result(
-        return_code,
-        result,
-        rate_limits,
-        generated_session_id=session_id,
-        permission_mode=permission_mode,
-        deny_patterns=tools,
-        model=model,
-        api_key_source=api_key_source,
+    return return_code, result, rate_limits, api_key_source, exited_on_its_own
+
+
+def ended_without_reporting(process_exit: int, result: dict[str, Any]) -> bool:
+    """Whether the session ended a turn without reporting, rather than failing.
+
+    **Measured, and this is the trap:** a *correct* report is itself a tool call, so a
+    session that reported returns `stop_reason: "tool_use"` too. The stop reason decides
+    nothing on its own — the absent `structured_output` beside it is what says the session
+    never reported. A rescue keyed on the reason alone would resume every successful step.
+
+    A nonzero process exit is a different fact again, and `_translate_result` already has
+    typed causes for each of its terminal reasons.
+    """
+    return (
+        process_exit == 0
+        and result.get("stop_reason") == "tool_use"
+        and result.get("structured_output") is None
     )
-    if exited_on_its_own:
-        return translated
-    return translated._replace(
-        detail={**translated.detail, "provider_exit": "stopped_after_result"}
+
+
+def _amount(value: object) -> float:
+    try:
+        return float(cast(float, value))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def run_claude(
+    prompt: str,
+    working_directory: Path,
+    permission_mode: str,
+    model: str | None,
+    budget: float | None,
+    tools: list[str],
+    popen_factory: PopenFactory = subprocess.Popen,
+) -> CommandResult:
+    """Run the selected plain-CLI path and translate its two status channels."""
+    session_id = str(uuid.uuid4())
+    # The plan's own list **adds** to Cairn's; it never replaces it. A plan cannot hand a
+    # step back a tool whose contract the session cannot keep.
+    denied = [*NEVER_DELIVERED, *tools]
+
+    def invocation(*, budget_usd: float | None, resuming: bool) -> list[str]:
+        """The argv for one session — a fresh one, or the same one asked to report.
+
+        Exactly one of `--session-id` and `--resume`, never both and never neither, so a
+        rescue continues the session it is rescuing rather than opening a second one.
+        """
+        composed = [
+            PROVIDER_BINARY,
+            "-p",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--json-schema",
+            json.dumps(STEP_REPORT_SCHEMA, separators=(",", ":"), sort_keys=True),
+            "--resume" if resuming else "--session-id",
+            session_id,
+            "--permission-mode",
+            permission_mode,
+            # The session is held to the shape the preamble states: a turn does not end
+            # while a background shell it started is still running ([hooks.py]).
+            "--settings",
+            hook_settings(),
+        ]
+        if model is not None:
+            composed.extend(("--model", model))
+        if budget_usd is not None:
+            composed.extend(("--max-budget-usd", str(budget_usd)))
+        for pattern in denied:
+            composed.extend(("--disallowedTools", pattern))
+        return composed
+
+    return_code, result, rate_limits, api_key_source, exited_on_its_own = _session_in(
+        invocation(budget_usd=budget, resuming=False),
+        prompt,
+        working_directory,
+        popen_factory,
     )
+
+    rescue: dict[str, Any] = {}
+    if ended_without_reporting(return_code, result):
+        # A session that ended a turn without reporting is not a session that failed: it
+        # may have done all of the work and simply stopped short of saying so. Measured,
+        # the alternative was discarding $10.89 of work an assertion had just proved.
+        spent = _amount(result.get("total_cost_usd"))
+        remaining = None if budget is None else round(budget - spent, 6)
+        if remaining is not None and remaining <= 0:
+            # The offer priced one ceiling for this step and a second invocation carrying a
+            # fresh full budget would double the ceiling the person agreed to.
+            rescue = {"resumed_for_report": "budget_exhausted"}
+        else:
+            (
+                return_code,
+                resumed,
+                more_limits,
+                more_source,
+                exited_on_its_own,
+            ) = _session_in(
+                invocation(budget_usd=remaining, resuming=True),
+                RESUME_FOR_REPORT,
+                working_directory,
+                popen_factory,
+            )
+            # Both passes are one step's spend, and a record that named only the second
+            # would under-report what the step cost.
+            resumed["total_cost_usd"] = spent + _amount(resumed.get("total_cost_usd"))
+            resumed["num_turns"] = int(_amount(result.get("num_turns"))) + int(
+                _amount(resumed.get("num_turns"))
+            )
+            result = resumed
+            rate_limits = [*rate_limits, *more_limits]
+            api_key_source = more_source or api_key_source
+            rescue = {"resumed_for_report": True, "abandoned_cost_usd": spent}
+
+    try:
+        translated = _translate_result(
+            return_code,
+            result,
+            rate_limits,
+            generated_session_id=session_id,
+            permission_mode=permission_mode,
+            deny_patterns=denied,
+            model=model,
+            api_key_source=api_key_source,
+        )
+    except CairnError as unreported:
+        # The rescue's own account has to survive the failure it was trying to prevent:
+        # a step recorded `provider_protocol` with no word about whether a resume was
+        # attempted leaves nobody able to tell a rescue that failed from one never tried.
+        unreported.detail = {**unreported.detail, **rescue}
+        raise
+    detail = {**translated.detail, **rescue}
+    if not exited_on_its_own:
+        detail["provider_exit"] = "stopped_after_result"
+    return translated._replace(detail=detail)
 
 
 PROVIDER_RUNNERS: dict[str, ProviderRunner] = {

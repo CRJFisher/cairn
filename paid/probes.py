@@ -54,7 +54,6 @@ from cairn.gitio import runs_root
 from cairn.layout import reports_directory
 from cairn.record.vocabulary import EXIT_EXCLUSIONS
 from cairn.workflow.schema import OCCASION_PARAM, PARENT_BRANCH_PARAM
-
 from paid.engine import definition, start, write_definition
 from paid.redact import named_state, redact_world
 from paid.session import PROVIDER_BINARY, environment, tool

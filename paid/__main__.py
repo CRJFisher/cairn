@@ -32,7 +32,6 @@ from types import ModuleType
 
 from cairn.core import CairnError
 from cairn.marker import mint_occasion
-
 from paid.cases import consent, differentiating, merge, reading, skill
 from paid.harness import Aborted, Harness, Taken
 from paid.measure import (

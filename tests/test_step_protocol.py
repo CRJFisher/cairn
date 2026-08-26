@@ -1,3 +1,5 @@
+import copy
+import io
 import json
 import os
 import re
@@ -19,6 +21,7 @@ from unittest.mock import patch
 from cairn.__main__ import asks_for_help, main
 from cairn.core import CairnError, CommandResult
 from cairn.emitters import emit_step, marker_gate
+from cairn.hooks import HOLD_IT_OPEN, HOOK_VERB, LET_IT_END, hook_main
 from cairn.layout import occasion_path, reports_directory
 from cairn.marker import (
     MARKER_DIRECTORY,
@@ -145,6 +148,117 @@ def work_report(
         )
     )
     return path
+
+
+# Captured verbatim from the harness at the end of a turn, with the fields this decision
+# reads. A live background shell is `type: "shell", status: "running"`; a background
+# subagent is a different type and is waited for.
+MEASURED_STOP_PAYLOAD: dict[str, Any] = {
+    "session_id": "851a5b4b-9bee-420e-9ad5-54869440a0b7",
+    "transcript_path": "/home/p/851a5b4b.jsonl",
+    "cwd": "/srv/work/product",
+    "hook_event_name": "Stop",
+    "stop_hook_active": False,
+    "last_assistant_message": "Both watch monitors are armed.",
+    "background_tasks": [
+        {
+            "id": "byljprh21",
+            "type": "shell",
+            "status": "running",
+            "description": "the core suite",
+            "command": "npm test -- --run",
+        }
+    ],
+    "session_crons": [],
+}
+
+
+def _payload(**changes: Any) -> dict[str, Any]:
+    return {**copy.deepcopy(MEASURED_STOP_PAYLOAD), **changes}
+
+
+class TheSessionIsHeldOpenForWhatItLeftRunning(unittest.TestCase):
+    """The one leak a deny list cannot close, closed where the turn tries to end.
+
+    This hook's contract with the harness rests on the measurement above rather than on a
+    test against the harness itself, the way `triggerActor` rests on a spike
+    ([docs/triggers.md]). The payload is pinned verbatim so a drift in it is visible.
+    """
+
+    def _ran(self, payload: object) -> tuple[int, str]:
+        spoken = io.StringIO()
+        with redirect_stderr(spoken):
+            code = hook_main(["stop"], io.StringIO(json.dumps(payload)))
+        return code, spoken.getvalue()
+
+    def test_a_running_background_shell_holds_the_turn_and_names_its_command(self) -> None:
+        code, said = self._ran(_payload())
+        self.assertEqual(code, HOLD_IT_OPEN)
+        self.assertIn("npm test -- --run", said)
+        self.assertIn("nothing will read them", said)
+
+    def test_a_finished_shell_lets_the_turn_end(self) -> None:
+        payload = _payload()
+        payload["background_tasks"][0]["status"] = "completed"
+        self.assertEqual(self._ran(payload)[0], LET_IT_END)
+
+    def test_a_background_subagent_lets_the_turn_end(self) -> None:
+        """Measured: a background subagent holds the process open and re-invokes the
+        session on completion, three in parallel all arriving. Holding the turn for one
+        would refuse exactly the fan-out this is written to preserve."""
+        payload = _payload()
+        payload["background_tasks"][0]["type"] = "subagent"
+        self.assertEqual(self._ran(payload)[0], LET_IT_END)
+
+    def test_a_turn_already_sent_back_once_is_let_go(self) -> None:
+        """`stop_hook_active` is the harness's own bound, and it is what keeps this from
+        being a loop that spends a step's budget on its own refusal."""
+        self.assertEqual(self._ran(_payload(stop_hook_active=True))[0], LET_IT_END)
+
+    def test_every_running_shell_is_named(self) -> None:
+        payload = _payload()
+        payload["background_tasks"].append(
+            {"id": "b2", "type": "shell", "status": "running", "command": "pytest -q"}
+        )
+        code, said = self._ran(payload)
+        self.assertEqual(code, HOLD_IT_OPEN)
+        self.assertIn("npm test -- --run", said)
+        self.assertIn("pytest -q", said)
+
+    def test_a_payload_it_cannot_read_lets_the_turn_end(self) -> None:
+        """Fail open, the exact inverse of the verify gate: this holds a paid session, so a
+        fault in it spends money in a loop, and it protects nothing durable."""
+        unreadable: tuple[object, ...] = (
+            None,
+            [],
+            {},
+            {"background_tasks": "x"},
+            {"background_tasks": [1]},
+        )
+        for payload in unreadable:
+            with self.subTest(payload=payload):
+                self.assertEqual(self._ran(payload)[0], LET_IT_END)
+        spoken = io.StringIO()
+        with redirect_stderr(spoken):
+            self.assertEqual(hook_main(["stop"], io.StringIO("not json")), LET_IT_END)
+
+    def test_the_verb_resolves_no_runtime_identity_and_leaves_no_report(self) -> None:
+        """It runs as a grandchild of a step and inherits the step's own environment. One
+        that reached `RuntimeContext.from_env()` would overwrite the report the verify gate
+        reads to decide that step's fate."""
+        with tempfile.TemporaryDirectory() as temporary:
+            reports = Path(temporary) / "runs" / "20260101T000000Z-aaaabbbb" / "reports"
+            reports.mkdir(parents=True)
+            environment = {
+                "DAG_RUN_ID": "20260101T000000Z-aaaabbbb",
+                "DAG_RUN_STEP_NAME": "work_thing",
+                "DAG_RUN_WORK_DIR": temporary,
+                "CAIRN_RUNS_DIR": str(Path(temporary) / "runs"),
+            }
+            with patch.dict(os.environ, environment, clear=False):
+                code = main([HOOK_VERB, "stop"])
+            self.assertEqual(code, LET_IT_END)
+            self.assertEqual(list(reports.iterdir()), [])
 
 
 class TheProtocolIsStatedOnce(unittest.TestCase):

@@ -44,6 +44,7 @@ from cairn.report.phrases import (
 )
 from cairn.topology import Naming, TopologyError, parse_node_name
 from cairn.verify import EXCLUSION_CAUSES
+from cairn.verify import divergence_line as _divergence_line
 from cairn.workflow.schema import (
     CAIRN_INVOCATION,
     LABEL_PLAN,
@@ -289,12 +290,7 @@ def why_excluded(record: RunRecord, step_id: str) -> Exclusion:
             # Both accounts, neither named the winner. A divergence is recorded and never
             # resolved ([docs/verify-gate.md]), so the sentence weighs them rather than
             # settling them.
-            divergence=(
-                f"the step reported {divergence['reported']!r} while its assertion "
-                f"{'passed' if divergence['asserted'] else 'did not pass'}"
-            )
-            if divergence is not None
-            else None,
+            divergence=None if divergence is None else _divergence_line(divergence),
             branch=step["branch"],
             consequence=CONSEQUENCE if cause else NOT_EXCLUDED,
         )

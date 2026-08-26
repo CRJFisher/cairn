@@ -48,7 +48,6 @@ from cairn.skill.vocabulary import (
     CAPABILITY_RUN,
     CAPABILITY_SCHEDULE,
 )
-
 from paid.engine import record_of, steps_of
 from paid.harness import Aborted, Harness
 from paid.measure import Measurement, Unit, bounded, ending_of, fault_of

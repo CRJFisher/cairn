@@ -35,6 +35,7 @@ from cairn.core import (
 )
 from cairn.enginehome import run_records_path
 from cairn.gitio import refuse_unusable_repository
+from cairn.hooks import HOOK_VERB, hook_main
 from cairn.locks import (
     acquire_run_lock,
     describe_holder,
@@ -560,6 +561,18 @@ def gate_main(arguments: list[str]) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
+    # The hook a step's session runs under. Routed here, ahead of everything that resolves
+    # a runtime identity, because it runs as a grandchild of a step and inherits the step's
+    # own environment — one that reached `RuntimeContext.from_env()` would overwrite the
+    # very report the verify gate reads to decide that step's fate ([hooks.py]).
+    if arguments and arguments[0] == HOOK_VERB:
+        return hook_main(arguments[1:])
+    # The hook a step's session runs under. Routed here, ahead of everything that resolves
+    # a runtime identity, because it runs as a grandchild of a step and inherits the step's
+    # own environment — one that reached `RuntimeContext.from_env()` would overwrite the
+    # very report the verify gate reads to decide that step's fate ([hooks.py]).
+    if arguments and arguments[0] == HOOK_VERB:
+        return hook_main(arguments[1:])
     if arguments and arguments[0] == "plan":
         return plan_main(arguments[1:])
     if arguments and arguments[0] == "occasion":

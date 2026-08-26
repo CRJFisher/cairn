@@ -35,7 +35,6 @@ from cairn.topology import derive
 from cairn.verify import mark_name
 from cairn.workflow.build import envelope
 from cairn.workflow.schema import OCCASION_PARAM, PARENT_BRANCH_PARAM, EngineStep
-
 from paid.engine import (
     bound_body,
     emitted_node,
