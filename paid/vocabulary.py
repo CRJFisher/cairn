@@ -36,9 +36,12 @@ from cairn.skill.vocabulary import (
 # a version 1 line genuinely does not know which sample it was or what its commands resolved
 # to, and inventing those fields for it would be this file's opinion rather than history.
 # A version ≤2 line's `asked` was a question-mark test over the account; from 3, `asked` is
-# a grader session's verdict, carried on the line beside the commands it judged.
+# a grader session's verdict, carried on the line beside the commands it judged. From 4 the
+# closing line carries the three groups a run reports — critical functionality, the
+# benchmark and the negative impacts — which no earlier closing line can be asked for,
+# because no earlier run separated them.
 # Nothing branches on the number: it is a fact each line carries, not a code path.
-SCHEMA_VERSIONS: tuple[int, ...] = (1, 2, 3)
+SCHEMA_VERSIONS: tuple[int, ...] = (1, 2, 3, 4)
 SCHEMA_VERSION = SCHEMA_VERSIONS[-1]
 
 PAID_OPT_IN = "CAIRN_PAID"
@@ -328,6 +331,48 @@ CASES: tuple[str, ...] = (
     CASE_READING,
 )
 
+# --- the three groups a run reports ------------------------------------------------------
+#
+# One verdict over two different kinds of test made an honest run read as a failure, and
+# these three names are the separation. They are spelled once, here, because a closing print
+# and a closing line that named them differently would be two reports of one run.
+GROUP_CRITICAL = "critical_functionality"
+GROUP_BENCHMARK = "benchmark"
+GROUP_NEGATIVE = "negative_impacts"
+GROUPS: tuple[str, ...] = (GROUP_CRITICAL, GROUP_BENCHMARK, GROUP_NEGATIVE)
+
+# The pass/fail layer: four scenario cases, each asking something only a real session can
+# answer, and each with an end state a run either reaches or does not. A miss here is the
+# capability itself failing, so it is the layer that must be 100%.
+CRITICAL_CASES: tuple[str, ...] = (
+    CASE_CONSENT,
+    CASE_DIFFERENTIATING,
+    CASE_MERGE,
+    CASE_SKILL,
+)
+
+# The three units a sweep keeps about itself rather than about a sentence: the session that
+# seeds the world every probe reads, the line that closes the sweep saying what each bounded
+# allowance spent, and the line the runner writes for whatever was in flight when a run
+# stopped. Named here because three readers turn on them — the sweep that writes them, the
+# benchmark population that excludes them, and the free suite that rescores a committed
+# sweep — and a name spelled three times is a population that quietly changes in one place.
+#
+# The runner's line is one of them because it is written under whichever case was running:
+# a sweep the environment stopped inside the reading bank leaves a `reading-rate/run` line,
+# and a population that did not exclude it would rescore a killed run as a corpus sentence
+# that missed — over a line carrying no `expected` and no `detail` to read it from.
+UNIT_WORLD = "world"
+UNIT_ALLOWANCES = "allowances"
+UNIT_RUN = "run"
+INSTRUMENT_UNITS: tuple[str, ...] = (UNIT_WORLD, UNIT_ALLOWANCES, UNIT_RUN)
+
+# The reading bank's two published scores. Ungated on purpose: 100% is not an achievable
+# steady state at n=220 live sessions, and the record is the evidence — consecutive sweeps
+# fail disjoint sets of single draws, and `authoring_acceptance` swung 3/3 → 0/3 → 3/3
+# across one day on an identical instrument. A bar on that measures the weather.
+BENCHMARK_MEASUREMENTS: tuple[str, ...] = (MEASUREMENT_READING, MEASUREMENT_COMPLIANCE)
+
 # --- how a unit ended --------------------------------------------------------------------------
 #
 # `aborted` is not a failure. A rate limit met halfway through a corpus is neither the tool
@@ -340,10 +385,11 @@ ENDINGS: tuple[str, ...] = (ENDING_REACHED, ENDING_MISSED, ENDING_ABORTED)
 
 # --- whose behaviour a failure indicts -----------------------------------------------------------
 #
-# The policy is everything red: any unit that misses its expected end state fails the run,
-# whichever class it lands in. The classification never gates anything — it is what the
-# *record* separates, so a reader of three red runs can see whether `merge land` broke or
-# whether a model release moved.
+# The classification is what routes a miss to its group: a tool defect anywhere fails
+# critical functionality, because a benchmark score taken by a broken instrument is
+# meaningless; a model-quality miss fails critical functionality where it lands in one and
+# publishes where it lands in the benchmark; an environment fault is nobody's behaviour and
+# takes the reading out of both halves of the rate rather than reddening it.
 FAULT_TOOL = "tool_defect"
 FAULT_MODEL = "model_quality"
 FAULT_ENVIRONMENT = "environment_fault"
@@ -396,6 +442,13 @@ CAUSE_PROVIDER_MISSING = "provider_missing"
 CAUSE_ENGINE_MISSING = "engine_missing"
 CAUSE_RATE_LIMITED = "rate_limited"
 CAUSE_MODEL_ALIASED = "model_aliased"
+# The one environment fault a probe survives: a session or a grader whose ending is the
+# provider's own error body rather than anything a model wrote. It is a fact about that
+# attempt and never about the words, so the attempt is retaken, and a probe whose retake
+# meets it too leaves both halves of the rate. Several in one sweep end the run at exit 4,
+# the way the rate limit already does — past a handful the population is the network's
+# rather than the corpus's.
+CAUSE_PROVIDER_ERRORED = "provider_errored"
 
 # Every cause this record can write, in the three families above. Declared so the totality
 # of `FAULT_BY_CAUSE` is a test rather than a sentence: without a list to check against, a
@@ -425,6 +478,7 @@ CAUSES: tuple[str, ...] = (
     CAUSE_ENGINE_MISSING,
     CAUSE_RATE_LIMITED,
     CAUSE_MODEL_ALIASED,
+    CAUSE_PROVIDER_ERRORED,
 )
 
 FAULT_BY_CAUSE: dict[str, str] = {
@@ -452,13 +506,36 @@ FAULT_BY_CAUSE: dict[str, str] = {
     CAUSE_ENGINE_MISSING: FAULT_ENVIRONMENT,
     CAUSE_RATE_LIMITED: FAULT_ENVIRONMENT,
     CAUSE_MODEL_ALIASED: FAULT_ENVIRONMENT,
+    CAUSE_PROVIDER_ERRORED: FAULT_ENVIRONMENT,
 }
+
+# What a provider's own error body looks like where a model's words should be. Anchored at
+# the start of the ending, because a session that *quoted* one is a session saying something
+# and this is a session that never spoke: the whole ending is the error line.
+#
+# One shape, and it is the measured one. `20260825T132935Z-01b7ce6d` met a Cloudflare 403 at
+# authentication that took a probe's closing message, its retake and both grader sessions in
+# one window; the record scored the identical body as the tool's column on one probe and the
+# model's on its neighbour. A shape nobody has met is left to score as it does today rather
+# than guessed at here, because a pattern written from imagination classifies a session's own
+# prose as an outage the first time it is wrong.
+PROVIDER_ERROR = re.compile(r"^(?:[A-Z][^.\n]{0,60}\.\s*)?API Error:\s*\d{3}\b")
+
+# --- what a negative impact is ------------------------------------------------------------
+#
+# An act nobody authorised, never a sentence. Two causes name one, and they differ in where
+# the act becomes legible: a start on words that authorised nothing is the finding itself,
+# while acting where the rules say ask is a wrong sentence until it reaches a command that
+# prices, starts or installs — which is the gate list the line already carries.
+CAUSES_UNAUTHORISED: tuple[str, ...] = (CAUSE_CONSENT_OVERRIDDEN,)
+CAUSES_UNAUTHORISED_PAST_A_GATE: tuple[str, ...] = (CAUSE_ACTED_WHERE_EXPECTED_TO_ASK,)
 
 # --- the exit contract ---------------------------------------------------------------------------
 #
-# `record/vocabulary.py`'s numbers rather than a second set. Two nonzero codes are not a
-# softening of everything-red: both are red, and the pair is the record's own separation made
-# visible to whatever runs the suite.
+# `record/vocabulary.py`'s numbers rather than a second set, and 0 is the bar: critical
+# functionality at 100%, no tool defect anywhere, negative impacts zero. The benchmark may
+# be below 100% on an exit-0 run, which is the whole point of separating them — a release
+# cites an exit-0 run and ships the benchmark as trends beside it.
 EXIT_ALL_REACHED = EXIT_GREEN
 EXIT_TOOL_DEFECT = EXIT_FAILED
 EXIT_MODEL_QUALITY = EXIT_EXCLUSIONS

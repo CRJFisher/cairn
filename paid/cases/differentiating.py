@@ -165,7 +165,7 @@ def run(harness: Harness) -> None:
             Unit(
                 case=NAME,
                 unit=STEP_ID,
-                ending=ending_of(cause is None),
+                ending=ending_of(cause),
                 cause=cause,
                 seconds=round(time.monotonic() - began, 3),
                 role=ROLE_STEP,

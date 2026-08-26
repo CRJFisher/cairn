@@ -53,7 +53,6 @@ class Turn(NamedTuple):
     seen: Observed
 
 
-Taken = list[tuple[str, Measurement]]
 Allowances = dict[str, dict[str, int]]
 
 
@@ -67,7 +66,6 @@ class Harness:
     models: Models
     ledger: Ledger
     journal: Journal
-    taken: Taken = field(default_factory=Taken)
     # What each bounded allowance a case declares actually spent, carried to the line that
     # closes the run. A rate taken with a spent allowance and one taken with room left are
     # not the same measurement, and the closing line is where a reader comparing two runs
@@ -94,11 +92,13 @@ class Harness:
         The skill case settles authoring acceptance before it starts the run whose
         divergences are its other number, and the run is the part that can die. Written
         here, the first number survives whatever kills the second.
+
+        Written and not also kept: the closing report is taken over the lines the journal
+        published, so a number this held beside them would be a second account of the run.
         """
         self.journal.write(
             measurement_line(measurement, run=self.run_id, case=case, models=self.models)
         )
-        self.taken.append((case, measurement))
 
     def scrub(self, text: str) -> str:
         """The two paths a session's own prose can carry, taken back out of it."""

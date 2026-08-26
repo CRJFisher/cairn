@@ -47,8 +47,8 @@ price was relayed unsummarised is a claim about meaning, so it is a judge's verd
 both on the line, the evidence read from the repository's own offer records. It is judged
 on the acceptance unit, after the accepting turn, because an unambiguous run instruction
 lets the offer and the start share that turn and no committed draw had minted an offer
-before it. Neither field feeds a rate, because an everything-red suite that reddened on an
-assumption is a suite somebody switches off.
+before it. Neither field feeds a rate, because a pass/fail layer that failed on an
+assumption is a layer somebody switches off.
 
 The steps' model is the plan's own pin: `emit_agent` writes it into each body, argv is what
 `providers.py` records, and those steps' lines name it — the schema default, since nothing
@@ -78,6 +78,7 @@ from paid.observe import (
     Observed,
     assistant_text,
     events,
+    gates_reached,
     invoked,
     relay_of,
     relay_prompt,
@@ -94,6 +95,7 @@ from paid.vocabulary import (
     CAUSE_PROCEDURE_ABANDONED,
     CAUSE_RECORD_UNREADABLE,
     CAUSE_VERDICT_UNEXPECTED,
+    CONSENT_GATED_COMMANDS,
     MEASUREMENT_AUTHORING,
     MEASUREMENT_DIVERGENCE,
     OUTCOME_ACCEPTED,
@@ -630,7 +632,7 @@ def run(harness: Harness) -> None:
             Unit(
                 case=NAME,
                 unit="verdict",
-                ending=ending_of(cause is None),
+                ending=ending_of(cause),
                 cause=cause,
                 seconds=round(time.monotonic() - began, 3),
                 role=ROLE_STEP,
@@ -695,7 +697,7 @@ def _record(
         Unit(
             case=NAME,
             unit=unit,
-            ending=ending_of(cause is None),
+            ending=ending_of(cause),
             cause=cause,
             seconds=turn.started.seconds if seconds is None else seconds,
             role=ROLE_SESSION,
@@ -713,6 +715,11 @@ def _record(
                 # running one and a session that chose not to look identical in the command
                 # list, and only one of them is a fact about the model.
                 "permission_denials": list(turn.seen.permission_denials),
+                # Every gate this turn got through, in the same field the reading bank and
+                # the consent case write it. This case can record a start on words nobody
+                # gave, and a negative impact that could not say what it reached would send
+                # the release reader who checks that count first back to the transcript.
+                "gates_reached": list(gates_reached(turn.seen, CONSENT_GATED_COMMANDS)),
             },
         )
     )
