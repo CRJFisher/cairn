@@ -106,6 +106,8 @@ CORPUS = json.loads(
     (PACKAGE_ROOT / "fixtures" / "invocations" / "cases.json").read_text(encoding="utf-8")
 )
 CASES = cast(list[dict[str, Any]], CORPUS["cases"])
+# One well-formed run id, for the tests whose subject is the ledger rather than the run.
+RUN_ID = "20260101T000000Z-aaaabbbb"
 WORKFLOWS = PACKAGE_ROOT / "fixtures" / "workflows"
 GOLDEN_WORKFLOW = WORKFLOWS / "mixed-kinds.yaml"
 
@@ -665,13 +667,13 @@ class WhatAcceptsAnOfferAndWhatDoesNot(unittest.TestCase):
 
     def test_a_qualifying_yes_authorises_one_execution(self) -> None:
         made = self._offer()
-        granted = consent.spend(self.repository, made.offer_id, reply="yes, go ahead")
+        granted = consent.spend(self.repository, made.offer_id, reply="yes, go ahead", run_id=RUN_ID)
         self.assertIsInstance(granted, consent.Authorisation)
 
     def test_the_same_acceptance_cannot_authorise_a_second(self) -> None:
         made = self._offer()
-        consent.spend(self.repository, made.offer_id, reply="yes, go ahead")
-        again = consent.spend(self.repository, made.offer_id, reply="yes, go ahead")
+        consent.spend(self.repository, made.offer_id, reply="yes, go ahead", run_id=RUN_ID)
+        again = consent.spend(self.repository, made.offer_id, reply="yes, go ahead", run_id=RUN_ID)
         self.assertIsInstance(again, consent.Refused)
         self.assertEqual(cast(consent.Refused, again).outcome, "already_spent")
 
@@ -679,7 +681,7 @@ class WhatAcceptsAnOfferAndWhatDoesNot(unittest.TestCase):
         # A run spends money and commits on someone's say-so. Recording only *that* it was
         # accepted leaves nothing afterwards able to answer which words did it.
         made = self._offer()
-        consent.spend(self.repository, made.offer_id, reply="yes, run it")
+        consent.spend(self.repository, made.offer_id, reply="yes, run it", run_id=RUN_ID)
         accepted = consent.acceptance_of(self.repository, made.offer_id)
         self.assertIsNotNone(accepted)
         self.assertEqual(cast(consent.Acceptance, accepted).reply, "yes, run it")
@@ -691,8 +693,8 @@ class WhatAcceptsAnOfferAndWhatDoesNot(unittest.TestCase):
 
     def test_the_second_acceptance_still_names_when_the_first_was_spent(self) -> None:
         made = self._offer()
-        consent.spend(self.repository, made.offer_id, reply="yes, go ahead")
-        again = consent.spend(self.repository, made.offer_id, reply="yes, go ahead")
+        consent.spend(self.repository, made.offer_id, reply="yes, go ahead", run_id=RUN_ID)
+        again = consent.spend(self.repository, made.offer_id, reply="yes, go ahead", run_id=RUN_ID)
         moment = cast(consent.Acceptance, consent.acceptance_of(self.repository, made.offer_id))
         self.assertIn(moment.spent_at, cast(consent.Refused, again).why)
 
@@ -700,7 +702,10 @@ class WhatAcceptsAnOfferAndWhatDoesNot(unittest.TestCase):
         """It cannot quote an id that did not exist when it was given — the clause holds by
         the shape of the token rather than by comparing clocks."""
         refused = consent.spend(
-            self.repository, "20200101T000000Z-deadbeef", reply="yes, go ahead"
+            self.repository,
+            "20200101T000000Z-deadbeef",
+            reply="yes, go ahead",
+            run_id=RUN_ID,
         )
         self.assertIsInstance(refused, consent.Refused)
         self.assertEqual(cast(consent.Refused, refused).outcome, "no_such_offer")
@@ -724,7 +729,7 @@ class WhatAcceptsAnOfferAndWhatDoesNot(unittest.TestCase):
                 "{", encoding="utf-8"
             )
         elif standing == "spent":
-            consent.spend(self.repository, made.offer_id, reply="yes, go ahead")
+            consent.spend(self.repository, made.offer_id, reply="yes, go ahead", run_id=RUN_ID)
         elif standing == "moved":
             self.workflow.write_text("{}", encoding="utf-8")
         return made.offer_id
@@ -733,7 +738,10 @@ class WhatAcceptsAnOfferAndWhatDoesNot(unittest.TestCase):
         for case in family("consent"):
             with self.subTest(case=case["id"]):
                 answered = consent.spend(
-                    self.repository, self._staged(case), reply=case["reply"]
+                    self.repository,
+                    self._staged(case),
+                    reply=case["reply"],
+                    run_id=RUN_ID,
                 )
                 if case["expect"]["outcome"] == "accepted":
                     self.assertIsInstance(answered, consent.Authorisation)
@@ -760,7 +768,10 @@ class WhatAcceptsAnOfferAndWhatDoesNot(unittest.TestCase):
             with self.subTest(case=case["id"]):
                 self.assertEqual(case["expect"]["outcome"], "accepted")
                 answered = consent.spend(
-                    self.repository, self._staged(case), reply=case["reply"]
+                    self.repository,
+                    self._staged(case),
+                    reply=case["reply"],
+                    run_id=RUN_ID,
                 )
                 self.assertIsInstance(answered, consent.Authorisation)
 
@@ -778,7 +789,7 @@ class WhatAcceptsAnOfferAndWhatDoesNot(unittest.TestCase):
         made = self._offer()
         for reply in ("", "   ", "..."):
             with self.subTest(reply=reply):
-                answered = consent.spend(self.repository, made.offer_id, reply=reply)
+                answered = consent.spend(self.repository, made.offer_id, reply=reply, run_id=RUN_ID)
                 self.assertIsInstance(answered, consent.Refused)
                 self.assertEqual(cast(consent.Refused, answered).outcome, "no_words")
 
@@ -790,7 +801,7 @@ class WhatAcceptsAnOfferAndWhatDoesNot(unittest.TestCase):
         a filesystem fault."""
         made = self._offer()
         consent.offer_path(self.repository, made.offer_id).write_text("{", encoding="utf-8")
-        answered = consent.spend(self.repository, made.offer_id, reply="yes, go ahead")
+        answered = consent.spend(self.repository, made.offer_id, reply="yes, go ahead", run_id=RUN_ID)
         self.assertIsInstance(answered, consent.Refused)
         self.assertEqual(cast(consent.Refused, answered).outcome, "offer_unreadable")
 
@@ -808,8 +819,8 @@ class WhatAcceptsAnOfferAndWhatDoesNot(unittest.TestCase):
         """A refusal is not a consumption: the person's yes still stands once the cause is
         cleared, and asking again would be asking twice for one decision."""
         made = self._offer()
-        consent.spend(self.repository, made.offer_id, reply="")
-        granted = consent.spend(self.repository, made.offer_id, reply="yes, run it")
+        consent.spend(self.repository, made.offer_id, reply="", run_id=RUN_ID)
+        granted = consent.spend(self.repository, made.offer_id, reply="yes, run it", run_id=RUN_ID)
         self.assertIsInstance(granted, consent.Authorisation)
 
     def test_an_offer_is_void_once_the_definition_it_priced_has_moved(self) -> None:
@@ -818,7 +829,7 @@ class WhatAcceptsAnOfferAndWhatDoesNot(unittest.TestCase):
             self.workflow.read_text("utf-8").replace("mixed-kinds", "something-else"),
             encoding="utf-8",
         )
-        refused = consent.spend(self.repository, made.offer_id, reply="yes, go ahead")
+        refused = consent.spend(self.repository, made.offer_id, reply="yes, go ahead", run_id=RUN_ID)
         self.assertIsInstance(refused, consent.Refused)
         self.assertEqual(cast(consent.Refused, refused).outcome, "workflow_moved")
 
@@ -827,7 +838,7 @@ class WhatAcceptsAnOfferAndWhatDoesNot(unittest.TestCase):
         moments so a zero gap is visible rather than claimed against."""
         made = self._offer()
         self.assertTrue(made.offered_at)
-        granted = consent.spend(self.repository, made.offer_id, reply="yes")
+        granted = consent.spend(self.repository, made.offer_id, reply="yes", run_id=RUN_ID)
         self.assertTrue(cast(consent.Authorisation, granted).granted_at)
 
     def test_the_ledger_lives_where_no_commit_or_worktree_removal_can_reach_it(self) -> None:
@@ -839,6 +850,51 @@ class WhatAcceptsAnOfferAndWhatDoesNot(unittest.TestCase):
         for case in family("consent"):
             with self.subTest(case=case["id"]):
                 self.assertIn(case["expect"]["outcome"], CONSENT_OUTCOMES)
+
+
+def _engine_that_exited(code: int | None) -> Callable[..., "FakeEngine"]:
+    """A launcher standing in for one whose child is already in a known state."""
+
+    def launched(*_arguments: object) -> FakeEngine:
+        return FakeEngine(exit_code=code)
+
+    return launched
+
+
+def _answers(replies: list[bool]) -> Callable[..., bool]:
+    """`engine_holds` answering a scripted sequence, so the poll loop can be driven."""
+
+    def asked(*_arguments: object) -> bool:
+        return replies.pop(0)
+
+    return asked
+
+
+class FakeEngine:
+    """A launched engine that never exits, which is what a detached start expects.
+
+    `poll` answering `None` is the ordinary case: `start` returns once the engine's own
+    history says it has the run, and the process outlives the command that made it.
+    """
+
+    def __init__(self, exit_code: int | None = None) -> None:
+        self.returncode = exit_code
+        self.waited = False
+        self.stdin = None
+        self.stdout = None
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.waited = True
+        return 0 if self.returncode is None else self.returncode
+
+    def terminate(self) -> None:
+        raise AssertionError("a detached engine is never terminated by the start")
+
+    def kill(self) -> None:
+        raise AssertionError("a detached engine is never killed by the start")
 
 
 class NoInvocationStartsARunWithoutAQualifyingYes(unittest.TestCase):
@@ -856,9 +912,9 @@ class NoInvocationStartsARunWithoutAQualifyingYes(unittest.TestCase):
         shutil.copy(GOLDEN_WORKFLOW, self.workflow)
         self.launched: list[Sequence[str]] = []
 
-    def _runner(self, command: Sequence[str]) -> int:
+    def _factory(self, command: Sequence[str], **_options: Any) -> FakeEngine:
         self.launched.append(command)
-        return 0
+        return FakeEngine()
 
     def _offer(self) -> consent.Offer:
         made, _ = consent.make_offer(
@@ -877,7 +933,8 @@ class NoInvocationStartsARunWithoutAQualifyingYes(unittest.TestCase):
         and every other process is forbidden — so the count is over processes started rather
         than over the one seam the test injected.
         """
-        granted = consent.spend(self.repository, offer_id, reply=reply)
+        run_id = "20260101T000000Z-aaaabbbb"
+        granted = consent.spend(self.repository, offer_id, reply=reply, run_id=run_id)
         if isinstance(granted, consent.Refused):
             return
         with (
@@ -886,7 +943,14 @@ class NoInvocationStartsARunWithoutAQualifyingYes(unittest.TestCase):
             patch("subprocess.run", side_effect=AssertionError("started a process")),
             patch("subprocess.Popen", side_effect=AssertionError("started a process")),
         ):
-            trigger.start(granted, "20260101T000000Z-aaaabbbb", runner=self._runner)
+            trigger.start(
+                granted,
+                run_id,
+                runs_root=self.repository / "runs",
+                records=self.repository / "records",
+                popen_factory=self._factory,
+                registered=lambda _identity: True,
+            )
 
     def test_no_classification_of_any_case_reaches_the_ledger(self) -> None:
         """Dispatch selecting Run is an offer, never an execution — and reading a request
@@ -1556,6 +1620,61 @@ class ExplainAnswersItsThreeQuestions(unittest.TestCase):
                 )
 
 
+class TheEngineIsLaunchedToOutliveTheCommand(unittest.TestCase):
+    """Detachment is four flags, and each one is a way the run dies without it."""
+
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.options: dict[str, Any] = {}
+
+    def _factory(self, command: Sequence[str], **options: Any) -> FakeEngine:
+        self.options = options
+        return FakeEngine()
+
+    def test_the_engine_leaves_the_commands_session_and_process_group(self) -> None:
+        """Measured 2026-08-25: a detached start outlived the session that launched it by
+        1h18m and the release still gave the repository back. Without this a harness
+        killing its process tree, and a hangup on a closing terminal, both reach the run."""
+        trigger.launch_detached(("true",), self.root / "engine.log", self._factory)
+        self.assertIs(self.options["start_new_session"], True)
+
+    def test_the_engine_holds_no_pipe_the_command_would_have_to_drain(self) -> None:
+        """An inherited pipe held open by an orphan is exactly how a parent waits on an EOF
+        that never comes, which is the blocking this whole change exists to remove."""
+        log = self.root / "engine.log"
+        trigger.launch_detached(("true",), log, self._factory)
+        self.assertIs(self.options["stdin"], subprocess.DEVNULL)
+        self.assertIs(self.options["stderr"], subprocess.STDOUT)
+        # A real file rather than a pipe, and the run's own log rather than anywhere else.
+        self.assertEqual(Path(self.options["stdout"].name), log)
+
+    def test_the_log_is_appended_so_a_recovery_keeps_what_it_recovers(self) -> None:
+        """A run directory is per run and not per attempt, so a recovery against the same
+        run id must not delete the evidence of the attempt it continues."""
+        log = self.root / "engine.log"
+        log.write_text("the first attempt\n", encoding="utf-8")
+        trigger.launch_detached(("true",), log, self._factory)
+        self.assertIn("the first attempt", log.read_text(encoding="utf-8"))
+
+    def test_the_log_lands_beside_the_run_it_belongs_to(self) -> None:
+        where = trigger.address(
+            consent.Authorisation(
+                offer_id="20260101T000000Z-aaaabbbb",
+                plan="offline-export",
+                workflow=str(GOLDEN_WORKFLOW),
+                repository="/srv/work/product",
+                parent_branch="main",
+                occasion=None,
+                run_id=RUN_ID,
+                granted_at="2026-01-01T00:00:00+00:00",
+            ),
+            RUN_ID,
+            self.root,
+        )
+        self.assertEqual(where.log, self.root / RUN_ID / "engine.log")
+
+
 class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
     """The wiring, driven as the skill drives it.
 
@@ -1583,10 +1702,12 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
         self.launched: list[Sequence[str]] = []
 
     def _said(self, argv: list[str]) -> tuple[int, str]:
-        spoken = io.StringIO()
-        with redirect_stdout(spoken), redirect_stderr(spoken):
+        # Kept on the instance as well as returned, so a test can read what has been said
+        # *so far* from inside a seam — which is how print order is asserted at all.
+        self._spoken = io.StringIO()
+        with redirect_stdout(self._spoken), redirect_stderr(self._spoken):
             code = run_main(argv)
-        return code, spoken.getvalue()
+        return code, self._spoken.getvalue()
 
     def _offer(self, *extra: str) -> tuple[int, str]:
         return self._said(
@@ -1606,10 +1727,8 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
         with (
             patch("cairn.skill.trigger.assert_pinned"),
             patch("cairn.skill.trigger.rehearse_start"),
-            patch(
-                "cairn.skill.trigger.subprocess.call",
-                side_effect=self._record,
-            ),
+            patch("cairn.skill.trigger.launch_detached", side_effect=self._record),
+            patch("cairn.skill.trigger.engine_holds", return_value=True),
         ):
             return self._said(
                 [
@@ -1623,9 +1742,9 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
                 ]
             )
 
-    def _record(self, command: Sequence[str]) -> int:
+    def _record(self, command: Sequence[str], *_rest: Any) -> FakeEngine:
         self.launched.append(command)
-        return 0
+        return FakeEngine()
 
     def _minted(self, spoken: str) -> str:
         found = re.search(r"^offer\s+(\S+)$", spoken, re.MULTILINE)
@@ -1663,7 +1782,11 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
         with (
             patch("cairn.skill.trigger.assert_pinned"),
             patch("cairn.skill.trigger.rehearse_start"),
-            patch("cairn.skill.trigger.subprocess.call", return_value=1),
+            patch(
+                "cairn.skill.trigger.launch_detached",
+                side_effect=_engine_that_exited(1),
+            ),
+            patch("cairn.skill.trigger.engine_holds", return_value=False),
         ):
             code, said = self._said(
                 [
@@ -1678,7 +1801,169 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
             )
         self.assertEqual(code, 1)
         self.assertIn("without taking the run on", said)
-        self.assertNotIn("watch", said)
+        # The address **is** printed now, and that is the point: a person whose start
+        # failed after the offer was spent has the run id and somewhere to look ([19 B]).
+        self.assertIn("watch", said)
+        self.assertIn("engine.log", said)
+
+    def test_the_identity_is_printed_before_the_engine_is_invoked(self) -> None:
+        """The whole of B. A start that blocks for the run is killed by any caller with its
+        own timeout, and everything the person needs to name the run died with it."""
+        _, spoken = self._offer()
+        seen: list[str] = []
+
+        def snapshot(command: Sequence[str], *_rest: Any) -> FakeEngine:
+            # Read what has already been printed at the moment the engine is launched.
+            seen.append(self._spoken.getvalue())
+            self.launched.append(command)
+            return FakeEngine()
+
+        with (
+            patch("cairn.skill.trigger.assert_pinned"),
+            patch("cairn.skill.trigger.rehearse_start"),
+            patch("cairn.skill.trigger.launch_detached", side_effect=snapshot),
+            patch("cairn.skill.trigger.engine_holds", return_value=True),
+        ):
+            code, _ = self._said(
+                [
+                    "start",
+                    "--repository",
+                    str(self.repository),
+                    "--offer",
+                    self._minted(spoken),
+                    "--reply",
+                    "yes, go ahead",
+                ]
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(len(seen), 1)
+        for line in ("started", "branch", "watch", "read"):
+            with self.subTest(line=line):
+                self.assertIn(line, seen[0])
+
+    def test_the_spent_marker_names_the_run_and_the_invocation_it_bought(self) -> None:
+        """A killed start is a spent yes, so the marker has to carry a name a recovery can
+        quote — the run id died with the process before ([19 B])."""
+        _, spoken = self._offer()
+        offer_id = self._minted(spoken)
+        self._start(offer_id, "yes, go ahead")
+        spent = consent.acceptance_of(self.repository, offer_id)
+        self.assertIsNotNone(spent)
+        held = cast(consent.Acceptance, spent)
+        self.assertTrue(held.run_id)
+        self.assertEqual(tuple(held.command), tuple(self.launched[0]))
+        # And the claim is exactly as exclusive as it was.
+        again = consent.spend(
+            self.repository, offer_id, reply="yes, go ahead", run_id=RUN_ID
+        )
+        self.assertIsInstance(again, consent.Refused)
+        self.assertEqual(cast(consent.Refused, again).outcome, "already_spent")
+
+    def test_a_second_acceptance_is_told_which_run_the_first_one_bought(self) -> None:
+        _, spoken = self._offer()
+        offer_id = self._minted(spoken)
+        self._start(offer_id, "yes, go ahead")
+        refused = cast(
+            consent.Refused,
+            consent.spend(self.repository, offer_id, reply="yes", run_id=RUN_ID),
+        )
+        spent = cast(consent.Acceptance, consent.acceptance_of(self.repository, offer_id))
+        self.assertIn(spent.run_id, refused.why)
+
+    def test_a_start_returns_once_the_engine_has_the_run_without_waiting_for_it(
+        self,
+    ) -> None:
+        """Detached is the default: what is waited for is the engine taking the run on."""
+        engines: list[FakeEngine] = []
+
+        def launched(command: Sequence[str], *_rest: Any) -> FakeEngine:
+            self.launched.append(command)
+            engines.append(FakeEngine())
+            return engines[-1]
+
+        _, spoken = self._offer()
+        held = [False, True]
+        with (
+            patch("cairn.skill.trigger.assert_pinned"),
+            patch("cairn.skill.trigger.rehearse_start"),
+            patch("cairn.skill.trigger.launch_detached", side_effect=launched),
+            patch("cairn.skill.trigger.engine_holds", side_effect=_answers(held)),
+            patch("cairn.skill.trigger.time.sleep"),
+        ):
+            code, said = self._said(
+                [
+                    "start",
+                    "--repository",
+                    str(self.repository),
+                    "--offer",
+                    self._minted(spoken),
+                    "--reply",
+                    "yes, go ahead",
+                ]
+            )
+        self.assertEqual(code, 0)
+        self.assertFalse(engines[0].waited, "a detached start waited for the whole run")
+        self.assertNotIn("engine   exited", said)
+
+    def test_wait_returns_the_engines_status_and_says_that_it_blocked(self) -> None:
+        engines: list[FakeEngine] = []
+
+        def launched(command: Sequence[str], *_rest: Any) -> FakeEngine:
+            self.launched.append(command)
+            engines.append(FakeEngine())
+            return engines[-1]
+
+        _, spoken = self._offer()
+        with (
+            patch("cairn.skill.trigger.assert_pinned"),
+            patch("cairn.skill.trigger.rehearse_start"),
+            patch("cairn.skill.trigger.launch_detached", side_effect=launched),
+            patch("cairn.skill.trigger.engine_holds", return_value=True),
+        ):
+            code, said = self._said(
+                [
+                    "start",
+                    "--repository",
+                    str(self.repository),
+                    "--offer",
+                    self._minted(spoken),
+                    "--reply",
+                    "yes, go ahead",
+                    "--wait",
+                ]
+            )
+        self.assertEqual(code, 0)
+        self.assertTrue(engines[0].waited)
+        self.assertIn("engine   exited", said)
+
+    def test_an_engine_still_starting_is_a_caution_and_not_a_refusal(self) -> None:
+        """Neither registered nor exited. Killing a run the offer has already paid for, on
+        a timer, is the one destructive move available here — so it is not made."""
+        _, spoken = self._offer()
+        with (
+            patch("cairn.skill.trigger.assert_pinned"),
+            patch("cairn.skill.trigger.rehearse_start"),
+            patch(
+                "cairn.skill.trigger.launch_detached",
+                side_effect=_engine_that_exited(None),
+            ),
+            patch("cairn.skill.trigger.engine_holds", return_value=False),
+            patch("cairn.skill.trigger.TAKEN_ON_TIMEOUT", 0.0),
+        ):
+            code, said = self._said(
+                [
+                    "start",
+                    "--repository",
+                    str(self.repository),
+                    "--offer",
+                    self._minted(spoken),
+                    "--reply",
+                    "yes, go ahead",
+                ]
+            )
+        self.assertEqual(code, 0)
+        self.assertIn("has not registered", said)
+        self.assertNotIn("refused", said)
 
     def test_a_branch_the_engine_could_not_carry_is_refused_when_the_offer_is_made(
         self,

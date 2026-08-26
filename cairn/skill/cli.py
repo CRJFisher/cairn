@@ -25,7 +25,7 @@ from cairn.gitio import runs_root
 from cairn.layout import RECORD_FILE, check_run_id
 from cairn.marker import mint_occasion
 from cairn.record.store import build_run_record
-from cairn.skill.consent import Refused, make_offer, spend
+from cairn.skill.consent import Refused, make_offer, record_engine_command, spend
 from cairn.skill.explain import explainable, meaning, why_excluded, would_do
 from cairn.skill.resolve import (
     OccasionSignal,
@@ -34,7 +34,12 @@ from cairn.skill.resolve import (
     refuse_missing_definition,
     resolve_repository,
 )
-from cairn.skill.trigger import EngineUnavailable, refuse_unusable_engine, start
+from cairn.skill.trigger import (
+    EngineUnavailable,
+    address,
+    refuse_unusable_engine,
+    start,
+)
 from cairn.skill.vocabulary import TRIGGER_SHAPES
 from cairn.workflow.stamp import workflow_path
 
@@ -142,6 +147,10 @@ def _cmd_start(args: argparse.Namespace) -> int:
     try:
         check_run_id(run_id)
         refuse_unusable_engine()
+        # Asked here rather than where it is used. It shells out to the engine and can
+        # refuse; raised after the spend that would be a crash over a consumed acceptance,
+        # and every refusal has to happen while the yes is still standing.
+        records = run_records_path()
     except EngineUnavailable as unavailable:
         print(f"refused  {unavailable}", file=sys.stderr)
         return EXIT_REFUSED
@@ -149,26 +158,55 @@ def _cmd_start(args: argparse.Namespace) -> int:
         print(f"refused  {run_id!r} is not a run id: {malformed}", file=sys.stderr)
         return EXIT_REFUSED
 
-    granted = spend(repository, str(args.offer), reply=str(args.reply))
+    granted = spend(repository, str(args.offer), reply=str(args.reply), run_id=run_id)
     if isinstance(granted, Refused):
         print(f"refused  {granted.outcome}: {granted.why}", file=sys.stderr)
         return EXIT_REFUSED
-    started = start(granted, run_id)
-    if started.exit_code != EXIT_OK:
-        # The engine declining to launch at all — a run id it already holds, a definition it
-        # cannot load — leaves no record for anyone to read, so it is the one engine status
-        # this command must not swallow. A run it *accepted* is a different matter: whether
-        # that run worked is the record's answer ([docs/run-model.md]).
+
+    # Composed and recorded before the engine is invoked, so a start that dies leaves both
+    # the run id and the invocation it was about to make ([19 B]).
+    where = address(granted, run_id, runs_root(repository))
+    record_engine_command(repository, granted.offer_id, where.command)
+
+    # **Printed before the launch.** These four lines are known the moment the offer is
+    # spent, and a caller killed while the engine is starting has still been told the name
+    # of the run its acceptance bought.
+    print(f"started  {where.run_id}")
+    print(f"branch   verified work lands on {granted.parent_branch}, as the offer stated")
+    print(f"watch    {where.view}")
+    print(f"read     python3 -m cairn report --run {where.run_id} --repository {repository}")
+
+    started = start(
+        granted,
+        run_id,
+        runs_root=runs_root(repository),
+        records=records,
+        wait=bool(args.wait),
+    )
+    if not started.taken_on:
+        if started.exit_code is None:
+            # Neither registered nor exited. The engine may still take it on, so this is a
+            # caution rather than a refusal — and the process is left alone.
+            print(
+                f"waiting  the engine has not registered {where.run_id} yet and is still "
+                f"running; what it says is at {where.log}",
+            )
+            return EXIT_OK
+        # The engine declining to take the run on at all — a run id it already holds, a
+        # definition it cannot load — leaves no record for anyone to read, so it is the one
+        # engine status this command must not swallow. A run it *accepted* is a different
+        # matter: whether that run worked is the record's answer ([docs/run-model.md]).
         print(
             f"refused  the engine exited {started.exit_code} without taking the run on: "
-            f"{' '.join(started.command)}",
+            f"{' '.join(where.command)} — what it said is at {where.log}",
             file=sys.stderr,
         )
         return EXIT_REFUSED
-    print(f"started  {started.run_id}")
-    print(f"branch   verified work lands on {granted.parent_branch}, as the offer stated")
-    print(f"watch    {started.view}")
-    print(f"read     python3 -m cairn report --run {started.run_id} --repository {repository}")
+    if args.wait:
+        print(
+            f"engine   exited {started.exit_code}; the verdict is the record's, not this "
+            "status"
+        )
     return EXIT_OK
 
 
@@ -241,6 +279,11 @@ def _run_parser() -> argparse.ArgumentParser:
     # `--parent-branch`: the branch is the offer's, and a term settled after the offer would
     # be one nobody agreed to.
     child.add_argument("--run-id")
+    # The default is detached: the command returns once the engine has the run, because a
+    # caller with its own timeout is killed by a start that blocks for the whole run and
+    # the acceptance dies with it ([19 B]). `--wait` is for a caller that wants the engine's
+    # exit status in line and has no timeout of its own.
+    child.add_argument("--wait", action="store_true")
     return parser
 
 

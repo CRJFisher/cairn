@@ -18,28 +18,60 @@ composer the run record uses, so there is one spelling of where a run can be wat
 from __future__ import annotations
 
 import subprocess
-from collections.abc import Callable, Sequence
+import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
+from cairn.core import Child, PopenFactory, launch
 from cairn.enginehome import ENGINE_BINARY
-from cairn.layout import check_run_id, view_url
+from cairn.layout import check_run_id, engine_log_path, view_url
 from cairn.skill.consent import Authorisation, refuse_uncarriable
+from cairn.supervise import find_run_record
 from cairn.workflow.gate import EngineUnavailable, assert_pinned, rehearse_start
 from cairn.workflow.schema import OCCASION_PARAM, PARENT_BRANCH_PARAM, WORKFLOW_SUFFIX
 
-# What actually launches the engine. A seam rather than a mock: the gate that proves no
-# eval case starts a run substitutes a recorder here, so the assertion is about the argv
-# this module composed rather than about a patched name somewhere else.
-EngineRunner = Callable[[Sequence[str]], int]
+# Whether the engine has taken a run on, asked of the engine's own history. A seam, so a
+# test can drive the three outcomes without an engine.
+RunRegistered = Callable[[str], bool]
+
+# How long to wait for the engine to say it has the run. Measured: from an unsandboxed
+# shell the engine took the run on within a second, and a shell that cannot bind the run's
+# socket is refused before the offer is spent ([gate.rehearse_start]) — so this bound is
+# reached only where neither happened, and it must stay well under the two minutes a
+# harness's own tool call allows, because that caller is who this exists for.
+TAKEN_ON_TIMEOUT = 30.0
+TAKEN_ON_INTERVAL = 0.2
 
 
-class Started(NamedTuple):
+class Address(NamedTuple):
+    """Everything about a run that is known before the engine is invoked.
+
+    Composed from an `Authorisation` and nothing else, which is what lets the four lines a
+    person needs be printed *before* the launch — the run id, the branch, the view and the
+    command that reads the record. A start killed at any point after this has already handed
+    over the name of the run it bought ([19 B]).
+    """
+
     run_id: str
     dag_name: str
     view: str
     command: tuple[str, ...]
-    exit_code: int
+    log: Path
+
+
+class Started(NamedTuple):
+    """How the engine answered, beside the address that was known before it was asked.
+
+    `exit_code` is `None` wherever the engine is still running, which is the ordinary case
+    for a detached start and never a missing value. `taken_on` is the question this command
+    actually answers: a run the engine has registered leaves a record whatever becomes of
+    the process that started it, and a run it never took on leaves nothing at all.
+    """
+
+    address: Address
+    taken_on: bool
+    exit_code: int | None
 
 
 def refuse_unusable_engine() -> None:
@@ -104,10 +136,85 @@ def start_command(authorisation: Authorisation, run_id: str) -> tuple[str, ...]:
     )
 
 
+def address(authorisation: Authorisation, run_id: str, runs_root: Path) -> Address:
+    """Where this run will be, composed before anything is asked to start it.
+
+    Every value comes from the authorisation, so nothing here can name a run that was not
+    priced and accepted.
+    """
+    name = dag_name(Path(authorisation.workflow))
+    return Address(
+        run_id=run_id,
+        dag_name=name,
+        view=view_url(name, run_id),
+        command=start_command(authorisation, run_id),
+        log=engine_log_path(runs_root, run_id),
+    )
+
+
+def engine_holds(records: Path, run_id: str) -> bool:
+    """Whether the engine has taken this run on, asked of its own history.
+
+    The engine writes the run's status data as it accepts the run, and that data is what
+    every later reader keys on — so a run it has recorded is a run a recovery can name
+    whatever happens to the process that started it. Matched on the run id *inside* the
+    record rather than on the path, because the engine's directory layout carries no
+    external contract ([supervise.find_run_record]).
+    """
+    return find_run_record(records, run_id) is not None
+
+
+def launch_detached(command: tuple[str, ...], log: Path, factory: PopenFactory) -> Child:
+    """The engine in its own session, with everything it says going to the run's own log.
+
+    Each of these is load-bearing:
+
+    - **`start_new_session`** puts the child in its own session and process group, so a
+      harness killing its process tree and a hangup on a closing terminal both stop at the
+      boundary. Measured 2026-08-25: a detached start outlived the session that launched it
+      by 1h18m, and the release still gave the repository back.
+    - **stdin from `/dev/null`** so an orphan cannot inherit a terminal and be stopped by
+      `SIGTTIN`, nor hold the harness's own stdin open.
+    - **stdout and stderr into the log, and the parent's handle closed** — an inherited pipe
+      held open by an orphan is exactly how a parent waits on an EOF that never comes.
+    - **appended, never truncated**, because a run directory is per run and not per attempt:
+      a recovery against the same run id must not delete the evidence of what it recovers.
+    """
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with log.open("ab") as handle:
+        return launch(
+            factory,
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+
 def start(
-    authorisation: Authorisation, run_id: str, *, runner: EngineRunner | None = None
+    authorisation: Authorisation,
+    run_id: str,
+    *,
+    runs_root: Path,
+    records: Path,
+    wait: bool = False,
+    popen_factory: PopenFactory | None = None,
+    registered: RunRegistered | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
+    sleeper: Callable[[float], None] = time.sleep,
 ) -> Started:
-    """Begin the run this authorisation bought, and say where it can be watched.
+    """Begin the run this authorisation bought, and return once the engine has it.
+
+    **It returns when the engine has the run, not when the run ends.** The engine is
+    launched detached and this waits only until the engine's own history says it took the
+    run on. A plan whose slowest chain is bounded at forty-four hours is forty-four hours of
+    a blocked terminal otherwise, and any caller with its own timeout — an agent harness's
+    tool call at two minutes — kills the process tree under it, spending the offer and
+    losing the run id with the dying process ([19 B]).
+
+    Nothing is lost by not waiting: the release handler writes the run's record whether
+    anyone is watching or not ([12]).
 
     The engine's exit status is carried rather than interpreted: a run with exclusions is
     the case Cairn does not trust the engine about, and the verdict is the record's to
@@ -118,24 +225,47 @@ def start(
     `refuse_unusable_engine` — so a machine that cannot run the plan does not cost a person
     their acceptance.
     """
-    command = start_command(authorisation, run_id)
-    invoke: EngineRunner = subprocess.call if runner is None else runner
-    exit_code = invoke(command)
-    name = dag_name(Path(authorisation.workflow))
-    return Started(
-        run_id=run_id,
-        dag_name=name,
-        view=view_url(name, run_id),
-        command=command,
-        exit_code=exit_code,
+    where = address(authorisation, run_id, runs_root)
+    factory: PopenFactory = subprocess.Popen if popen_factory is None else popen_factory
+    holds: RunRegistered = (
+        (lambda identity: engine_holds(records, identity))
+        if registered is None
+        else registered
     )
+    process = launch_detached(where.command, where.log, factory)
+    deadline = monotonic() + TAKEN_ON_TIMEOUT
+    while True:
+        if holds(run_id):
+            # The engine has the run. Under `--wait` the caller asked for the status in
+            # line and gets it; otherwise the process is left to outlive this one.
+            return Started(
+                address=where,
+                taken_on=True,
+                exit_code=process.wait() if wait else None,
+            )
+        exited = process.poll()
+        if exited is not None:
+            # Asked once more after the exit: a run short enough to finish between the two
+            # checks did register, and reporting it as never taken on would refuse a run
+            # that actually happened.
+            return Started(address=where, taken_on=holds(run_id), exit_code=exited)
+        if monotonic() >= deadline:
+            # Neither taken on nor exited. The child is deliberately **not** killed: it may
+            # be a moment from registering, and killing a run the offer has already paid
+            # for, on a timer, is the one destructive move available here.
+            return Started(address=where, taken_on=False, exit_code=None)
+        sleeper(TAKEN_ON_INTERVAL)
 
 
 __all__ = [
-    "EngineRunner",
+    "Address",
     "EngineUnavailable",
+    "RunRegistered",
     "Started",
+    "address",
     "dag_name",
+    "engine_holds",
+    "launch_detached",
     "refuse_unusable_engine",
     "rehearse_start",
     "start",

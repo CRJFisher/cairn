@@ -52,8 +52,18 @@ verbatim>'`. The run id is minted for you; pass `--run-id` only to choose one. I
    spent, and a definition that changed since it was priced — and every one of those refusals
    happens before the offer is spent, so the acceptance still stands.
 
-7. **Hand over the address.** The command prints where the run can be watched. That is the
-   engine's own view and it is the better place to watch a graph — see below.
+7. **Hand over the address.** The command prints four lines — the run id, the branch, where
+   the run can be watched, and the command that reads its record — and it prints them
+   **before it invokes the engine**, so a start killed under a caller's own timeout has
+   still told you the name of the run your acceptance bought. It then returns as soon as the
+   engine has taken the run on, not when the run ends: a plan bounded at forty-four hours is
+   forty-four hours of a blocked terminal otherwise, and an agent harness kills its own tool
+   call long before that. The run keeps going without it; the engine is launched in its own
+   session and its output goes to `runs/<run-id>/engine.log`.
+
+   `--wait` blocks for the whole run and prints the engine's exit status instead. It is for
+   a caller that has no timeout of its own, and it says so in its own output. Do not pass it
+   from a harness.
 
 8. **When it ends, report it.** [reading.md](reading.md). The command's own exit status says
    only that the run was started: a run that dropped a branch exits zero at the engine level,
@@ -99,6 +109,13 @@ sandbox lifted for that one command.
 
 Those three fail a run that really started, so they consume the offer and recovering needs a
 fresh one. None of them is a thing to retry in a loop.
+
+**A start that died still left a name.** The offer is claimed before the engine is invoked,
+which is correct — a start that really began must consume it — so a killed start is a spent
+yes. What it is not any more is an anonymous one: the spent marker beside the offer holds
+the run id and the engine command, so `cairn report --run <run-id>` and
+`run offer --trigger recovery --recovering <run-id>` both have something to quote even
+though the terminal is gone.
 
 ## Where the engine's view is better
 

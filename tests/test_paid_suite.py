@@ -1350,14 +1350,19 @@ class AReadingProbeCannotSpendOnARun(unittest.TestCase):
                 cwd=probe.repository, variables=probe.variables,
             )
             self.assertEqual(offered.returncode, 0, offered.stderr)
+            # `--wait` blocks until the run ends, which is what makes the containment
+            # below an experiment rather than a race: a detached start returns as soon as
+            # the engine has the run, and reports read then may not have been written yet.
             started = run_cairn(
                 "run", "start", "--repository", str(probe.repository),
                 "--offer", offered.stdout.split()[1], "--reply", "yes, run it",
-                cwd=probe.repository, variables=probe.variables,
+                "--wait", cwd=probe.repository, variables=probe.variables,
             )
-            self.assertNotEqual(
-                started.returncode, 0, "a run with no provider came back green"
-            )
+            # The start's own status says only that the engine took the run on, which it
+            # did ([capabilities/running.md] step 8). Whether the run worked is the
+            # record's answer, and it is asserted directly below rather than through a
+            # proxy that only held while the command blocked.
+            self.assertEqual(started.returncode, 0, started.stderr)
             runs = sorted(path.name for path in runs_root(probe.repository).iterdir())
             self.assertIn(SEEDED_RUN, runs)
             self.assertEqual(
@@ -1374,6 +1379,17 @@ class AReadingProbeCannotSpendOnARun(unittest.TestCase):
                 else []
             )
             self.assertEqual([one for one in opened if one], [], "a step opened a session")
+            # And the run really did fail, so the empty session list above is containment
+            # rather than a run that never got far enough to open one.
+            said = [
+                json.loads(path.read_text(encoding="utf-8"))
+                for path in sorted(reports.glob("*.json"))
+            ]
+            self.assertTrue(said, "the bought run left no reports at all")
+            self.assertTrue(
+                any(report.get("status") == "failed" for report in said),
+                f"a run with no provider came back green: {said}",
+            )
 
     def test_the_probe_reads_the_seeded_run_through_the_engines_own_home(self) -> None:
         """What `DAGU_HOME` is for: the history is resolved from it by arithmetic, and no

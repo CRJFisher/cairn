@@ -28,11 +28,12 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, NamedTuple, cast
 
-from cairn.core import CairnError
+from cairn.core import CairnError, write_json
 from cairn.gitio import CAIRN_STATE, common_directory
 from cairn.marker import OCCASION_PATTERN, mint_occasion
 from cairn.skill.vocabulary import (
@@ -85,6 +86,10 @@ class Authorisation(NamedTuple):
     repository: str
     parent_branch: str
     occasion: str | None
+    # A term of the authorisation rather than a value handed to the start afterwards: it is
+    # in the marker the claim wrote, so the run this yes bought is answerable from the
+    # repository even if the process that started it died.
+    run_id: str
     granted_at: str
 
 
@@ -464,16 +469,28 @@ def _spent_at(marker: Path) -> str:
 
 
 class Acceptance(NamedTuple):
-    """What was said to start a run, and when it was said.
+    """What was said to start a run, when it was said, and what it bought.
 
     The words are kept because a run spends money and commits on someone's say-so, and an
     offer that recorded only *that* it was accepted leaves nothing able to answer which
     words did it. The offer beside this marker says what was agreed to; this says who agreed
     and in what terms.
+
+    **The run id is what a killed start leaves behind.** The offer is claimed before the
+    engine is invoked, which is correct — a start that really began must consume it — so a
+    start killed under a caller's own timeout is a spent yes whose run id died with the
+    process, and a recovery quotes a run id it has no way to learn. Recording it inside the
+    claim is what closes that: the id is minted before the marker is written, so a start
+    that got no further than the claim still left a name ([19 B]).
+
+    `command` is empty where the start died between the claim and the launch, which is
+    itself the account of how far it got.
     """
 
     spent_at: str
     reply: str
+    run_id: str
+    command: tuple[str, ...]
 
 
 def read_acceptance(marker: Path) -> Acceptance | None:
@@ -488,6 +505,10 @@ def read_acceptance(marker: Path) -> Acceptance | None:
     return Acceptance(
         spent_at=str(fields.get("spent_at", "")),
         reply=str(fields.get("reply", "")),
+        run_id=str(fields.get("run_id", "")),
+        command=tuple(
+            str(word) for word in cast(list[Any], fields.get("command", []) or [])
+        ),
     )
 
 
@@ -502,8 +523,42 @@ def acceptance_of(repository: Path, offer_id: str) -> Acceptance | None:
     return read_acceptance(marker)
 
 
+def record_engine_command(
+    repository: Path, offer_id: str, command: Sequence[str]
+) -> None:
+    """Add the invocation this acceptance bought to a marker that is already claimed.
+
+    **This never creates a marker.** `_claim` is the only thing that may bring a `.spent`
+    path into existence, because that exclusive create *is* the single-use gate — a second
+    writer able to create one would let a run be recorded as started without ever passing
+    it. Where there is no marker this does nothing.
+
+    A second write rather than a field of the claim, because the argv is composed from the
+    `Authorisation` and the `Authorisation` does not exist until the claim has succeeded.
+    The run id, which is what a recovery actually needs, does ride inside the claim.
+    """
+    marker = offer_path(repository, offer_id).with_name(f"{offer_id}{SPENT_SUFFIX}")
+    held = read_acceptance(marker)
+    if held is None:
+        return
+    write_json(
+        marker,
+        {
+            "spent_at": held.spent_at,
+            "reply": held.reply,
+            "run_id": held.run_id,
+            "command": list(command),
+        },
+    )
+
+
 def spend(
-    repository: Path, offer_id: str, *, reply: str, moment: datetime | None = None
+    repository: Path,
+    offer_id: str,
+    *,
+    reply: str,
+    run_id: str,
+    moment: datetime | None = None,
 ) -> SpendOutcome:
     """Consume one offer, once, or refuse saying which clause stopped it.
 
@@ -558,13 +613,24 @@ def spend(
         )
     marker = offer_path(repository, offer_id).with_name(f"{offer_id}{SPENT_SUFFIX}")
     now = (datetime.now(UTC) if moment is None else moment.astimezone(UTC)).isoformat()
-    claimed = json.dumps({"spent_at": now, "reply": reply}, sort_keys=True)
+    claimed = json.dumps(
+        {"spent_at": now, "reply": reply, "run_id": run_id, "command": []},
+        sort_keys=True,
+    )
     if not _claim(marker, f"{claimed}\n"):
+        spent = read_acceptance(marker)
+        bought = (
+            f" and bought run {spent.run_id}, which "
+            f"`python3 -m cairn report --run {spent.run_id}` reads"
+            if spent is not None and spent.run_id
+            else ""
+        )
         return Refused(
             outcome=REFUSED_ALREADY_SPENT,
             why=(
-                f"offer {offer_id} was already spent ({_spent_at(marker)}). It bought one "
-                "execution and that execution has happened; a second needs its own offer"
+                f"offer {offer_id} was already spent ({_spent_at(marker)}){bought}. It "
+                "bought one execution and that execution has happened; a second needs its "
+                "own offer"
             ),
         )
     return Authorisation(
@@ -574,6 +640,7 @@ def spend(
         repository=held.repository,
         parent_branch=held.parent_branch,
         occasion=held.occasion,
+        run_id=run_id,
         granted_at=now,
     )
 
@@ -596,6 +663,7 @@ __all__ = [
     "offers_directory",
     "read_acceptance",
     "read_offer",
+    "record_engine_command",
     "refuse_uncarriable",
     "session_bounds",
     "spend",

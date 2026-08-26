@@ -31,6 +31,11 @@ RUNS_ROOT_ENV = "CAIRN_RUNS_DIR"
 RUNS_DIRECTORY = "runs"
 REPORTS_DIRECTORY = "reports"
 RECORD_FILE = "record.json"
+# What the engine itself said while it was taking a run on. Not the run's logs — those are
+# the engine's own, under its home, and the view reads them. This is the start command's
+# stdout and stderr, which nothing else keeps: a socket it could not bind, a definition it
+# would not load, a run id it already holds. A detached start has nowhere else to say it.
+ENGINE_LOG_FILE = "engine.log"
 # The occasion this run is keyed on, beside its reports rather than under them: a report is
 # one step's account and this is the whole run's, and every step's gate reads it.
 OCCASION_FILE = "occasion"
@@ -67,6 +72,10 @@ def reports_directory(runs_root: Path, run_id: str) -> Path:
 
 def record_path(runs_root: Path, run_id: str) -> Path:
     return run_directory(runs_root, run_id) / RECORD_FILE
+
+
+def engine_log_path(runs_root: Path, run_id: str) -> Path:
+    return run_directory(runs_root, run_id) / ENGINE_LOG_FILE
 
 
 # Where the engine's own view serves one run. Measured against Dagu 2.11.0: the server binds
@@ -150,6 +159,7 @@ __all__ = [
     "VIEW_BASE_ENV",
     "check_run_id",
     "occasion_path",
+    "engine_log_path",
     "record_path",
     "reports_directory",
     "run_directory",
