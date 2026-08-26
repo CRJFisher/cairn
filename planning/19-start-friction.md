@@ -183,20 +183,42 @@ not an object` and Cairn wrote a `failed` report. The assertion then ran and **p
 passed"_; `mark` and `commit` skipped; the chain halted; the fifteen steps behind it were recorded
 `gate_indeterminate`. The work sits in the repository, uncommitted and verified.
 
-**Why.** The preamble says _"Report through the structured output you are constrained to"_ and
-nothing about the session being one shot. The harness offers background tasks, monitors and a
-wakeup scheduler whose contract — _the harness re-invokes you_ — is true interactively and false
-under `-p`, and the model kept that contract. Nothing in Cairn denies those tools or names the
-difference.
+**Why — and it is not what the session's own account suggests.** The four mechanisms it used are
+not one mechanism, and three of the four hold perfectly well under `-p`. Measured against this
+machine's `claude`, with a `Stop` hook capturing what the harness reports at the end of every turn:
+
+| What the session did                    | What `-p` does with it                                                                                     |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `Agent` in the background, three at once | the process is held open; the session is re-invoked once per completion and all three results arrive       |
+| `Monitor`                               | it **blocks** — an until-loop waited twelve seconds for a file and the session read it in the same turn     |
+| `Bash` with `run_in_background`         | the process **exits with the shell still running** — an 8-second sleep launched, the session returned at 6s |
+| `ScheduleWakeup`                        | nothing ever fires it                                                                                       |
+
+So the contract that is false under `-p` is far narrower than it looks: a background **shell** is
+fire-and-forget and a wakeup is never delivered, while a background subagent notifies and a
+monitor waits. The preamble says _"Report through the structured output you are constrained to"_
+and nothing about the process ending when the turn does. Nothing in Cairn names that difference,
+and nothing holds the session to it.
 
 **The change.**
 
-- **The preamble states the shape of the session.** _This session is one shot: nothing re-invokes
-  you. Do not background work, arm monitors or schedule wakeups. Run what you must wait for in
-  the foreground, and end only by reporting._
-- **The provider denies what it can.** `run_claude` passes `--disallowedTools ScheduleWakeup` and
-  `Monitor` by default; the plan's `tools` list adds to that, never replaces it. `Bash`'s
-  `run_in_background` cannot be denied by name, so the preamble carries that one.
+- **The preamble states the shape of the session.** _This session is one shot: the process ends
+  when your turn ends, and nothing re-invokes you for a background shell. Subagents and `Monitor`
+  are yours — a background subagent is waited for, and `Monitor` blocks — but anything started with
+  `Bash`'s `run_in_background` dies unread. Wait for what you start, and end only by reporting._
+- **The provider denies only what has no blocking form.** `run_claude` passes `--disallowedTools
+  ScheduleWakeup` by default, with the `Cron*` family beside it as the same shape; the plan's
+  `tools` list adds to that, never replaces it. `Monitor` and `Agent` are **not** denied. Denying
+  them would take away the two ways a session has of waiting for concurrent work, to prevent a
+  leak that neither of them causes.
+- **The step holds the session to it.** Cairn arms one `Stop` hook through a `--settings` document
+  it composes per step, and the hook refuses to let a turn end while a background shell is still
+  running, naming the command. Measured: the hook's payload carries
+  `{"type": "shell", "status": "running", "command": …}` for exactly that case; exit 2 re-enters
+  the session with the hook's reason delivered as a user message; and `stop_hook_active` bounds the
+  re-entry. This is the one lever that closes the leak without costing a capability — `Bash`'s
+  `run_in_background` cannot be denied by name, and denying it by argument would cost a step its
+  concurrent shells.
 - **Rescue before discarding.** A result with `stop_reason: tool_use` and no `structured_output`
   is a session that ended a turn without reporting, not a session that failed. Resume it once —
   `claude -p --resume <session_id>`, the spelling `resume_command` already knows — with one
@@ -209,9 +231,12 @@ difference.
 
 **What must not change.** The gate still closes on a missing or unreadable report — a step that
 did not say what it did is not recorded as done — and the assertion still never opens it alone.
+And a step's session keeps every tool that has a blocking form: the deny list names only what
+cannot be waited for, because a step that cannot fan work out is a step that cannot do the work.
 
 **Touches.** `cairn/protocol.py` (the preamble), `cairn/providers.py` (`run_claude` deny
-defaults, the one-resume rescue in `run_provider`), `cairn/verify.py` (the cause carried through),
+defaults, the composed `--settings` document, the one-resume rescue in `run_provider`), the
+`Stop` hook's own verb (`cairn/__main__.py`), `cairn/verify.py` (the cause carried through),
 `cairn/report/` (the divergence phrasing), `docs/step-protocol.md` _The preamble_,
 `docs/verify-gate.md` _Why a step contributed no verified work_, `tests/test_step_protocol.py`.
 
@@ -253,7 +278,7 @@ Small start-path defects, appended as they surface, with how they were found.
 | C   | The engine cannot bind its run socket from a sandboxed shell; the version pin is the only pre-spend engine check                                                                                                        | `cairn/skill/trigger.py`                                                 | open  |
 | D   | `plan propose --json` exits nonzero when steps are unanswered, so a caller cannot tell a listing from a failure by exit status                                                                                          | `cairn/plan/cli.py`                                                      | open  |
 | E   | The offer prices worktrees and merges for a chain-shaped plan whose definition has neither; the disclosure is a fixed sentence, not the topology                                                                        | `cairn/skill/consent.py` (`disclosure`)                                  | open  |
-| F   | A `-p` session that backgrounds work and schedules a wakeup ends without a structured report; $10.89 of assertion-passing work is discarded                                                                             | `cairn/protocol.py`, `cairn/providers.py`                                | open  |
+| F   | A `-p` session that leaves a background shell running ends the process with it unread and reports nothing; $10.89 of assertion-passing work is discarded                                                                | `cairn/protocol.py`, `cairn/providers.py`                                | open  |
 | G   | A `provider_protocol` failure reaches the gate and the report as `reported_failure`, and the divergence says the step "reported failed"                                                                                 | `cairn/verify.py`, `cairn/report/`                                       | open  |
 | H   | A chain-segment step that fails after editing leaves its edits uncommitted in the repository; a recovery's first act refuses the dirty tree, and the report's next action says `settle_merge` for a chain with no merge | `cairn/record/`, `capabilities/running.md`                               | open  |
 | I   | Fifteen never-reached steps are recorded `gate_indeterminate` and listed as needing a person, where [08](08-verify-gate.md) says `not_reached`                                                                          | `cairn/verify.py`                                                        | open  |
@@ -269,4 +294,8 @@ Small start-path defects, appended as they surface, with how they were found.
   with the engine's own reason, and the yes still stands.
 - The offer's price is composed from the definition's topology, so a chain prices no worktrees and
   no merges.
+- A session that ends a turn with a background shell still running is held open and told what it
+  left behind; one that ends without reporting is resumed once for its report; and a step that
+  reported nothing is recorded as `provider_protocol` rather than `reported_failure`. A step's
+  session keeps `Agent` and `Monitor`.
 - The measurement above is recorded against `20260825T132605Z-26c99fcf`.
