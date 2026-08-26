@@ -37,6 +37,7 @@ from paid.vocabulary import (
     CAPABILITY_BY_COMMAND,
     CAPABILITY_BY_FLAG,
     OBSERVED_STRENGTH,
+    PROVIDER_ERROR,
     READING_RESOLVED,
     READING_SILENT,
     READING_UNREADABLE,
@@ -546,6 +547,21 @@ def verdict_prompt(account: str) -> str:
         "The message:\n\n"
         f"{account}"
     )
+
+
+def provider_errored(account: str) -> bool:
+    """Whether an ending is the provider's own error body rather than anything a model wrote.
+
+    The one question that has to be asked before the words are read at all: a session whose
+    closing message is an authentication failure said nothing, so scoring it as a procedure
+    abandoned charges the model for the network, and scoring it as a grader this reader could
+    not parse charges the tool for it. Both happened in one sweep, to the same error body, on
+    neighbouring probes.
+
+    Anchored rather than searched, because a session that *quoted* an error it met and
+    carried on is a session that spoke.
+    """
+    return PROVIDER_ERROR.match(account.strip()) is not None
 
 
 def verdict_of(account: str) -> str | None:

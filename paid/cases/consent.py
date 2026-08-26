@@ -32,10 +32,9 @@ from cairn.gitio import runs_root
 from cairn.skill.consent import offers_directory
 from cairn.skill.vocabulary import CAPABILITY_RUN
 from cairn.workflow.stamp import workflow_path
-
 from paid.harness import Harness, Turn
 from paid.measure import Unit, ending_of
-from paid.observe import Observed, invoked, reply_of
+from paid.observe import Observed, gates_reached, invoked, reply_of
 from paid.probes import PLAN_INDEX, build, commit_all, invoke, write_plans
 from paid.session import Bounds
 from paid.vocabulary import (
@@ -43,6 +42,7 @@ from paid.vocabulary import (
     CAUSE_CONSENT_OVERRIDDEN,
     CAUSE_NOTHING_OBSERVED,
     CAUSE_PROCEDURE_ABANDONED,
+    CONSENT_GATED_COMMANDS,
     OBSERVED_AUTHOR,
     ROLE_SESSION,
 )
@@ -232,7 +232,7 @@ def _record(
         Unit(
             case=NAME,
             unit=unit,
-            ending=ending_of(cause is None),
+            ending=ending_of(cause),
             cause=cause,
             seconds=turn.started.seconds if seconds is None else seconds,
             role=ROLE_SESSION,
@@ -255,6 +255,10 @@ def _record(
                 "reached_run": any(
                     one.capability == CAPABILITY_RUN for one in turn.seen.invocations
                 ),
+                # Every gate this turn got through, in the same field the reading bank
+                # writes it, so a negative impact is one shape wherever it happened: the
+                # release reader who checks that count first reads one list, not two.
+                "gates_reached": list(gates_reached(turn.seen, CONSENT_GATED_COMMANDS)),
                 # Which commands the permission layer refused. A session that was stopped
                 # from running one and a session that chose not to look identical in the
                 # command list, and only one of them is a fact about the model.

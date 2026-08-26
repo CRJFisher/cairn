@@ -11,11 +11,13 @@ Three rules hold the record honest.
 `None` where the denominator is zero rather than `0.0`, because a rate over nothing and a
 rate of nothing are different facts and one of them is a lie.
 
-**Every failure is classified.** `FAULT_BY_CAUSE` is total over every cause the vocabulary
-declares, and `fault_of` refuses a cause it does not hold — so a unit that missed its end
-state for a reason nobody classified cannot be written at all. The policy above it is
-everything-red; the classification never softens that, it is what a reader of three red runs
-uses to tell "`merge land` broke" from "a model release moved".
+**Every failure is classified, and the classification is what routes it.** `FAULT_BY_CAUSE`
+is total over every cause the vocabulary declares, and `fault_of` refuses a cause it does not
+hold — so a unit that missed its end state for a reason nobody classified cannot be written
+at all. What a run reports is read off these lines and off nothing else ([verdict.py]): a
+tool defect anywhere fails critical functionality, a model-quality miss fails it only where
+it lands in one, and an environment fault takes the reading out of the rate rather than
+reddening anything.
 
 **Nothing personal is published.** Every string anywhere in a line is scrubbed by the writer
 — the home directory it ran under and the temporary root it worked in — and
@@ -34,10 +36,13 @@ from typing import Any, NamedTuple, cast
 
 from paid.redact import ACCOUNT_KEYS
 from paid.vocabulary import (
+    ENDING_ABORTED,
     ENDING_MISSED,
     ENDING_REACHED,
     ENDINGS,
     FAULT_BY_CAUSE,
+    FAULT_ENVIRONMENT,
+    GROUPS,
     MEASUREMENTS,
     POPULATION_BY_MEASUREMENT,
     ROLE_MERGE,
@@ -328,13 +333,19 @@ class Journal:
         self._temporary = temporary
         self.units = 0
         self.reached = 0
-        self.faults: set[str] = set()
+        # Every line as it was published, which is what the verdict is taken over. A tally
+        # kept beside the file would be a second account of the run, and the first thing a
+        # second account does is disagree with the first — so the three groups a run reports
+        # are a pure function of these, and the free suite runs that function over sweeps
+        # bought months ago without buying anything.
+        self.lines: list[dict[str, Any]] = []
 
     def write(self, line: dict[str, Any]) -> None:
         clean = cast(dict[str, Any], masked(line, home=self._home, temporary=self._temporary))
         assert_publishable(clean, home=self._home, temporary=self._temporary)
         with self._path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(clean, sort_keys=True) + "\n")
+        self.lines.append(clean)
         if clean.get("kind") != KIND_UNIT:
             return
         # The verdict is counted off the lines that were actually written rather than off a
@@ -343,9 +354,6 @@ class Journal:
         self.units += 1
         if clean.get("ending") == ENDING_REACHED:
             self.reached += 1
-        fault = clean.get("fault")
-        if isinstance(fault, str):
-            self.faults.add(fault)
 
 
 def end_line(
@@ -358,12 +366,22 @@ def end_line(
     spent_usd: float,
     seconds: float,
     allowances: dict[str, dict[str, int]] | None = None,
+    groups: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The line that closes a run.
 
     Without one, a run that was killed, refused or is still going is indistinguishable in
     the file from one that finished — and doc 17 asks the record to say what a run cost,
     which no per-unit line can answer on its own.
+
+    It carries the three groups the run reported: critical functionality as a fraction with
+    every check it missed, the benchmark's scores with the readings that were not taken at
+    all, and each negative impact with what it reached. A release cites this line, so the
+    three facts a release turns on are on it rather than assembled from two hundred others.
+
+    They are absent where no verdict was reached. A run that a rate limit stopped at hour
+    two has a real closing line and no real groups, and publishing a fraction over the cases
+    that happened to have run would be a bar over a population nobody chose.
 
     It also says what each bounded allowance spent. Past an allowance the rest of a sweep is
     scored on different terms, so a run that used its last second turn and one that had room
@@ -384,9 +402,23 @@ def end_line(
     }
     if allowances is not None:
         line["allowances"] = allowances
+    if groups is not None:
+        # By name, the way every other field on this line is held. A blind merge is the one
+        # place a caller could overwrite `exit_code` or `spent_usd` on the line a release
+        # cites, and the writer refusing what it does not hold is the rest of this module.
+        line.update({name: groups[name] for name in GROUPS})
     return line
 
 
-def ending_of(reached: bool) -> str:
-    """A unit either arrived where the case said it would, or it did not."""
-    return ENDING_REACHED if reached else ENDING_MISSED
+def ending_of(cause: str | None) -> str:
+    """Where a unit arrived, taken from why it did not arrive.
+
+    Three endings rather than two, because an environment fault is not a miss. A probe whose
+    session ended in the provider's own error body did not arrive anywhere and did not fail
+    to: it never ran, and a rate that counted it would be a rate over a population that
+    includes the network. `aborted` is the ending that says so, and the ending and the cause
+    cannot disagree because one is read off the other.
+    """
+    if cause is None:
+        return ENDING_REACHED
+    return ENDING_ABORTED if fault_of(cause) == FAULT_ENVIRONMENT else ENDING_MISSED

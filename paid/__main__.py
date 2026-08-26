@@ -12,11 +12,14 @@ nothing here is under the tests directory, and the loader collects nothing from 
 the provider is unreachable, the model is aliased or nothing can be observed should discover
 that on one conversation rather than after the merge session has been paid for.
 
-**Four exit codes, and two of them are red.** `record/vocabulary.py`'s own numbers rather
-than a second set: 0 when every unit reached its end state, 1 when something the tool does
-was wrong, 3 when a model was worse than the case expected, and 4 when the run was refused or
-aborted without a verdict. The pair of red codes is not a softening of everything-red — both
-are red — it is the record's own classification made visible to whatever runs the suite.
+**A run reports three things, and one of them is the bar.** Critical functionality as N/N,
+which must be 100%; the benchmark's scores, which gate nothing; and the negative impacts,
+which are zero on a green run. `record/vocabulary.py`'s own numbers rather than a second
+set: **0 is releasable** — critical functionality whole, no tool defect, nothing unauthorised
+— 1 when the instrument's own fault broke something, 3 when a critical miss was the model's,
+and 4 when the run was refused or aborted without a verdict. A benchmark below 100% is an
+ordinary exit-0 run: 220 live sessions do not come back perfect, and a bar that demanded it
+would measure the weather.
 """
 
 from __future__ import annotations
@@ -32,9 +35,8 @@ from types import ModuleType
 
 from cairn.core import CairnError
 from cairn.marker import mint_occasion
-
 from paid.cases import consent, differentiating, merge, reading, skill
-from paid.harness import Aborted, Harness, Taken
+from paid.harness import Aborted, Harness
 from paid.measure import (
     Journal,
     Models,
@@ -55,6 +57,7 @@ from paid.spend import (
     refuse_unbounded,
     refuse_unpaid,
 )
+from paid.verdict import Verdict, as_record, block, verdict_of
 from paid.vocabulary import (
     CASES,
     CAUSE_PROVIDER_MISSING,
@@ -63,15 +66,11 @@ from paid.vocabulary import (
     ENDING_MISSED,
     ENDING_REACHED,
     EXIT_ALL_REACHED,
-    EXIT_MODEL_QUALITY,
     EXIT_REFUSED,
-    EXIT_TOOL_DEFECT,
-    FAULT_ENVIRONMENT,
-    FAULT_MODEL,
-    FAULT_TOOL,
     MODEL_DEFAULT,
     MODEL_NAME,
     PAID_OPT_IN,
+    UNIT_RUN,
 )
 
 # Cheapest first, by what each has actually cost: a conversation, a run, a merge, the whole
@@ -223,6 +222,10 @@ def _run(args: argparse.Namespace, cases: list[ModuleType]) -> int:
         # claiming the run reached its end state, and the record is committed.
         ending = ENDING_ABORTED
         code = EXIT_REFUSED
+        # No groups until a verdict is reached. A sweep a rate limit stopped at hour two has
+        # a real closing line and no real fraction, and one over the cases that happened to
+        # have run would be a bar over a population nobody chose.
+        verdict: Verdict | None = None
         running = cases[0].NAME
         try:
             for module in cases:
@@ -250,7 +253,7 @@ def _run(args: argparse.Namespace, cases: list[ModuleType]) -> int:
                 unit_line(
                     Unit(
                         case=running,
-                        unit="run",
+                        unit=UNIT_RUN,
                         ending=ENDING_ABORTED,
                         cause=cause,
                         seconds=round(time.monotonic() - began, 3),
@@ -262,8 +265,16 @@ def _run(args: argparse.Namespace, cases: list[ModuleType]) -> int:
             )
             print(f"aborted  {stopped}", file=sys.stderr)
         else:
-            code = run_verdict(journal, harness.taken, spent=harness.ledger.spent_usd)
-            ending = ENDING_REACHED if code == EXIT_ALL_REACHED else ENDING_MISSED
+            verdict = verdict_of(journal.lines)
+            code = verdict.exit_code
+            report(verdict, journal=journal, spent=harness.ledger.spent_usd)
+            # Three endings because there are three kinds of code. Exit 4 is the run not
+            # having happened rather than a verdict about anything, so a closing line
+            # calling it `missed` would say the sweep finished and fell short — over units
+            # the same rule already wrote as `aborted`.
+            ending = {EXIT_ALL_REACHED: ENDING_REACHED, EXIT_REFUSED: ENDING_ABORTED}.get(
+                code, ENDING_MISSED
+            )
         finally:
             journal.write(
                 end_line(
@@ -275,6 +286,7 @@ def _run(args: argparse.Namespace, cases: list[ModuleType]) -> int:
                     spent_usd=harness.ledger.spent_usd,
                     seconds=time.monotonic() - began,
                     allowances=harness.allowances or None,
+                    groups=None if verdict is None else as_record(verdict),
                 )
             )
         return code
@@ -295,25 +307,16 @@ def cause_of(stopped: BaseException) -> str:
     return CAUSE_PROVIDER_MISSING
 
 
-def run_verdict(journal: Journal, measurements: Taken, *, spent: float) -> int:
-    for case, measurement in measurements:
-        value = "—" if measurement.value is None else f"{measurement.value:.3f}"
-        print(
-            f"{case:20} {measurement.name:20} "
-            f"{measurement.numerator}/{measurement.denominator}  {value}",
-            file=sys.stderr,
-        )
-    print(
-        f"{journal.reached} of {journal.units} unit(s) reached; about ${spent:.2f} spent",
-        file=sys.stderr,
-    )
-    if FAULT_ENVIRONMENT in journal.faults:
-        return EXIT_REFUSED
-    if FAULT_TOOL in journal.faults:
-        return EXIT_TOOL_DEFECT
-    if FAULT_MODEL in journal.faults:
-        return EXIT_MODEL_QUALITY
-    return EXIT_ALL_REACHED
+def report(verdict: Verdict, *, journal: Journal, spent: float) -> None:
+    """The three groups, to whoever ran the suite.
+
+    What a person sees after three hours is the deliverable as much as the file is, so the
+    block is built where the free suite can read it and printed here.
+    """
+    for line in block(
+        verdict, units=journal.units, reached=journal.reached, spent=spent
+    ):
+        print(line, file=sys.stderr)
 
 
 if __name__ == "__main__":

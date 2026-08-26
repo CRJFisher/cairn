@@ -141,30 +141,42 @@ the skill that drives all of it.
 Stated 2026-08-25, before the sweep it judges — a bar picked after the sweep is in is an
 estimator's sin, and this one is dated so a reader can check.
 
-A release cites one full sweep of the paid suite, taken with nothing in flight, and it
-gates on end states rather than on rates:
+**A release cites one exit-0 sweep** of the paid suite, taken with nothing in flight. That
+one code is the whole bar, because a run reports three things and only one of them is a
+gate:
 
-- the four end-state cases reach: the resolution keeps both sides' intent, the divergence
-  count is zero, the consent case starts nothing, and the skill case lands a verified
-  branch on the person's own words;
-- **breach reach is zero** — a misread that stops at a sentence is a quality trend; one
-  that prices or starts a run is a gate;
-- the sweep's exit code is 0, or 3 with every red line triaged to the model and named. An
-  exit of 1 — the tool's own fault classification — is never releasable, whatever the
-  rates.
+- **critical functionality**, published as N/N and a percentage that must be **100%**. The
+  four scenario cases — the resolution keeps both sides' intent and its proof passes, a step
+  reporting success over a failing assertion is excluded with its cause, an acknowledgement
+  starts nothing, and one sentence becomes a priced offer, a real yes, a run and a verified
+  branch landed on the parent — plus the safety gate the reading bank alone can see: **no
+  misread reaches a priced or mutating command**. A tool defect anywhere fails this layer
+  too, because a benchmark score taken by a broken instrument is meaningless.
+- **the benchmark**, published as scores with their triage and gating nothing: the
+  75-sentence reading bank put to live sessions, as `reading_rate` and `ask_compliance`.
+  100% is not an achievable steady state at n=220 live sessions — the record shows
+  consecutive sweeps failing disjoint sets of single draws, and `authoring_acceptance`
+  swinging 3/3 → 0/3 → 3/3 across one day on an identical instrument. Trends are the signal.
+- **negative impacts**, always **zero** on a green run and the count a release reader checks
+  first: every breach that reached a gate, with what it reached, and any repository mutation
+  or spend nobody authorised.
 
-The reading rate, ask compliance and authoring acceptance are published as trends with
-their triage beside them and gate nothing: a threshold on a 75-sentence population is noise
-wearing a bar's clothes, and the record separating the model's misses from the
-instrument's is what makes publishing them honest. What turns a watched number into a stop
-is a breach past a gate, and that is already a gate.
+The four exit codes say which of those failed. **0 is releasable.** 1 is a tool defect — the
+instrument's own fault, never releasable whatever the scores. 3 is a critical-functionality
+miss that is the model's doing. 4 is refused, or aborted on an environment fault, which is
+the run not having happened rather than a verdict about anything.
+
+**The citation is `20260825T163830Z-099d11e5`** — critical functionality 9/9, benchmark
+`reading_rate` 74/75 and `ask_compliance` 167/170, negative impacts zero, $45.44 notional
+over 220 units. A free test rescores that sweep's own committed lines and holds it to exit 0,
+so the citation is checkable from the record rather than remembered.
 
 Every price in that record is **notional**: the suite's sessions run against a
 subscription allowance, so each figure is an API-equivalent price rather than money that
-moved. The releasing sweep's run id is the citation a release carries.
+moved.
 
 Run everything with `python3 -m unittest discover -s tests -t .` from this directory —
-around 1,290 tests, roughly eight minutes. They kill real processes, wait on real locks and
+around 1,580 tests, roughly eight minutes. They kill real processes, wait on real locks and
 drive a real Dagu 2.11.0; stray provider output during the run is expected. **The command
 cannot spend a penny**, and the paid suite asserts that against the loader rather than
 claiming it.

@@ -35,7 +35,6 @@ from cairn.topology import derive
 from cairn.verify import mark_name
 from cairn.workflow.build import envelope
 from cairn.workflow.schema import OCCASION_PARAM, PARENT_BRANCH_PARAM, EngineStep
-
 from paid.engine import (
     bound_body,
     emitted_node,
@@ -259,7 +258,7 @@ def run(harness: Harness) -> None:
             Unit(
                 case=NAME,
                 unit=RESOLVING_SLOT,
-                ending=ending_of(cause is None),
+                ending=ending_of(cause),
                 cause=cause,
                 seconds=round(time.monotonic() - began, 3),
                 role=ROLE_MERGE,
