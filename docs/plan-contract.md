@@ -166,10 +166,29 @@ the graph absorbs.
 
 **The plan slug** names the worktree parent, the workflow file, and the run record. It
 derives from the documents' own location: a plan written as a folder is named by the folder,
-a plan written as one document by the file. It matches `^[a-z0-9][a-z0-9-]*$`. Before
-generation the slug must collide with nothing in the namespaces it enters;
+a plan written as one document by the file. It matches `^[a-z0-9][a-z0-9-]*$` **and is at
+most 40 bytes**, because the workflow file's name is what the engine reads as the DAG name
+and a longer one is refused at load. Two rules keep it inside that bound, and both are
+functions of the document's name alone:
+
+- A name that opens with a task id and then a title — `task-381 - Report entry points…`,
+  `TASK-381.4 …` — **takes the id**, which is the name every document in that plan already
+  uses for the plan. The whitespace is what separates an id from a title, so a folder
+  genuinely called `task-381-migration-plan` keeps all of itself.
+- Any other name past the bound is **cut at the last hyphen inside it and carries an
+  eight-character digest of the whole name**, so two documents that agree for the first
+  thirty-one characters still derive two slugs and cannot adopt each other's worktrees.
+
+The digest rides on every cut rather than only on one that collides. A slug that varied with
+what is already on disk would be a different name before its worktree parent existed and
+after, and re-deriving it would quietly re-point the plan at a different worktree, a
+different workflow file and a different run record.
+
+Before generation the slug must collide with nothing in the namespaces it enters;
 `python3 -m cairn plan slug <path> --against <dir>…` takes those directories from their
-owners, and this contract owns only the rule that they are all free.
+owners, and this contract owns only the rule that they are all free. Two plans that derive
+one slug — two documents claiming one task id — is a thing for a person to settle, and the
+collision is what says so.
 
 ## The validator
 

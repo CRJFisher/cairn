@@ -27,6 +27,7 @@ from typing import Any, ClassVar, cast
 
 from cairn.core import CairnError, RuntimeContext
 from cairn.parameters import parameter
+from cairn.plan.schema import ENGINE_NAME_MAX_BYTES
 from cairn.topology import ROLES, parse_node_name, worktrees_root_for
 from cairn.wave import run_join
 from cairn.workflow.build import (
@@ -37,7 +38,12 @@ from cairn.workflow.build import (
 )
 from cairn.workflow.cli import main as workflow_main
 from cairn.workflow.cli import workflow_verbs
-from cairn.workflow.gate import EngineUnavailable, assert_pinned, gate
+from cairn.workflow.gate import (
+    EngineUnavailable,
+    assert_pinned,
+    engine_reason,
+    gate,
+)
 from cairn.workflow.preflight import RULES, Fault, check, rehearse_gate
 from cairn.workflow.schema import (
     ENGINE_VERSION,
@@ -1063,6 +1069,27 @@ class TheEngineGateRefusesAsWellAsPasses(unittest.TestCase):
             [f.rule for f in gate(self.written(broken, "unknown"))], ["engine_validate"]
         )
 
+    def test_a_name_at_the_bound_loads_and_one_over_it_is_refused(self) -> None:
+        """The measurement the slug bound rests on, asked of the engine rather than assumed."""
+        good = reread(document("linear-chain"))
+        self.assertEqual(gate(self.written(good, "a" * ENGINE_NAME_MAX_BYTES)), [])
+        faults = gate(self.written(good, "a" * (ENGINE_NAME_MAX_BYTES + 1)))
+        self.assertEqual([f.rule for f in faults], ["engine_validate"])
+        self.assertIn("name must be less than 40 characters", faults[0].detail)
+
+    def test_a_refusal_leads_with_the_file_that_would_be_published(self) -> None:
+        """The authoring path gates a scratch copy; a person can only look at the target.
+
+        The engine's own message still quotes the file it was handed, which is honest — what
+        this fixes is Cairn naming a temporary as though it were the definition.
+        """
+        broken = copy.deepcopy(reread(document("linear-chain")))
+        broken["steps"][1]["bogus_key"] = "x"
+        published = self.root / "the-plan.yaml"
+        faults = gate(self.written(broken, "pending"), named=published)
+        self.assertTrue(faults[0].detail.startswith(f"{published}: "))
+        self.assertIn("bogus_key", faults[0].detail)
+
     def test_the_dry_run_closes_the_gate_on_a_plan_the_engine_cannot_build(self) -> None:
         """`dagu validate` exits 0 on a cycle, so only the dry run catches it here."""
         broken = copy.deepcopy(reread(document("linear-chain")))
@@ -1071,6 +1098,40 @@ class TheEngineGateRefusesAsWellAsPasses(unittest.TestCase):
         self.assertEqual(
             [f.rule for f in gate(self.written(broken, "cyclic"))], ["engine_dry"]
         )
+
+
+# Captured verbatim from `dagu validate` 2.11.0 refusing a 41-character DAG name. The
+# engine's own log lines come first and its finding comes last, which is why a reader that
+# kept the head of this stream kept the logging and dropped the cause.
+MEASURED_REFUSAL = (
+    'time=2026-08-26T11:51:10.723+01:00 level=WARN msg="No auth.mode configured — '
+    "defaulting to 'builtin'.\"\n"
+    "Error: Validation failed for /a/very/long/path/aaaaaaaaaaa.yaml\n"
+    "- field 'name': name must be less than 40 characters (value: aaaaaaaaaaa)\n"
+)
+
+
+class TheEnginesOwnReasonSurvivesTheRefusal(unittest.TestCase):
+    """A refusal that hides its cause is a refusal the person has to reproduce to read."""
+
+    def reason(self, stream: str) -> str:
+        return engine_reason(
+            subprocess.CompletedProcess(args=(), returncode=1, stdout="", stderr=stream)
+        )
+
+    def test_the_engines_logging_is_dropped_and_its_finding_is_kept(self) -> None:
+        said = self.reason(MEASURED_REFUSAL)
+        self.assertIn("name must be less than 40 characters", said)
+        self.assertNotIn("level=WARN", said)
+
+    def test_a_reason_further_in_than_the_old_cut_still_arrives(self) -> None:
+        """The old reader kept the first 600 characters, and the reason is last."""
+        padded = MEASURED_REFUSAL.replace("/a/very/long/path/", "/" + "d/" * 400)
+        self.assertGreater(len(padded), 600)
+        self.assertIn("name must be less than 40 characters", self.reason(padded))
+
+    def test_a_refusal_with_nothing_but_logging_is_not_silently_empty(self) -> None:
+        self.assertEqual(self.reason("time=x level=WARN msg=\"noise\"\n"), "")
 
 
 REFUSALS_HEADING = "## What the preflight refuses"

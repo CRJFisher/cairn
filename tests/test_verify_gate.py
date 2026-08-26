@@ -24,6 +24,7 @@ from cairn.plan.assertions import AnswerError, answer, propose, render, tally
 from cairn.plan.cli import main as plan_main
 from cairn.plan.report import render as render_report
 from cairn.plan.schema import (
+    ENGINE_NAME_MAX_BYTES,
     Assertion,
     Graph,
     has_assertion,
@@ -36,7 +37,6 @@ from cairn.topology import Node
 from cairn.verify import (
     BRANCH,
     CHAIN,
-    ENGINE_ID_LIMIT,
     EXCLUSION_CAUSES,
     GATE_EXCLUDE_IT,
     GATE_RECORD_IT,
@@ -230,7 +230,7 @@ class TheGateIsEmittedWithTheStepItGates(unittest.TestCase):
     def test_the_engine_id_the_reference_names_stays_inside_the_engines_bound(self) -> None:
         long_id = "bring_the_architecture_page_into_line_with_the_current_module_layout"
         handle = verify_handle(long_id)
-        self.assertLessEqual(len(handle), ENGINE_ID_LIMIT)
+        self.assertLessEqual(len(handle), ENGINE_NAME_MAX_BYTES)
         self.assertRegex(handle, r"^[a-z][a-z0-9_]*$")
         self.assertIn(handle, exit_status_reference(long_id))
         self.assertNotEqual(handle, verify_handle(long_id + "_x"))
@@ -239,7 +239,7 @@ class TheGateIsEmittedWithTheStepItGates(unittest.TestCase):
         for name in sorted(path.name for path in FIXTURES.iterdir()):
             for step in fixture(name)["steps"]:
                 with self.subTest(fixture=name, step=step["id"]):
-                    self.assertLessEqual(len(verify_handle(step["id"])), ENGINE_ID_LIMIT)
+                    self.assertLessEqual(len(verify_handle(step["id"])), ENGINE_NAME_MAX_BYTES)
 
 
 class NothingEmittedCanHideAFailure(unittest.TestCase):
@@ -849,7 +849,7 @@ class WhatTheCorpusStates(unittest.TestCase):
 
     def test_the_corpus_is_the_one_the_documents_describe(self) -> None:
         steps, unasserted, real = self.counts()
-        self.assertEqual((steps, unasserted, real), (40, 10, 8))
+        self.assertEqual((steps, unasserted, real), (41, 10, 8))
 
     def test_the_document_quotes_the_corpus_it_ships(self) -> None:
         steps, unasserted, real = self.counts()

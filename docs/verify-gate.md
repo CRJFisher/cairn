@@ -162,7 +162,7 @@ opens the conversation. The parse report spells the two apart — `**unverified*
 
 ## The authoring conversation
 
-**10 of the corpus's 40 steps carry no assertion, and 8 of those 10 are the two real plan
+**10 of the corpus's 41 steps carry no assertion, and 8 of those 10 are the two real plan
 documents** — every step they contain. So the missing-assertion path is the normal path for
 documents people have already written, and what happens then is a designed conversation:
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -112,19 +113,25 @@ def _author(args: argparse.Namespace) -> int:
     divergence = describe(target, graph["plan"]["slug"], digest)
 
     # Gated where it cannot be run from, then moved into place, so a definition that failed
-    # the gate is never left where anything could start it. The name is unique per authoring
-    # rather than per plan: two authorings sharing one pending path could publish bytes the
-    # other one gated.
-    descriptor, pending_name = tempfile.mkstemp(
-        prefix=f".{target.name}.", suffix=".authoring", dir=target.parent
-    )
-    pending = Path(pending_name)
+    # the gate is never left where anything could start it.
+    #
+    # **Under a unique directory rather than a unique file name**, and that is the whole of
+    # why: the engine reads a DAG's name off its file name, stripping one extension. A
+    # pending file called `.<slug>.yaml.<8 random>.authoring` is therefore gated as the DAG
+    # `.<slug>.yaml.<8 random>` — fifteen characters longer than the name that will actually
+    # run — so the gate judged a name nobody chose. Measured against Dagu 2.11.0: a
+    # 40-character name loads, and the same file gated under the old pending name is refused
+    # with `- field 'name': name must be less than 40 characters`. Every fixture slug is
+    # short enough that the corpus never met it. A directory keeps the uniqueness the old
+    # name was for — two authorings can never share a pending path — while letting the file
+    # inside carry the published name, so the gate judges the DAG that will run.
+    scratch = Path(tempfile.mkdtemp(prefix=f".{target.name}.", suffix=".authoring", dir=target.parent))
+    pending = scratch / target.name
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            handle.write(serialise(document))
+        pending.write_text(serialise(document), encoding="utf-8")
         faults = preflight(_load(str(pending)))
         if not faults:
-            faults = gate(pending)
+            faults = gate(pending, named=target)
         if faults:
             for fault in faults:
                 print(f"refused  {fault}", file=sys.stderr)
@@ -136,8 +143,7 @@ def _author(args: argparse.Namespace) -> int:
         os.replace(stamp_path(pending), stamp_path(target))
         os.replace(pending, target)
     finally:
-        pending.unlink(missing_ok=True)
-        stamp_path(pending).unlink(missing_ok=True)
+        shutil.rmtree(scratch, ignore_errors=True)
 
     print(divergence.summary)
     print(f"{target}")

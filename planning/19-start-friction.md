@@ -53,7 +53,7 @@ one loads. Cairn's preflight reports the engine's refusal as `engine_validate: �
 failed for <path> — the engine refuses to load the file`, with the path truncated in the message
 and the engine's own reason line dropped.
 
-**Why it stayed hidden.** The corpus's fifteen fixture plans are all short-named folders. A
+**Why it stayed hidden.** The corpus's fixture plans were all short-named folders. A
 backlog task document — `task-381 - Report-entry-points-for-a-repository-of-vscode's-scale-…md` —
 is the ordinary shape of a plan a person already has, and its name is the whole title.
 

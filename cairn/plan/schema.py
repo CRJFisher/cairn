@@ -144,8 +144,18 @@ RESERVED_ID_PREFIXES: tuple[str, ...] = (VERIFY_PREFIX, MARK_PREFIX, MERGE_PREFI
 STEP_ID_PATTERN = r"[a-z][a-z0-9_]*"
 
 # A plan slug names a directory and a workflow filename, neither of which carries the
-# engine's identifier constraint, so it keeps the hyphens a plan's own name uses.
+# engine's identifier constraint, so it keeps the hyphens a plan's own name uses. It does
+# carry the length one — see below, because the filename is the DAG name.
 PLAN_SLUG_PATTERN = r"[a-z0-9][a-z0-9-]*"
+
+# Measured against Dagu 2.11.0: a name of 40 characters loads and 41 is refused at load with
+# `- field 'name': name must be less than 40 characters` — the message is off by one against
+# the measurement, so the measurement is what is written here. Stated once because three
+# names are bounded by it and they are one engine rule: a node name ([topology.py]), the
+# handle an assertion's exit status is read through ([verify.py]), and the DAG's own name,
+# which is the workflow's filename and therefore the plan slug. The engine counts bytes;
+# every name Cairn derives is ASCII by grammar, so bytes and characters coincide.
+ENGINE_NAME_MAX_BYTES = 40
 
 
 def is_plan_kind(value: object) -> bool:

@@ -25,7 +25,12 @@ from cairn.core import (
     survive_termination,
     write_report,
 )
-from cairn.plan.schema import MARK_PREFIX, VERIFY_PREFIX, WORK_PREFIX
+from cairn.plan.schema import (
+    ENGINE_NAME_MAX_BYTES,
+    MARK_PREFIX,
+    VERIFY_PREFIX,
+    WORK_PREFIX,
+)
 
 # Why a step contributed no verified work. Frozen: every exclusion the run record names
 # comes from here, and a message string never stands in for one. The last three are the
@@ -58,9 +63,8 @@ CHAIN = "chain"
 BRANCH = "branch"
 POSITIONS: tuple[str, ...] = (CHAIN, BRANCH)
 
-# Measured against Dagu 2.11.0: a step id over 40 characters is refused at load, and the
-# corpus already carries a 67-character step id.
-ENGINE_ID_LIMIT = 40
+# The engine's bound on every name it loads, stated once in [plan/schema.py]. The corpus
+# already carries a 67-character step id, which is why the handle below exists at all.
 _DIGEST_LENGTH = 16
 
 GATE_VERB = "gate"
@@ -107,7 +111,7 @@ def verify_handle(step_id: str) -> str:
     digest keeps the handle inside the bound without letting two steps share one.
     """
     name = verify_name(step_id)
-    if len(name) <= ENGINE_ID_LIMIT:
+    if len(name) <= ENGINE_NAME_MAX_BYTES:
         return name
     return f"v_{hashlib.sha256(step_id.encode()).hexdigest()[:_DIGEST_LENGTH]}"
 
@@ -294,7 +298,6 @@ def gate_main(arguments: list[str]) -> int:
 __all__ = [
     "BRANCH",
     "CHAIN",
-    "ENGINE_ID_LIMIT",
     "EXCLUSION_CAUSES",
     "GATE_EXCLUDE_IT",
     "GATE_RECORD_IT",

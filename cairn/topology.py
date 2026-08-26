@@ -21,6 +21,7 @@ from typing import Any, NamedTuple, TypedDict
 from cairn.plan.schema import (
     AGENT_FAMILY,
     DEFAULT_KIND,
+    ENGINE_NAME_MAX_BYTES,
     MERGE_RETRIES,
     MERGE_TIMEOUT,
     RETRY_INTERVAL,
@@ -35,10 +36,9 @@ from cairn.plan.schema import (
 from cairn.verify import BRANCH, CHAIN
 
 # The engine enforces `^[a-zA-Z][a-zA-Z0-9_]*$` on a step name and rejects a hyphen with a
-# `use '_' instead of '-'` hint (01). The length bound and the reserved words are Cairn's:
-# a name is parsed back into a role and a step id by the run model (12), so a truncated one
-# would silently stop round-tripping.
-ENGINE_NAME_MAX_BYTES = 40
+# `use '_' instead of '-'` hint (01). The length bound is the engine's, stated once in
+# [plan/schema.py]; the reserved words are Cairn's, because a name is parsed back into a
+# role and a step id by the run model (12) and a truncated one would stop round-tripping.
 RESERVED_NAMES = frozenset(
     {"env", "params", "args", "stdout", "stderr", "output", "outputs"}
 )
@@ -597,7 +597,6 @@ def _refuse_over_ceiling(topology: Topology) -> None:
 
 __all__ = [
     "BRANCH_PREFIX",
-    "ENGINE_NAME_MAX_BYTES",
     "RESERVED_NAMES",
     "ROLES",
     "RUN_CEILING_SECONDS",

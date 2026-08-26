@@ -16,11 +16,12 @@ from cairn.plan.ids import (
     assign_ids,
     derive_plan_slug,
     is_engine_id,
+    is_plan_slug,
     plan_slug_collisions,
     sanitise_id,
 )
 from cairn.plan.report import render, waves
-from cairn.plan.schema import SchemaError, normalise
+from cairn.plan.schema import ENGINE_NAME_MAX_BYTES, SchemaError, normalise
 from cairn.plan.validate import Finding, validate
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -60,6 +61,7 @@ class GoldenGraphs(unittest.TestCase):
                 "fan-out",
                 "multi-wave",
                 "single-step",
+                "task-381",
                 "cycle",
                 "no-verify",
                 "mixed-kinds",
@@ -319,6 +321,18 @@ class UncoveredCodes(unittest.TestCase):
 
     def test_a_plan_slug_outside_the_grammar_is_refused(self) -> None:
         self.assertIn("plan_slug", [f.code for f in validate(minimal(slug="My Plan")).errors])
+
+    def test_a_slug_over_the_engines_name_bound_is_refused_at_derivation(self) -> None:
+        """Refused here rather than at the gate, where a person has already been charged."""
+        found = validate(minimal(slug="a" * (ENGINE_NAME_MAX_BYTES + 1))).errors
+        self.assertIn("plan_slug", [f.code for f in found])
+        said = " ".join(f.message for f in found)
+        self.assertIn(str(ENGINE_NAME_MAX_BYTES), said)
+        self.assertIn("DAG name", said)
+
+    def test_a_slug_at_the_engines_name_bound_passes(self) -> None:
+        """Measured against Dagu 2.11.0: 40 loads, 41 is refused."""
+        self.assertTrue(validate(minimal(slug="a" * ENGINE_NAME_MAX_BYTES)).ok)
 
     def test_an_id_the_engine_would_reject_is_refused(self) -> None:
         graph = minimal()
@@ -685,6 +699,67 @@ class Identifiers(unittest.TestCase):
         self.assertEqual(derive_plan_slug("/tmp/p/offline-export/README.md"), "offline-export")
         self.assertEqual(derive_plan_slug("/tmp/p/offline-export/WORKLIST.md"), "offline-export")
         self.assertEqual(derive_plan_slug("/tmp/p/offline-export/04-thing.md"), "04-thing")
+
+    def test_a_task_shaped_name_takes_its_own_id_as_the_slug(self) -> None:
+        """A backlog document's file name is its whole title; the id is what names the plan."""
+        long_name = (
+            "/p/task-381 - Report entry points for a repository of vscode's scale.md"
+        )
+        self.assertEqual(derive_plan_slug(long_name), "task-381")
+        self.assertEqual(derive_plan_slug("/p/TASK-381.4 Something else.md"), "task-381-4")
+
+    def test_a_name_that_merely_opens_with_a_task_id_keeps_all_of_itself(self) -> None:
+        """The whitespace is what separates an id from a title, so a hyphenated name is whole."""
+        self.assertEqual(
+            derive_plan_slug("/p/task-381-migration-plan.md"), "task-381-migration-plan"
+        )
+
+    def test_a_long_name_is_cut_at_a_hyphen_and_carries_a_digest(self) -> None:
+        slug = derive_plan_slug(
+            "/p/a-very-long-plan-document-name-that-goes-on-and-on-past-the-bound.md"
+        )
+        self.assertLessEqual(len(slug.encode("utf-8")), ENGINE_NAME_MAX_BYTES)
+        self.assertTrue(is_plan_slug(slug))
+        self.assertFalse(slug.endswith("-"))
+        # Cut at a hyphen, so the readable half is whole words rather than a mid-word chop.
+        self.assertTrue("a-very-long-plan-document-name".startswith(slug.rsplit("-", 1)[0]))
+
+    def test_two_long_names_that_cut_alike_still_derive_two_slugs(self) -> None:
+        """The digest is of the whole name, so a plan cannot adopt another plan's worktrees."""
+        first = derive_plan_slug("/p/a-very-long-plan-document-name-past-the-bound.md")
+        second = derive_plan_slug("/p/a-very-long-plan-document-name-past-the-bounds.md")
+        self.assertNotEqual(first, second)
+
+    def test_the_derivation_is_a_function_of_the_document_alone(self) -> None:
+        """Called twice, twice the same — it reads no filesystem state but the path itself.
+
+        A slug that varied with what is already on disk would re-point a plan at a different
+        worktree parent and a different run record the second time it was derived.
+        """
+        name = "/p/a-very-long-plan-document-name-that-goes-on-and-on-past-the-bound.md"
+        self.assertEqual(derive_plan_slug(name), derive_plan_slug(name))
+
+    def test_every_corpus_plan_derives_a_slug_the_engine_could_load(self) -> None:
+        for name in sorted(os.listdir(FIXTURES)):
+            graph = json.loads(
+                Path(FIXTURES, name, "graph.json").read_text(encoding="utf-8")
+            )
+            with self.subTest(plan=name):
+                self.assertTrue(is_plan_slug(graph["plan"]["slug"]))
+
+    def test_the_corpus_holds_a_plan_whose_document_name_exceeds_the_bound(self) -> None:
+        """The fixture is load-bearing rather than decorative, and this is what says so."""
+        over = [
+            name
+            for name in sorted(os.listdir(FIXTURES))
+            if len(
+                json.loads(
+                    Path(FIXTURES, name, "graph.json").read_text(encoding="utf-8")
+                )["plan"]["source"].encode("utf-8")
+            )
+            > ENGINE_NAME_MAX_BYTES
+        ]
+        self.assertTrue(over, "no corpus plan exercises the bound the engine enforces")
 
     def test_a_slug_collides_with_nothing_that_exists(self) -> None:
         self.assertEqual(plan_slug_collisions("no-such-plan", [FIXTURES]), [])

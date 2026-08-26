@@ -17,6 +17,7 @@ scheduler hazard that re-executes every failed run on the machine ([09]).
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import tempfile
@@ -28,6 +29,34 @@ from cairn.workflow.preflight import Fault
 from cairn.workflow.schema import ENGINE_VERSION
 
 GATE_TIMEOUT = 120
+
+# The engine writes its own structured log to stderr before it writes its findings, and the
+# findings are last: `time=… level=WARN msg=…` lines, then `Error: Validation failed for
+# <path>`, then one `- field '<name>': <reason>` per finding. A reader that kept the head of
+# that stream kept the logging and dropped the cause — which is exactly what a fixed-length
+# cut did, because the path in the middle is as long as the repository's own.
+ENGINE_LOG_LINE = re.compile(r"^time=\S+\s+level=")
+# What a refusal may carry of the engine's own words. Generous, because the reason is the
+# whole point of reading it, and bounded, because it is text from another program.
+REASON_LIMIT = 2000
+
+
+def engine_reason(completed: subprocess.CompletedProcess[str]) -> str:
+    """What the engine actually said, with its logging dropped and its findings kept.
+
+    Every line the engine logged about itself is dropped and every line it wrote about the
+    file is kept, so a refusal carries the cause a person has to act on rather than the
+    noise in front of it. A refusal that hides its cause is a refusal the person has to
+    reproduce by hand to read — which is what cost the second person to drive Cairn an
+    attempt ([19 A]).
+    """
+    stream = completed.stderr or completed.stdout or ""
+    said = [
+        line.strip()
+        for line in stream.splitlines()
+        if line.strip() and ENGINE_LOG_LINE.match(line) is None
+    ]
+    return " ".join(said)[:REASON_LIMIT]
 
 
 class EngineUnavailable(Exception):
@@ -89,12 +118,17 @@ def _scratch_home(root: Path) -> Path:
     return home
 
 
-def gate(path: Path, *, binary: str | None = None) -> list[Fault]:
+def gate(path: Path, *, binary: str | None = None, named: Path | None = None) -> list[Fault]:
     """Run both engine checks against a scratch data directory, and name what failed.
 
     The path is resolved before it is handed over: a relative path the engine cannot find is
     silently re-resolved against its own `dags` directory, so a gate given one could validate
     a different file entirely.
+
+    `named` is where the gated bytes will be published, and it is what a refusal names. The
+    authoring path gates a file in a scratch directory so a definition that failed is never
+    left where anything could start it ([workflow/cli.py]) — and a person who is told a
+    temporary directory's path has been told nothing they can look at.
     """
     assert_pinned(binary)
     engine = engine_path(binary)
@@ -116,10 +150,11 @@ def gate(path: Path, *, binary: str | None = None) -> list[Fault]:
                     f"{ENGINE_BINARY} {verb} did not finish: {exc}"
                 ) from exc
             if completed.returncode != 0:
-                message = (completed.stderr or completed.stdout).strip()
-                faults.append(
-                    Fault(f"engine_{verb}", None, message[:600] or f"exited {completed.returncode}")
-                )
+                # The file's own published name leads, in Cairn's spelling and never cut:
+                # the engine's copy of it is inside its message, and that message is what
+                # gets bounded.
+                reason = engine_reason(completed) or f"exited {completed.returncode}"
+                faults.append(Fault(f"engine_{verb}", None, f"{named or target}: {reason}"))
                 break
     return faults
 
@@ -129,6 +164,7 @@ __all__ = [
     "EngineUnavailable",
     "assert_pinned",
     "engine_path",
+    "engine_reason",
     "engine_version",
     "gate",
 ]

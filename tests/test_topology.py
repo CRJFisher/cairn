@@ -6,9 +6,15 @@ from pathlib import Path
 from typing import Any, cast
 
 from cairn.emitters import emit_node, emit_step, emit_verify, retry_policy
-from cairn.plan.schema import SUPPORT_TIMEOUT, WAIT_REPORT_GRACE, Graph, Step, normalise
-from cairn.topology import (
+from cairn.plan.schema import (
     ENGINE_NAME_MAX_BYTES,
+    SUPPORT_TIMEOUT,
+    WAIT_REPORT_GRACE,
+    Graph,
+    Step,
+    normalise,
+)
+from cairn.topology import (
     RESERVED_NAMES,
     ROLES,
     RUN_CEILING_SECONDS,

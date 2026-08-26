@@ -111,7 +111,7 @@ the skill that drives all of it.
   measurement below, `cli.py` the two commands. A run is authorised in one direction:
   `cairn run offer` prices the definition and mints one token, `cairn run start` spends it
   exactly once, and `trigger.start` is the only thing here that can invoke the engine.
-- `fixtures/plans/` — fifteen plans with their golden graphs and expected verdicts, two of
+- `fixtures/plans/` — sixteen plans with their golden graphs and expected verdicts, two of
   them carrying the answers their authoring conversation received.
 - `fixtures/workflows/` — the whole emitted file for six of those plans, one per topology
   shape, compared byte for byte by the suite.

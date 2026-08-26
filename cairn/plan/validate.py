@@ -8,6 +8,7 @@ from typing import Any
 from cairn.plan.ids import is_engine_id, is_plan_slug
 from cairn.plan.schema import (
     AGENT_FAMILY,
+    ENGINE_NAME_MAX_BYTES,
     GRAPH_VERSION,
     RESERVED_ID_PREFIXES,
     STEP_ID_PATTERN,
@@ -164,8 +165,25 @@ def validate(raw: Any, source_root: str | None = None) -> Result:
 
     plan = graph["plan"]
     if not is_plan_slug(plan["slug"]):
+        # Two halves of one rule, phrased apart because they are cleared differently: a
+        # grammar fault is a slug someone wrote by hand, and a length fault is a slug that
+        # was derived before the bound existed. The length half is refused here rather than
+        # at the gate so a graph that cannot be authored is refused where a person can still
+        # act on it ([19 A]).
+        over = len(plan["slug"].encode("utf-8")) > ENGINE_NAME_MAX_BYTES
         errors.append(
-            Finding("plan_slug", f"plan slug {plan['slug']!r} must match ^[a-z0-9][a-z0-9-]*$")
+            Finding(
+                "plan_slug",
+                (
+                    f"plan slug {plan['slug']!r} is "
+                    f"{len(plan['slug'].encode('utf-8'))} bytes, over the engine's "
+                    f"{ENGINE_NAME_MAX_BYTES}-byte bound on a DAG name — and the slug is "
+                    "the workflow file's name, which is the name the engine reads. "
+                    "Re-derive it with `python3 -m cairn plan slug <path>`"
+                )
+                if over
+                else f"plan slug {plan['slug']!r} must match ^[a-z0-9][a-z0-9-]*$",
+            )
         )
 
     pinned = [source["path"] for source in plan["sources"]]
