@@ -16,6 +16,7 @@ import traceback
 from typing import Any, TypedDict, cast
 
 from cairn.core import (
+    ENDED_WITHOUT_REPORTING,
     EXIT_FAILED,
     EXIT_OK,
     CairnError,
@@ -82,6 +83,10 @@ GATE_EXCLUDE_IT = EXIT_FAILED
 # only status a report can carry when there is nothing to carry — and quoting `failed` back
 # puts a verdict in the session's mouth that it never gave ([19 D]).
 REPORTED_NOTHING = "nothing"
+# And where the step did say something Cairn could not read. Two readings rather than one,
+# because the divergence is the only channel this fact has into the record and a single
+# word would make the run record contradict the gate's own summary beside it.
+REPORTED_UNREADABLE = "unreadable"
 
 
 class Divergence(TypedDict):
@@ -110,9 +115,6 @@ class Verdict(TypedDict):
 
 # The runtime's own account of a step, or an empty one. A report's `detail` is not validated
 # by `read_step_report`, so it is read defensively wherever the gate turns on it.
-ENDED_WITHOUT_REPORTING = "ended_without_reporting"
-
-
 def _detail(report: dict[str, Any]) -> dict[str, Any]:
     found = report.get("detail")
     return cast(dict[str, Any], found) if isinstance(found, dict) else {}
@@ -130,6 +132,8 @@ def divergence_line(divergence: Divergence) -> str:
     asserted = "passed" if divergence["asserted"] else "did not pass"
     if divergence["reported"] == REPORTED_NOTHING:
         return f"the step's session ended without reporting, and its assertion {asserted}"
+    if divergence["reported"] == REPORTED_UNREADABLE:
+        return f"the step left no readable account of itself, and its assertion {asserted}"
     return f"the step reported {divergence['reported']!r} while its assertion {asserted}"
 
 
@@ -203,8 +207,9 @@ def judge(verify_exit: int | None, report: dict[str, Any] | None) -> Verdict:
         # **The cause is broader than the sentence.** `provider_protocol` covers every
         # unreadable-protocol fault, and only one of them is a session that said nothing at
         # all — so the summary is narrowed by the fact the runtime recorded rather than by
-        # the cause, which means more than that ([providers.ENDED_WITHOUT_REPORTING]).
+        # the cause, which means more than that ([core.ENDED_WITHOUT_REPORTING]).
         silent = _detail(report).get(ENDED_WITHOUT_REPORTING) is True
+        reading = REPORTED_NOTHING if silent else REPORTED_UNREADABLE
         said = (
             "the step's session ended without reporting"
             if silent
@@ -213,7 +218,7 @@ def judge(verify_exit: int | None, report: dict[str, Any] | None) -> Verdict:
         return Verdict(
             record=False,
             cause=PROVIDER_PROTOCOL,
-            divergence=Divergence(reported=REPORTED_NOTHING, asserted=True)
+            divergence=Divergence(reported=reading, asserted=True)
             if asserted
             else None,
             summary=(
@@ -374,6 +379,7 @@ __all__ = [
     "POSITIONS",
     "PROVIDER_PROTOCOL",
     "REPORTED_NOTHING",
+    "REPORTED_UNREADABLE",
     "Divergence",
     "Verdict",
     "divergence_line",

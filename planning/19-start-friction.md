@@ -42,11 +42,13 @@ each of 17 steps with `verify` for the 15 that carry an assertion — and no `se
    assertion that passed, halted the chain, and discarded $10.89 of proven work. This wall
    is met inside the run rather than before it, which is why it comes last ([D](#d--a-headless-session-that-defers-its-own-completion-leaves-no-report)).
 
-The first is a derivation defect with a one-line fix. The second and third are the same shape:
+The first is a derivation defect — with, it turned out, a second half at the gate, which
+judged a name nobody chose. The second and third are the same shape:
 **a cause the person could have cleared before the offer was spent, surfaced only after it was.**
 That is exactly the cost `refuse_unusable_engine` exists to prevent — _"a machine that cannot run
 the plan does not cost a person their acceptance"_ — and it currently checks one thing, the
-engine's version.
+engine's version. The fourth is different again: it is met inside the run, by a session that
+did the work and never said so.
 
 ## A — The plan slug: bound it where the engine bounds it
 
@@ -326,3 +328,106 @@ never designed here and are carried forward.
   reported nothing is recorded as `provider_protocol` rather than `reported_failure`. A step's
   session keeps `Agent` and `Monitor`.
 - The measurement above is recorded against `20260825T132605Z-26c99fcf`.
+
+## Implementation Notes
+
+**Status: done.** Sections A, B, C and D, and bucket item E, land on
+`task-19-start-friction`. Bucket items D, H, I and J are carried forward: they were never
+designed here, and closing them would have been guessing.
+
+### High-level summary
+
+A person with an ordinary plan document can now author it and start it. The four walls are
+gone from the path between the two, and each one was cleared where it was raised rather
+than worked around.
+
+A backlog document called `task-381 - Report entry points for a repository of vscode's
+scale and shape.md` derives the slug `task-381` and authors straight through to a workflow
+the engine loads. `run start` hands back the run id, the branch, the view and the report
+command, and returns in seconds — the run outlives the command that made it, so a harness
+whose tool call is bounded at two minutes no longer kills a run it just paid for. A shell
+that cannot bind the socket every run opens is refused while the yes still stands, in the
+engine's own words. A chain-shaped plan is priced as a chain. And a session that does the
+work but ends its turn without saying so is asked once more, then recorded as having said
+nothing — instead of being quoted as claiming a failure it never claimed while $10.89 of
+assertion-passing work is discarded.
+
+Three of those needed a cause the document had not found. **The authoring gate was judging
+the wrong name**: it validated a `mkstemp` file called `.<slug>.yaml.<8 random>.authoring`,
+and the engine reads a DAG's name off its file name, so the gate judged a name fifteen
+characters longer than the one that would be published. Bounding the slug alone would have
+left every slug over about twenty-five characters still dying at the gate. **The engine's
+own reason was being cut out of its refusal** — `dagu` writes its log lines first and its
+findings last, so a fixed-length cut kept the logging and dropped the cause. And **the deny
+list section D proposed was wrong on two counts of three**: measured under `-p`, a
+background subagent holds the process open and re-invokes the session on completion (three
+in parallel all arrived) and `Monitor` blocks, so denying them would have cost a step its
+concurrency to prevent a leak neither of them causes. Only a background shell leaks, and
+only a scheduled wakeup is never delivered.
+
+That last measurement changed the design. A background shell cannot be denied by name
+without denying `Bash`, and denying it by argument would take away a step's parallel shells
+— so the turn is held open instead. A `Stop` hook, armed per session through a `--settings`
+document Cairn composes and writes nowhere, refuses to let a turn end while a shell the
+session started is still running, names the command, and is bounded by the harness's own
+`stop_hook_active`. It fails open on every fault, which is the exact inverse of the verify
+gate: it holds a *paid* session, so a bug in it spends money in a loop, and nothing in
+Cairn depends on it having run.
+
+### What each acceptance criterion rests on
+
+| Criterion | Where it holds | What proves it |
+| --- | --- | --- |
+| A long document name derives a bounded slug and reaches a workflow | `plan/ids.py`, `plan/validate.py`, `workflow/cli.py` | the `task-381` fixture; a 40-byte slug authored end to end against the real engine |
+| A refusal carries the engine's own reason | `workflow/gate.py: engine_reason` | the measured refusal stream, and a real gate refusal naming the published path |
+| `run start` prints the identity first and returns when the engine has the run | `skill/trigger.py`, `skill/cli.py` | the launcher reads stdout at launch time; one run id asserted across the print, the argv and the marker |
+| A shell that cannot bind is refused before the spend | `workflow/gate.py: rehearse_start` | a stub emitting the measured bind error; the real engine for the passing case |
+| The price is the definition's topology | `skill/consent.py: node_roles`, `skill/vocabulary.py` | a chain states eight facts, a fan-out ten, and a definition Cairn cannot parse states all ten |
+| A turn is held open for a live background shell | `hooks.py`, `providers.py: hook_settings` | the pinned payload; and a real `claude -p` session held, resumed, and made to read its shell |
+| A silent session is resumed once and recorded as itself | `providers.py`, `verify.py: judge` | scripted streams over all four outcomes; `--resume` measured to keep its session id |
+
+### Decisions worth knowing
+
+**The slug digest rides on every cut, not only a colliding one.** The section as first
+written made it conditional on what `--against` finds. That would make the slug a function
+of filesystem state — the same document deriving one name before its worktree parent
+existed and another after — so a re-derivation would quietly re-point a plan at a different
+worktree and a different run record. The section has been corrected to match.
+
+**The divergence survives for a step that said nothing.** Four of five planners wanted it
+dropped, reasoning that a divergence needs two accounts. The record's plumbing says
+otherwise: a mark report contributes its cause, its position and its divergence, and
+nothing else — neither the gate's summary nor the assertion's exit status reaches it. Drop
+the divergence and the record can no longer distinguish work sitting verified in the tree
+from work never done, which is the fact section D exists to surface. It stays, with a
+frozen `reported = "nothing"` instead of the lie of `"failed"`.
+
+**`provider_protocol` is broader than the sentence about it.** The cause covers every
+unreadable-protocol fault; only the commonest is a session that said nothing at all. The
+gate's summary is narrowed by a fact the runtime records rather than by the cause, so a
+garbled stream is not described as a silence.
+
+**`--wait` prints the engine's exit status and still exits zero.** The exit status of
+`run start` says only that the run started, which `capabilities/running.md` has always
+said; the old blocking form contradicted it by rendering a run that dropped a branch as a
+refusal. Reproducing that under `--wait` would have reproduced a defect.
+
+### The measurements this work added
+
+Against Dagu 2.11.0: a DAG name of 40 characters loads and 41 is refused, and the name is
+the file name minus one extension. A one-step rehearsal in a scratch engine home costs
+0.25s. Against the installed agent CLI under `-p`: a background subagent holds the process
+and re-invokes the session per completion; `Monitor` blocks; a background shell leaves the
+process at exit; `ScheduleWakeup` never fires; `--disallowedTools "Cron*"` really matches;
+`--resume` reports the same session id and per-invocation cost, not cumulative; and a
+correct structured report also returns `stop_reason: "tool_use"`, so only the absent
+`structured_output` beside it says a session never reported.
+
+### What is not proved
+
+The resume rescue has not been driven against a live provider — provoking a real session to
+end a turn without calling its structured-output tool is not reliably forcible, so it rests
+on scripted streams plus the two measurements above. A detached start outliving its parent
+for hours rests on the measurement already recorded here rather than a re-run. A genuinely
+sandboxed shell failing to bind was reproduced through a stub emitting the measured error,
+not by revoking a shell's own permission.

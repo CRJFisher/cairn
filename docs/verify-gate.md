@@ -98,6 +98,9 @@ The gate reads two things and opens only when both agree:
 | any            | unreadable            | closes   | `gate_indeterminate`     | —                                        |
 | _(unverified)_ | `done` or `noop`      | opens    | —                        | —                                        |
 
+A report can carry `failed` **and** `cause: provider_protocol`; the cause is the narrower
+fact, so that row is judged before the plain `failed` row above it.
+
 **Every fault closes it.** This is the exact inverse of the marker gate, which opens on every
 fault it meets. Both are the safe direction, and the asymmetry is the design: redoing
 convergent work costs one run, while a marker over unverified work reaches git, rides every
@@ -134,10 +137,6 @@ never reached from one killed before it could write.
 
 `gate_indeterminate` exists because folding an unreadable report into `not_reached` would
 claim a step never ran when it may have done all of its work.
-
-The rows are read in the order the gate reads them, which is why the `provider_protocol` row
-comes first: a report can carry `failed` **and** that cause, and the cause is the narrower
-fact.
 
 `provider_protocol` exists for the same shape of reason one row up. It covers every
 unreadable-protocol fault — a malformed stream line, an unknown status, a summary that is not

@@ -254,15 +254,15 @@ def start(
             # be a moment from registering, and killing a run the offer has already paid
             # for, on a timer, is the one destructive move available here.
             #
-            # `--wait` is still honoured. A caller that asked to block until the run ends
-            # asked for exactly that, and returning here without waiting would hand it a
-            # zero exit for a run whose fate is unknown — which is the one thing a blocking
-            # caller cannot check for itself.
-            return Started(
-                address=where,
-                taken_on=False,
-                exit_code=process.wait() if wait else None,
-            )
+            # `--wait` is still honoured: a caller that asked to block until the run ends
+            # asked for exactly that, and returning without waiting would hand it a zero
+            # exit for a run whose fate is unknown. **And the question is asked again
+            # afterwards** — the engine may have registered the run during the wait, and a
+            # `taken_on` sampled before it would refuse a run that then ran to completion.
+            if not wait:
+                return Started(address=where, taken_on=False, exit_code=None)
+            waited = process.wait()
+            return Started(address=where, taken_on=holds(run_id), exit_code=waited)
         sleeper(TAKEN_ON_INTERVAL)
 
 

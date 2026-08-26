@@ -36,6 +36,7 @@ from cairn.providers import (
     PROVIDER_RUNNERS,
     RESUME_ATTEMPTED,
     RESUME_DECLINED_BUDGET,
+    RESUME_FAILED,
     RESUME_STILL_SILENT,
     ended_without_reporting,
     run_claude,
@@ -1223,8 +1224,14 @@ class ASessionThatEndedWithoutReportingIsResumedOnce(unittest.TestCase):
         def factory(command: list[str], **kwargs: object) -> FakeProcess:
             process = FakeProcess(command, **kwargs)
             if pending:
-                said = {**process.output(), **pending.pop(0)}
-                process.stdout = FakeOutput(json.dumps(said) + "\n")
+                said = dict(pending.pop(0))
+                # A scripted `exit` is the process's own status, not part of its stream.
+                # Without it a scripted `terminal_reason` is inert, because
+                # `_translate_result` reads one only for a process that exited nonzero.
+                process.returncode = int(said.pop("exit", 0))
+                process.stdout = FakeOutput(
+                    json.dumps({**process.output(), **said}) + "\n"
+                )
             made.append(process)
             return process
 
@@ -1309,10 +1316,11 @@ class ASessionThatEndedWithoutReportingIsResumedOnce(unittest.TestCase):
         """A budget exhausted a cent short must not overwrite the honest cause: the gate
         would then read `reported_failure` and print the divergence line D exists to
         remove — about a step that reported nothing."""
-        # The resume runs out of budget and so reports nothing either.
+        # The resume runs out of budget: it exits nonzero with its own terminal reason and
+        # reports nothing. Adopting its result would re-cause the step `budget_exhausted`.
         factory, made = self._scripted(
             self.UNREPORTED,
-            {**self.UNREPORTED, "terminal_reason": "budget_exhausted"},
+            {**self.UNREPORTED, "exit": 1, "terminal_reason": "budget_exhausted"},
         )
         with self.assertRaises(CairnError) as caught:
             self._ran(factory)
@@ -1323,6 +1331,36 @@ class ASessionThatEndedWithoutReportingIsResumedOnce(unittest.TestCase):
         )
         # And the step's spend is still both passes, not just the first.
         self.assertAlmostEqual(caught.exception.detail["total_cost_usd"], 0.50)
+
+    def test_a_resume_that_never_answers_keeps_the_first_passs_account(self) -> None:
+        """A resume can fail before it says anything. The first session's cost is then the
+        only figure there is, and it is the number the record is read for."""
+        made: list[FakeProcess] = []
+        replies = [self.UNREPORTED]
+
+        def factory(command: list[str], **kwargs: object) -> FakeProcess:
+            process = FakeProcess(command, **kwargs)
+            if replies:
+                process.stdout = FakeOutput(
+                    json.dumps({**process.output(), **replies.pop(0)}) + "\n"
+                )
+            else:
+                # A stream that ends before its result message — what a resume that cannot
+                # reopen the session leaves behind.
+                process.stdout = FakeOutput("")
+            made.append(process)
+            return process
+
+        with self.assertRaises(CairnError) as caught:
+            self._ran(factory)
+        self.assertEqual(len(made), 2)
+        self.assertEqual(caught.exception.cause, "provider_protocol")
+        detail = caught.exception.detail
+        self.assertEqual(detail["resumed_for_report"], RESUME_FAILED)
+        # The first pass's account survived the failure of the second.
+        self.assertAlmostEqual(detail["total_cost_usd"], 0.25)
+        self.assertTrue(detail["session_id"])
+        self.assertIs(detail[ENDED_WITHOUT_REPORTING], True)
 
     def test_the_gate_is_told_the_narrow_fact_and_not_only_the_broad_cause(self) -> None:
         """`provider_protocol` covers every unreadable-protocol fault; only one of them is

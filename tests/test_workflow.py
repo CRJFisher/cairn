@@ -907,11 +907,13 @@ class TheEngineVersionIsPinned(unittest.TestCase):
     def test_a_rehearsal_that_never_answers_is_refused_rather_than_waited_on(self) -> None:
         """The other spelling: in the machine's own home the bind was observed to sit
         silent for two minutes rather than fail, which a bound turns into a refusal."""
-        with patch("cairn.workflow.gate.GATE_TIMEOUT", 1), self.assertRaises(
+        with patch("cairn.workflow.gate.REHEARSAL_TIMEOUT", 1), self.assertRaises(
             EngineUnavailable
         ) as caught:
             rehearse_start(binary=self.stub("sleep 30"))
         self.assertIn("did not take", str(caught.exception))
+        # The refusal quotes the bound it actually waited on, so the two cannot drift.
+        self.assertIn("within 1s", str(caught.exception))
 
     def test_a_rehearsal_never_names_the_machines_own_engine_home(self) -> None:
         """An engine home the binary has never seen is created carrying an active retry

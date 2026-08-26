@@ -12,6 +12,7 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
+from cairn.core import ENDED_WITHOUT_REPORTING
 from cairn.emitters import (
     emit_commit,
     emit_marker,
@@ -41,6 +42,7 @@ from cairn.verify import (
     GATE_EXCLUDE_IT,
     GATE_RECORD_IT,
     REPORTED_NOTHING,
+    REPORTED_UNREADABLE,
     Divergence,
     divergence_line,
     exit_status_reference,
@@ -881,13 +883,26 @@ class AStepThatReportedNothingIsNotAStepThatReportedFailure(unittest.TestCase):
         position and its divergence to the record, and neither the gate's summary nor the
         assertion's exit status reaches it. Without this, a step whose work is sitting
         verified in the tree is indistinguishable from one that did nothing."""
-        found = judge(0, report(status="failed", cause="provider_protocol"))
+        silent = report(status="failed", cause="provider_protocol")
+        silent["detail"] = {ENDED_WITHOUT_REPORTING: True}
+        found = judge(0, silent)
         self.assertIsNotNone(found["divergence"])
         divergence = cast(Divergence, found["divergence"])
         self.assertEqual(divergence["reported"], REPORTED_NOTHING)
         self.assertTrue(divergence["asserted"])
         self.assertIn("ended without reporting", divergence_line(divergence))
         self.assertNotIn("'failed'", divergence_line(divergence))
+
+    def test_a_step_whose_account_was_unreadable_says_that_instead(self) -> None:
+        """`provider_protocol` covers every unreadable-protocol fault and only the
+        commonest is a silence. The divergence must agree with the gate's own summary
+        beside it, or the record contradicts itself about one step."""
+        garbled = judge(0, report(status="failed", cause="provider_protocol"))
+        divergence = cast(Divergence, garbled["divergence"])
+        self.assertEqual(divergence["reported"], REPORTED_UNREADABLE)
+        self.assertIn("no readable account", divergence_line(divergence))
+        self.assertIn("no readable account", garbled["summary"])
+        self.assertNotIn("ended without reporting", divergence_line(divergence))
 
     def test_a_failing_assertion_leaves_nothing_to_diverge_from(self) -> None:
         found = judge(1, report(status="failed", cause="provider_protocol"))

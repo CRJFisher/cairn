@@ -680,7 +680,6 @@ __all__ = [
     "has_words",
     "longest_timeout",
     "make_offer",
-    "node_roles",
     "offer_path",
     "offers_directory",
     "read_acceptance",

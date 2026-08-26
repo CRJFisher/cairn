@@ -68,8 +68,10 @@ verbatim>'`. The run id is minted for you; pass `--run-id` only to choose one. I
    blocks — the engine's own words go to the log, not to the screen. Do not pass it from a
    harness.
 
-   **There is a third answer.** If the engine has neither registered the run nor exited
-   within thirty seconds, the command says so and exits zero, leaving the engine running:
+   **There is a third answer**, and it is the detached one. If the engine has neither
+   registered the run nor exited within thirty seconds, the command says so and exits zero,
+   leaving the engine running (under `--wait` it keeps blocking instead, and asks again
+   when the engine finally exits):
    it may be a moment away, and killing a run the offer has already paid for, on a timer,
    is the one destructive thing this command could do. Read `runs/<run-id>/engine.log` for
    what the engine said, and `cairn report --run <run-id>` a minute later for whether it

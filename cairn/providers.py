@@ -14,6 +14,7 @@ from typing import Any, TextIO, cast
 
 from cairn.commands import stop_child
 from cairn.core import (
+    ENDED_WITHOUT_REPORTING,
     EXIT_FAILED,
     EXIT_OK,
     EXIT_RATE_LIMITED,
@@ -355,13 +356,6 @@ def ended_without_reporting(process_exit: int, result: dict[str, Any]) -> bool:
 # What a rescue did, as the run's record spells it. One vocabulary rather than a field that
 # is sometimes `True` and sometimes a sentence, because a person reading the record has to
 # be able to tell a rescue that was declined from one that was tried and did not help.
-# The one fact the gate needs that `provider_protocol` is too broad to carry. That cause is
-# raised for every unreadable-protocol fault — a malformed stream line, an unknown status, a
-# summary that is not a string — and only one of them is a session that said nothing at all.
-# The gate's sentence about a step turns on exactly this, so it is recorded rather than
-# re-derived from a cause that means more than it ([verify.judge]).
-ENDED_WITHOUT_REPORTING = "ended_without_reporting"
-
 RESUME_ATTEMPTED = "attempted"
 RESUME_DECLINED_BUDGET = "declined_budget_exhausted"
 RESUME_FAILED = "resume_failed"
@@ -482,8 +476,8 @@ def run_claude(
                 # The first session's account is now the only one there is, and its cost is
                 # the number the record is read for.
                 unreachable.detail = {
-                    **first_detail,
                     **unreachable.detail,
+                    **first_detail,
                     **rescue,
                     "resumed_for_report": RESUME_FAILED,
                 }
@@ -496,7 +490,18 @@ def run_claude(
             # Measured: a resumed session reports its **own invocation's** cost and turns
             # rather than the session's cumulative totals (0.0168 then 0.0031 over two
             # passes of one session), so a step's spend is the sum of the two.
+            # Both passes are one step's spend and one step's turns, whichever result is
+            # kept below — a record naming only one of them under-reports what was spent.
             both_costs = spent + _as_float(resumed.get("total_cost_usd"))
+            both_turns = int(_as_float(result.get("num_turns"))) + int(
+                _as_float(resumed.get("num_turns"))
+            )
+            # Every denial the step met, not only the resume's — a first session walled by
+            # a permission is a plausible reason it stopped short of reporting.
+            both_denials = [
+                *_as_list(result.get("permission_denials")),
+                *_as_list(resumed.get("permission_denials")),
+            ]
             if resumed.get("structured_output") is None:
                 # The resume did not report either. Keep the **first** pass's result, so
                 # the step is still recorded `provider_protocol` rather than taking on
@@ -504,18 +509,19 @@ def run_claude(
                 # limit, would otherwise be read by the gate as a step that reported
                 # failure, which is the exact sentence this cause exists to remove.
                 result["total_cost_usd"] = both_costs
-                rescue = {**rescue, "resumed_for_report": RESUME_STILL_SILENT}
+                result["num_turns"] = both_turns
+                result["permission_denials"] = both_denials
+                # Nothing survived either pass, so the whole of the step's spend is what
+                # was abandoned — not only the first pass's share of it.
+                rescue = {
+                    **rescue,
+                    "resumed_for_report": RESUME_STILL_SILENT,
+                    "abandoned_cost_usd": both_costs,
+                }
             else:
                 resumed["total_cost_usd"] = both_costs
-                resumed["num_turns"] = int(_as_float(result.get("num_turns"))) + int(
-                    _as_float(resumed.get("num_turns"))
-                )
-                # Every denial the step met, not only the resume's — a first session walled
-                # by a permission is a plausible reason it stopped short of reporting.
-                resumed["permission_denials"] = [
-                    *_as_list(result.get("permission_denials")),
-                    *_as_list(resumed.get("permission_denials")),
-                ]
+                resumed["num_turns"] = both_turns
+                resumed["permission_denials"] = both_denials
                 return_code, result = resumed_code, resumed
 
     try:

@@ -31,7 +31,9 @@ _INDEX_NAMES = ("README.md", "WORKLIST.md", "PLAN.md", "index.md")
 # throw its title away. So the id must be punctuated (`task-381`, `task_381`, `TASK-381.4`)
 # and must be followed by whitespace, which is what separates an id from the title after it.
 # A folder genuinely called `task-381-migration` has no such boundary and keeps all of itself.
-_TASK_ID = re.compile(r"^(task[-_]\d+(?:\.\d+)*)\s", re.IGNORECASE)
+# The separator itself stays optional — `TASK381 Title` is still an id, because the bare
+# space was the only spelling that let an ordinary sentence in.
+_TASK_ID = re.compile(r"^(task[-_]?\d+(?:\.\d+)*)\s", re.IGNORECASE)
 
 # Eight hex characters, against the sixteen `verify_handle` spends on a step handle. The
 # population here is the plans in one repository's three namespaces rather than every step

@@ -1400,9 +1400,11 @@ class AReadingProbeCannotSpendOnARun(unittest.TestCase):
                 any(report.get("status") == "failed" for report in paid),
                 f"a run with no provider came back green: {paid}",
             )
-            # And `--wait` really waited, rather than returning on its taken-on bound and
-            # turning the assertions above into a race.
-            self.assertNotIn("has not registered", started.stdout)
+            # `--wait` is what makes the reads above an experiment rather than a race: it
+            # returns only once the engine's process has ended, so the reports are all
+            # written by then. There is nothing further to assert about it here — a start
+            # that had not waited would leave no `work_*` report to find, which is the
+            # assertion directly above.
 
     def test_the_probe_reads_the_seeded_run_through_the_engines_own_home(self) -> None:
         """What `DAGU_HOME` is for: the history is resolved from it by arithmetic, and no

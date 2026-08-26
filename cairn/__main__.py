@@ -346,7 +346,7 @@ def _parser(*, add_help: bool = True) -> argparse.ArgumentParser:
         description=__doc__,
         add_help=add_help,
         epilog=(
-            "Twelve more commands are dispatched before these and take no step identity: "
+            "Eleven more commands are dispatched before these and take no step identity: "
             "`cairn plan`, `cairn occasion new`, `cairn marker absent`, "
             "`cairn verify gate`, `cairn supervise`, `cairn schedule`, "
             "`cairn workflow`, `cairn record`, `cairn report`, `cairn run` and "

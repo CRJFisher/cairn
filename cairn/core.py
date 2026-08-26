@@ -24,6 +24,11 @@ EXIT_FAILED = 1
 EXIT_RATE_LIMITED = 75
 STATUSES = ("done", "noop", "failed")
 
+# One key of a report's `detail`, named here because it crosses a seam: the provider writes
+# it and the verify gate reads it, and a literal spelled twice would drift with nothing
+# failing — the gate would silently fall back to its broader sentence for ever.
+ENDED_WITHOUT_REPORTING = "ended_without_reporting"
+
 
 class CommandResult(NamedTuple):
     """What one subcommand decided, before it becomes a report and an exit status."""
@@ -308,6 +313,7 @@ def sweep_stale_reports(context: RuntimeContext) -> None:
 
 
 __all__ = [
+    "ENDED_WITHOUT_REPORTING",
     "EXIT_FAILED",
     "EXIT_OK",
     "EXIT_RATE_LIMITED",
