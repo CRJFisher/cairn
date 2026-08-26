@@ -418,7 +418,13 @@ a run with exclusions exits 3, whatever either of them printed.
   runs/<run-id>/reports/<node>.json  every step's own account
   runs/<run-id>/occasion             the occasion every scoped step in this run keys on
   runs/<run-id>/record.json          this model
+  runs/<run-id>/engine.log           what the engine said while taking the run on
 ```
+
+`engine.log` is the **start command's** own output and not the run's step logs, which are the
+engine's and which the view renders. It is the only account of a start the engine never
+registered, and it is appended rather than truncated, because a run directory is per run and
+a recovery against the same run id must not delete the evidence of the attempt it continues.
 
 The runs root is resolved once at authoring time and travels to every step in the emitted
 workflow's `env:` block as `CAIRN_RUNS_DIR`; a step composes its own path from that root and

@@ -29,10 +29,14 @@ from cairn.core import (
 from cairn.emitters import KIND_EMITTERS, emit_step, emit_verify
 from cairn.layout import reports_directory
 from cairn.plan.schema import normalise
-from cairn.protocol import compose_prompt
+from cairn.protocol import RESUME_FOR_REPORT, compose_prompt
 from cairn.providers import (
+    ENDED_WITHOUT_REPORTING,
     NEVER_DELIVERED,
     PROVIDER_RUNNERS,
+    RESUME_ATTEMPTED,
+    RESUME_DECLINED_BUDGET,
+    RESUME_STILL_SILENT,
     ended_without_reporting,
     run_claude,
     run_provider,
@@ -1257,7 +1261,7 @@ class ASessionThatEndedWithoutReportingIsResumedOnce(unittest.TestCase):
         result = self._ran(factory)
         self.assertEqual(len(made), 2, "the session was not resumed exactly once")
         self.assertEqual(result.status, "done")
-        self.assertIs(result.detail["resumed_for_report"], True)
+        self.assertEqual(result.detail["resumed_for_report"], RESUME_ATTEMPTED)
 
     def test_the_resume_continues_the_session_rather_than_opening_another(self) -> None:
         factory, made = self._scripted(self.UNREPORTED)
@@ -1271,6 +1275,62 @@ class ASessionThatEndedWithoutReportingIsResumedOnce(unittest.TestCase):
             resumed[resumed.index("--resume") + 1],
             opened[opened.index("--session-id") + 1],
         )
+
+    def test_the_resume_asks_for_the_report_and_not_for_more_work(self) -> None:
+        """The load-bearing half of the rescue: the step's assertion has already run or is
+        about to, so a resumed session that started editing again would be doing unpriced
+        work outside the shape the offer stated."""
+        factory, made = self._scripted(self.UNREPORTED)
+        self._ran(factory)
+        self.assertEqual(made[0].prompt.rstrip().endswith("do work"), True)
+        self.assertEqual(made[1].prompt, RESUME_FOR_REPORT)
+        self.assertNotIn("do work", made[1].prompt)
+
+    def test_every_half_of_the_discrimination_is_load_bearing(self) -> None:
+        """Measured: a correct report is itself a tool call, so `stop_reason` decides
+        nothing alone. Each of the three facts is asserted, or a variant dropping one of
+        them would resume a session that failed and charge for it twice."""
+        silent = {"stop_reason": "tool_use", "structured_output": None}
+        self.assertTrue(ended_without_reporting(0, silent))
+        # A session that failed for its own typed reason is not a silence.
+        self.assertFalse(ended_without_reporting(1, silent))
+        # A turn that genuinely ended is not a silence either.
+        self.assertFalse(
+            ended_without_reporting(0, {**silent, "stop_reason": "end_turn"})
+        )
+        # And the trap: a correct report stops for a tool call too.
+        self.assertFalse(
+            ended_without_reporting(
+                0, {"stop_reason": "tool_use", "structured_output": {"status": "done"}}
+            )
+        )
+
+    def test_a_resume_that_fails_for_its_own_reason_stays_the_silence_it_was(self) -> None:
+        """A budget exhausted a cent short must not overwrite the honest cause: the gate
+        would then read `reported_failure` and print the divergence line D exists to
+        remove — about a step that reported nothing."""
+        # The resume runs out of budget and so reports nothing either.
+        factory, made = self._scripted(
+            self.UNREPORTED,
+            {**self.UNREPORTED, "terminal_reason": "budget_exhausted"},
+        )
+        with self.assertRaises(CairnError) as caught:
+            self._ran(factory)
+        self.assertEqual(len(made), 2)
+        self.assertEqual(caught.exception.cause, "provider_protocol")
+        self.assertEqual(
+            caught.exception.detail["resumed_for_report"], RESUME_STILL_SILENT
+        )
+        # And the step's spend is still both passes, not just the first.
+        self.assertAlmostEqual(caught.exception.detail["total_cost_usd"], 0.50)
+
+    def test_the_gate_is_told_the_narrow_fact_and_not_only_the_broad_cause(self) -> None:
+        """`provider_protocol` covers every unreadable-protocol fault; only one of them is
+        a session that said nothing. The gate's sentence turns on this key."""
+        factory, _ = self._scripted(self.UNREPORTED, self.UNREPORTED)
+        with self.assertRaises(CairnError) as caught:
+            self._ran(factory)
+        self.assertIs(caught.exception.detail[ENDED_WITHOUT_REPORTING], True)
 
     def test_the_resume_runs_under_what_is_left_of_the_steps_ceiling(self) -> None:
         """The offer priced one ceiling for this step; a second pass carrying a fresh full
@@ -1287,7 +1347,7 @@ class ASessionThatEndedWithoutReportingIsResumedOnce(unittest.TestCase):
         self.assertEqual(len(made), 1)
         self.assertEqual(caught.exception.cause, "provider_protocol")
         self.assertEqual(
-            caught.exception.detail["resumed_for_report"], "budget_exhausted"
+            caught.exception.detail["resumed_for_report"], RESUME_DECLINED_BUDGET
         )
 
     def test_the_recorded_cost_and_turns_are_both_passes(self) -> None:

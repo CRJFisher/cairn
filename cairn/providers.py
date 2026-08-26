@@ -352,11 +352,32 @@ def ended_without_reporting(process_exit: int, result: dict[str, Any]) -> bool:
     )
 
 
-def _amount(value: object) -> float:
+# What a rescue did, as the run's record spells it. One vocabulary rather than a field that
+# is sometimes `True` and sometimes a sentence, because a person reading the record has to
+# be able to tell a rescue that was declined from one that was tried and did not help.
+# The one fact the gate needs that `provider_protocol` is too broad to carry. That cause is
+# raised for every unreadable-protocol fault — a malformed stream line, an unknown status, a
+# summary that is not a string — and only one of them is a session that said nothing at all.
+# The gate's sentence about a step turns on exactly this, so it is recorded rather than
+# re-derived from a cause that means more than it ([verify.judge]).
+ENDED_WITHOUT_REPORTING = "ended_without_reporting"
+
+RESUME_ATTEMPTED = "attempted"
+RESUME_DECLINED_BUDGET = "declined_budget_exhausted"
+RESUME_FAILED = "resume_failed"
+RESUME_STILL_SILENT = "still_silent"
+
+
+def _as_float(value: object) -> float:
+    """A number the provider reported, or zero — never a raise over a malformed figure."""
     try:
         return float(cast(float, value))
     except (TypeError, ValueError):
         return 0.0
+
+
+def _as_list(value: object) -> list[Any]:
+    return list(cast(list[Any], value)) if isinstance(value, list) else []
 
 
 def run_claude(
@@ -417,35 +438,85 @@ def run_claude(
         # A session that ended a turn without reporting is not a session that failed: it
         # may have done all of the work and simply stopped short of saying so. Measured,
         # the alternative was discarding $10.89 of work an assertion had just proved.
-        spent = _amount(result.get("total_cost_usd"))
+        spent = _as_float(result.get("total_cost_usd"))
         remaining = None if budget is None else round(budget - spent, 6)
         if remaining is not None and remaining <= 0:
             # The offer priced one ceiling for this step and a second invocation carrying a
             # fresh full budget would double the ceiling the person agreed to.
-            rescue = {"resumed_for_report": "budget_exhausted"}
+            rescue = {
+                ENDED_WITHOUT_REPORTING: True,
+                "resumed_for_report": RESUME_DECLINED_BUDGET,
+            }
         else:
-            (
-                return_code,
-                resumed,
-                more_limits,
-                more_source,
-                exited_on_its_own,
-            ) = _session_in(
-                invocation(budget_usd=remaining, resuming=True),
-                RESUME_FOR_REPORT,
-                working_directory,
-                popen_factory,
-            )
-            # Both passes are one step's spend, and a record that named only the second
-            # would under-report what the step cost.
-            resumed["total_cost_usd"] = spent + _amount(resumed.get("total_cost_usd"))
-            resumed["num_turns"] = int(_amount(result.get("num_turns"))) + int(
-                _amount(resumed.get("num_turns"))
-            )
-            result = resumed
+            # Recorded **before** the attempt. A resume that fails at the protocol level
+            # raises out of `_session_in`, and an account written afterwards would never
+            # reach the report — leaving nobody able to tell a rescue that failed from one
+            # never tried, which is the whole of what this key is for.
+            rescue = {
+                ENDED_WITHOUT_REPORTING: True,
+                "resumed_for_report": RESUME_ATTEMPTED,
+                "abandoned_cost_usd": spent,
+            }
+            # What the first pass is worth saying even if the resume never answers. Its
+            # cost is the figure the record is read for, and it is the money the rescue
+            # exists to protect.
+            first_detail: dict[str, Any] = {
+                "session_id": result.get("session_id"),
+                "total_cost_usd": spent,
+                "turn_count": result.get("num_turns"),
+            }
+            try:
+                (
+                    resumed_code,
+                    resumed,
+                    more_limits,
+                    more_source,
+                    resumed_exited,
+                ) = _session_in(
+                    invocation(budget_usd=remaining, resuming=True),
+                    RESUME_FOR_REPORT,
+                    working_directory,
+                    popen_factory,
+                )
+            except CairnError as unreachable:
+                # The first session's account is now the only one there is, and its cost is
+                # the number the record is read for.
+                unreachable.detail = {
+                    **first_detail,
+                    **unreachable.detail,
+                    **rescue,
+                    "resumed_for_report": RESUME_FAILED,
+                }
+                raise
+            # A first process that had to be stopped after giving its result is a leak the
+            # record names; the resume's own exit must not erase it.
+            exited_on_its_own = exited_on_its_own and resumed_exited
             rate_limits = [*rate_limits, *more_limits]
             api_key_source = more_source or api_key_source
-            rescue = {"resumed_for_report": True, "abandoned_cost_usd": spent}
+            # Measured: a resumed session reports its **own invocation's** cost and turns
+            # rather than the session's cumulative totals (0.0168 then 0.0031 over two
+            # passes of one session), so a step's spend is the sum of the two.
+            both_costs = spent + _as_float(resumed.get("total_cost_usd"))
+            if resumed.get("structured_output") is None:
+                # The resume did not report either. Keep the **first** pass's result, so
+                # the step is still recorded `provider_protocol` rather than taking on
+                # whatever ended the resume — a budget exhausted a cent short, or a rate
+                # limit, would otherwise be read by the gate as a step that reported
+                # failure, which is the exact sentence this cause exists to remove.
+                result["total_cost_usd"] = both_costs
+                rescue = {**rescue, "resumed_for_report": RESUME_STILL_SILENT}
+            else:
+                resumed["total_cost_usd"] = both_costs
+                resumed["num_turns"] = int(_as_float(result.get("num_turns"))) + int(
+                    _as_float(resumed.get("num_turns"))
+                )
+                # Every denial the step met, not only the resume's — a first session walled
+                # by a permission is a plausible reason it stopped short of reporting.
+                resumed["permission_denials"] = [
+                    *_as_list(result.get("permission_denials")),
+                    *_as_list(resumed.get("permission_denials")),
+                ]
+                return_code, result = resumed_code, resumed
 
     try:
         translated = _translate_result(

@@ -112,9 +112,10 @@ only from an offer, which has a definition in hand.
 ## What a run costs, and what counts as a yes
 
 State the cost from the offer itself; never retype it from here. Making an offer composes it
-out of the definition in hand — the paid sessions, the working tree, the worktrees, the lock,
-the commits and the merge — and printing it is the same act as minting the one token a start
-requires. There is no path to a run whose price was never stated.
+out of the definition in hand — every fact that definition incurs, and only those, so a plan
+that runs as one chain prices no worktrees and no merge — and printing it is the same act as
+minting the one token a start requires. There is no path to a run whose price was never
+stated.
 
 **A qualifying yes** names the action rather than the telling: run it, start it, yes run it.
 An unambiguous run instruction is one — it asked for the run in so many words — so it is

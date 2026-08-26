@@ -346,7 +346,7 @@ def _parser(*, add_help: bool = True) -> argparse.ArgumentParser:
         description=__doc__,
         add_help=add_help,
         epilog=(
-            "Eleven more commands are dispatched before these and take no step identity: "
+            "Twelve more commands are dispatched before these and take no step identity: "
             "`cairn plan`, `cairn occasion new`, `cairn marker absent`, "
             "`cairn verify gate`, `cairn supervise`, `cairn schedule`, "
             "`cairn workflow`, `cairn record`, `cairn report`, `cairn run` and "
@@ -561,12 +561,6 @@ def gate_main(arguments: list[str]) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    # The hook a step's session runs under. Routed here, ahead of everything that resolves
-    # a runtime identity, because it runs as a grandchild of a step and inherits the step's
-    # own environment — one that reached `RuntimeContext.from_env()` would overwrite the
-    # very report the verify gate reads to decide that step's fate ([hooks.py]).
-    if arguments and arguments[0] == HOOK_VERB:
-        return hook_main(arguments[1:])
     # The hook a step's session runs under. Routed here, ahead of everything that resolves
     # a runtime identity, because it runs as a grandchild of a step and inherits the step's
     # own environment — one that reached `RuntimeContext.from_env()` would overwrite the

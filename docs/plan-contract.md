@@ -206,7 +206,7 @@ traceback — because a caller cannot tell a crash from a rejection.
 | ----------------------- | -------------------------------------------------------- |
 | `schema`                | a missing, unknown, mistyped, or out-of-vocabulary field |
 | `graph_version`         | a graph from a version this validator does not speak     |
-| `plan_slug`             | a plan slug outside the grammar                          |
+| `plan_slug`             | a plan slug outside the grammar, or past the engine's 40-byte bound on a DAG name |
 | `no_sources`            | a graph pinning no document, so nothing can be rechecked |
 | `source_not_pinned`     | an index document absent from `sources`                  |
 | `duplicate_source`      | the same document pinned twice                           |

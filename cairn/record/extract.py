@@ -217,7 +217,7 @@ def _cause(report: dict[str, Any] | None) -> str | None:
     """The exclusion the gate recorded, quoted only where it is one of the frozen causes.
 
     A gate report naming something outside the vocabulary is a report Cairn cannot read, and
-    saying so is honest where passing the string through would mint an eighth cause.
+    saying so is honest where passing the string through would mint a cause outside the frozen set.
     """
     if report is None:
         return None

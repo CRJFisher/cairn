@@ -677,6 +677,29 @@ class Authoring(unittest.TestCase):
             ]
         )
 
+    def author_at_the_bound(self) -> int:
+        """Author a plan whose slug is exactly the engine's bound, end to end.
+
+        The gate judges the file it is handed, and authoring used to hand it a `mkstemp`
+        name fifteen characters longer than the published one — so a slug anywhere near the
+        bound was refused under a name nobody chose. Every fixture slug is short, which is
+        why the corpus never met it and why this test exists ([19 A]).
+        """
+        graph = json.loads(
+            (PLANS / "linear-chain" / "graph.json").read_text(encoding="utf-8")
+        )
+        graph["plan"]["slug"] = "a" * ENGINE_NAME_MAX_BYTES
+        at_the_bound = self.root / "at-the-bound.json"
+        at_the_bound.write_text(json.dumps(graph), encoding="utf-8")
+        return workflow_main(
+            ["author", str(at_the_bound), "--repository", str(self.repository)]
+        )
+
+    def test_a_slug_at_the_engines_bound_authors_without_touching_the_gate(self) -> None:
+        self.assertEqual(self.author_at_the_bound(), 0)
+        published = workflow_path(self.repository, "a" * ENGINE_NAME_MAX_BYTES)
+        self.assertTrue(published.exists(), "the bounded slug produced no workflow")
+
     def tree_is_clean(self) -> bool:
         completed = subprocess.run(
             ("git", "status", "--porcelain", "--untracked-files=all"),

@@ -33,7 +33,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, NamedTuple, cast
 
-from cairn.core import CairnError, write_json
+from cairn.core import CairnError, write_text
 from cairn.gitio import CAIRN_STATE, common_directory
 from cairn.marker import OCCASION_PATTERN, mint_occasion
 from cairn.skill.vocabulary import (
@@ -213,7 +213,7 @@ def session_bounds(document: Any) -> list[SessionBound]:
     return found
 
 
-def node_roles(document: Any) -> frozenset[str]:
+def node_roles(document: Any) -> tuple[frozenset[str], bool]:
     """Every topology role this definition actually emits, read back from its node names.
 
     The topology names every node `<role>_<subject>` and the roles are a closed set, so this
@@ -226,21 +226,24 @@ def node_roles(document: Any) -> frozenset[str]:
     """
     found: set[str] = set()
     if not isinstance(document, dict):
-        return frozenset()
+        return frozenset(), False
     steps = cast(dict[str, Any], document).get("steps")
     if not isinstance(steps, list):
-        return frozenset()
+        return frozenset(), False
+    every_name_parsed = True
     for step in cast(list[Any], steps):
         if not isinstance(step, dict):
+            every_name_parsed = False
             continue
         name = cast(dict[str, Any], step).get("name")
         if not isinstance(name, str):
+            every_name_parsed = False
             continue
         try:
             found.add(parse_node_name(name).role)
         except TopologyError:
-            continue
-    return frozenset(found)
+            every_name_parsed = False
+    return frozenset(found), every_name_parsed
 
 
 def longest_timeout(document: Any) -> int:
@@ -313,11 +316,18 @@ def disclosure(workflow: Path, parent_branch: str | None = None) -> tuple[str, .
     }
     # Every fact this definition's own topology actually incurs, in the vocabulary's order.
     # A chain creates no worktree and lands no merge, so it is priced for neither ([19 E]).
-    roles = node_roles(document)
+    # A definition whose node names Cairn did not write is priced for everything. Reading
+    # the roles is what lets a chain drop two facts; a name that will not parse is not
+    # evidence that the role is absent, it is evidence that this file was hand-edited — and
+    # dropping a fact on that evidence would under-state the run. Over-stating a cost is the
+    # safe direction; under-stating it buys a yes on terms the person was never given.
+    named, every_name_parsed = node_roles(document)
     return tuple(
         COST_SENTENCES[fact].format(**filled)
         for fact in RUN_COST_FACTS
-        if fact not in COST_BY_ROLE or COST_BY_ROLE[fact] in roles
+        if not every_name_parsed
+        or fact not in COST_BY_ROLE
+        or COST_BY_ROLE[fact] in named
     )
 
 
@@ -506,9 +516,12 @@ def read_acceptance(marker: Path) -> Acceptance | None:
         spent_at=str(fields.get("spent_at", "")),
         reply=str(fields.get("reply", "")),
         run_id=str(fields.get("run_id", "")),
-        command=tuple(
-            str(word) for word in cast(list[Any], fields.get("command", []) or [])
-        ),
+        # Guarded rather than coerced. Every other field here goes through `str`, which is
+        # total; a sequence is not, and this reader is called from the already-spent
+        # refusal — where a traceback would replace a clear answer about someone's yes.
+        command=tuple(str(word) for word in cast(list[Any], words))
+        if isinstance(words := fields.get("command"), list)
+        else (),
     )
 
 
@@ -541,14 +554,22 @@ def record_engine_command(
     held = read_acceptance(marker)
     if held is None:
         return
-    write_json(
+    # Written with the claim's own spelling, ASCII-escaped. A reply reaches this process
+    # through `sys.argv`, which decodes bytes that are not valid UTF-8 with surrogates —
+    # `_claim` stores those as escapes and reads them back, and a writer that re-encoded
+    # them raw would raise here, after the acceptance was spent and before the engine ran.
+    write_text(
         marker,
-        {
-            "spent_at": held.spent_at,
-            "reply": held.reply,
-            "run_id": held.run_id,
-            "command": list(command),
-        },
+        json.dumps(
+            {
+                "spent_at": held.spent_at,
+                "reply": held.reply,
+                "run_id": held.run_id,
+                "command": list(command),
+            },
+            sort_keys=True,
+        )
+        + "\n",
     )
 
 
@@ -659,6 +680,7 @@ __all__ = [
     "has_words",
     "longest_timeout",
     "make_offer",
+    "node_roles",
     "offer_path",
     "offers_directory",
     "read_acceptance",

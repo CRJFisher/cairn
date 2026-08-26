@@ -309,7 +309,7 @@ holds — a declined assertion, a step with retries, a plan whose repository pat
 | -------------------- | ------------------------------------------------------ |
 | the definition       | `<git-common-dir>/cairn/workflows/<plan-slug>.yaml`    |
 | the provenance stamp | the same name plus `.stamp.json`                       |
-| the authoring copy   | a dotted sibling, replaced into place only if it gates |
+| the authoring copy   | a file under a dotted sibling **directory**, carrying the published name so the gate judges the DAG that will run, replaced into place only if it gates |
 | the gate's scratch   | a temporary directory, removed afterwards              |
 
 Nothing generated is written into the repository's working tree. The admin directory is

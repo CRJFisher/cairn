@@ -32,11 +32,13 @@
    definition does and whether it is still the file Cairn wrote, and starts nothing.
 
 5. **Offer it.** `python3 -m cairn run offer --plan <slug> --repository <path> --trigger
-<shape>`. It prints the price — the paid sessions with their dollar ceilings, models and
-   timeouts, the working tree, the worktrees beside the repository, the run lock, the
-   commits and the merge — the occasion reading it is taking and what the other reading
+<shape>`. It prints the price, the occasion reading it is taking and what the other reading
    would have cost, and one offer id. **Print what it printed.** Do not summarise the cost
-   and do not compose your own.
+   and do not compose your own — and do not expect a fixed list of facts, because the price
+   is composed from the definition's own topology. Every run states its paid sessions with
+   their ceilings, models and timeouts, the working tree, the run lock, the commits, and the
+   unix socket the starting shell must be allowed to bind; the worktrees and the merge are
+   stated only by a definition that has them, so a chain-shaped plan prices neither.
 
    The branch comes from the definition, which already declares one, and that is the branch
    priced. Pass `--parent-branch <name>` only where the request asked for a different one;
@@ -61,9 +63,17 @@ verbatim>'`. The run id is minted for you; pass `--run-id` only to choose one. I
    call long before that. The run keeps going without it; the engine is launched in its own
    session and its output goes to `runs/<run-id>/engine.log`.
 
-   `--wait` blocks for the whole run and prints the engine's exit status instead. It is for
-   a caller that has no timeout of its own, and it says so in its own output. Do not pass it
-   from a harness.
+   `--wait` blocks for the whole run and adds a line with the engine's exit status. It is
+   for a caller that has no timeout of its own, and its terminal stays silent while it
+   blocks — the engine's own words go to the log, not to the screen. Do not pass it from a
+   harness.
+
+   **There is a third answer.** If the engine has neither registered the run nor exited
+   within thirty seconds, the command says so and exits zero, leaving the engine running:
+   it may be a moment away, and killing a run the offer has already paid for, on a timer,
+   is the one destructive thing this command could do. Read `runs/<run-id>/engine.log` for
+   what the engine said, and `cairn report --run <run-id>` a minute later for whether it
+   took the run on. **Do not offer the run again** — the acceptance is spent either way.
 
 8. **When it ends, report it.** [reading.md](reading.md). The command's own exit status says
    only that the run was started: a run that dropped a branch exits zero at the engine level,
@@ -112,10 +122,20 @@ fresh one. None of them is a thing to retry in a loop.
 
 **A start that died still left a name.** The offer is claimed before the engine is invoked,
 which is correct — a start that really began must consume it — so a killed start is a spent
-yes. What it is not any more is an anonymous one: the spent marker beside the offer holds
-the run id and the engine command, so `cairn report --run <run-id>` and
-`run offer --trigger recovery --recovering <run-id>` both have something to quote even
-though the terminal is gone.
+yes. What it is not any more is an anonymous one: the spent marker beside the offer, at
+`<git-common-dir>/cairn/offers/<offer-id>.spent`, holds the run id and the engine command,
+so `cairn report --run <run-id>` and `run offer --trigger recovery --recovering <run-id>`
+both have something to quote even though the terminal is gone.
+
+**An engine that exited without taking the run on** is neither of the two lists above: the
+offer is spent and no run exists, so clearing the cause needs a fresh offer as well as a
+fresh yes. What the engine said is in `runs/<run-id>/engine.log`.
+
+**Nothing here stops a run.** The engine is started in its own session precisely so a
+closing terminal and a harness's process-tree kill cannot reach it — which also means Ctrl-C
+cannot. A run holds the repository's lock until it ends or the ceiling kills it; to end one
+early, stop it at the engine's own view, then `python3 -m cairn supervise reconcile` so the
+killed run is given a terminal status.
 
 ## Where the engine's view is better
 

@@ -253,7 +253,16 @@ def start(
             # Neither taken on nor exited. The child is deliberately **not** killed: it may
             # be a moment from registering, and killing a run the offer has already paid
             # for, on a timer, is the one destructive move available here.
-            return Started(address=where, taken_on=False, exit_code=None)
+            #
+            # `--wait` is still honoured. A caller that asked to block until the run ends
+            # asked for exactly that, and returning here without waiting would hand it a
+            # zero exit for a run whose fate is unknown — which is the one thing a blocking
+            # caller cannot check for itself.
+            return Started(
+                address=where,
+                taken_on=False,
+                exit_code=process.wait() if wait else None,
+            )
         sleeper(TAKEN_ON_INTERVAL)
 
 

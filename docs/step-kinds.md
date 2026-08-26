@@ -41,7 +41,9 @@ step record's `model` and `max_budget_usd` ([plan-contract.md](plan-contract.md)
 the emitter refuses an agent step without them: the definition is what an offer prices,
 so a session bounded by the environment would be one nobody could price or attribute.
 
-The plan author owns an agent step's `tools` deny list as its blast-radius declaration.
+The plan author owns an agent step's `tools` deny list as its blast-radius declaration — and
+it **adds** to a floor Cairn denies in every session, which the plan cannot take back
+([cli-contract.md](cli-contract.md)).
 Only the selected provider module translates those rules into provider flags. A `command`
 step may not carry `tools`: nothing translates a tool policy for a shell command, so
 declaring one there is refused rather than dropped.

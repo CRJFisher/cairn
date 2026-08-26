@@ -13,7 +13,7 @@ import hashlib
 import sys
 import time
 import traceback
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 from cairn.core import (
     EXIT_FAILED,
@@ -108,6 +108,16 @@ class Verdict(TypedDict):
     summary: str
 
 
+# The runtime's own account of a step, or an empty one. A report's `detail` is not validated
+# by `read_step_report`, so it is read defensively wherever the gate turns on it.
+ENDED_WITHOUT_REPORTING = "ended_without_reporting"
+
+
+def _detail(report: dict[str, Any]) -> dict[str, Any]:
+    found = report.get("detail")
+    return cast(dict[str, Any], found) if isinstance(found, dict) else {}
+
+
 def divergence_line(divergence: Divergence) -> str:
     """The one sentence weighing two accounts of a step against each other.
 
@@ -186,9 +196,20 @@ def judge(verify_exit: int | None, report: dict[str, Any] | None) -> Verdict:
             summary="the step is blocked on a human decision",
         )
     if reported == "failed" and report.get("cause") == PROVIDER_PROTOCOL:
-        # The step did not report failure; it reported nothing. Reading the runtime's own
-        # `failed` as a veto records a divergence over an assertion nobody contradicted,
-        # and tells the person their session claimed something it never claimed.
+        # The step did not report failure; its account could not be read. Reading the
+        # runtime's own `failed` as a veto records a divergence over an assertion nobody
+        # contradicted, and tells the person their session claimed something it never did.
+        #
+        # **The cause is broader than the sentence.** `provider_protocol` covers every
+        # unreadable-protocol fault, and only one of them is a session that said nothing at
+        # all — so the summary is narrowed by the fact the runtime recorded rather than by
+        # the cause, which means more than that ([providers.ENDED_WITHOUT_REPORTING]).
+        silent = _detail(report).get(ENDED_WITHOUT_REPORTING) is True
+        said = (
+            "the step's session ended without reporting"
+            if silent
+            else "the step left no readable account of itself"
+        )
         return Verdict(
             record=False,
             cause=PROVIDER_PROTOCOL,
@@ -196,9 +217,9 @@ def judge(verify_exit: int | None, report: dict[str, Any] | None) -> Verdict:
             if asserted
             else None,
             summary=(
-                "the step's session ended without reporting, over an assertion that passed"
+                f"{said}, over an assertion that passed"
                 if asserted
-                else "the step's session ended without reporting, so nothing said what it did"
+                else f"{said}, so nothing said what it did"
             ),
         )
     if reported == "failed":

@@ -5,7 +5,10 @@ Everything that keeps a run's writes, its bounds and its recovery under control.
 Process supervision itself is the engine's, in full. It makes every step a process-group
 leader and pairs it with a watcher that kills the group on EOF; `kill -9` on the
 orchestrator, on a step, and on the whole tree each leave zero surviving processes,
-grandchildren included. Cairn builds no process groups and no kill path. What it owns is
+grandchildren included. Cairn builds no process groups inside a run and no kill path — the
+one it does build is the detached engine's own session, so that a closing terminal and a
+caller's process-tree kill cannot reach a run that was already paid for
+([triggers.md](triggers.md)). What it owns is
 what the engine leaves behind.
 
 ## Two locks, two lifetimes

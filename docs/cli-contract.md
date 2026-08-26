@@ -4,7 +4,7 @@
 interface. It is the only entry point, and the skill invokes it: a person asks for what they
 want and never learns one of these lines ([../SKILL.md](../SKILL.md)). Runtime commands — `exec`, `wait`,
 `agent`, `marker write`, `lock`, `worktree`, `commit`, `merge`, `wave` — dispatch through a
-dictionary and run inside a step. Eleven commands take no part in that dispatch: `cairn plan …`
+dictionary and run inside a step. Twelve commands take no part in that dispatch: `cairn plan …`
 runs at derivation time
 against a graph on disk, `cairn workflow …` generates and checks an engine definition
 ([workflow.md](workflow.md)), `cairn occasion new` mints an occasion a caller means to pin,
@@ -15,8 +15,15 @@ against a graph on disk, `cairn workflow …` generates and checks an engine def
 `cairn schedule …` installs a recurring trigger and starts the daemon it costs
 ([triggers.md](triggers.md)), `cairn run …` offers a run and starts exactly the one an offer
 authorised, and `cairn explain …` answers what a workflow would do, what a frozen word means
-and why a step was excluded. None of the eleven takes a runtime identity, and only the verify
-gate leaves a report — under the name of the step it gated, on the one path where no step
+and why a step was excluded, and `cairn hook stop` answers the one hook a step's own session
+runs under — reading the harness's end-of-turn payload on stdin and exiting `2` to hold the
+turn open while a background shell the session started is still running, or `0` to let it
+end ([step-protocol.md](step-protocol.md)). It is routed ahead of every other command
+because it runs as a grandchild of a step and inherits the step's environment: one that
+resolved a runtime identity would overwrite the very report the verify gate reads. It
+**fails open** on any fault — the inverse of the verify gate, because it holds a paid
+session and nothing in Cairn may depend on it having run. None of the twelve takes a runtime
+identity, and only the verify gate leaves a report — under the name of the step it gated, on the one path where no step
 will run to write one.
 
 Every runtime subcommand self-identifies from Dagu's environment. `DAG_RUN_ID`,
@@ -106,16 +113,23 @@ that runs out reports `wait_timeout` instead of racing the engine's own kill for
 instant. That grace counts in the run's declared maximum too.
 
 The Claude provider invokes plain `claude -p --output-format stream-json --verbose
---json-schema … --session-id … --permission-mode auto`, sends the prompt on stdin, and
+--json-schema … --session-id … --permission-mode auto --settings …`, sends the prompt on stdin, and
 streams JSONL to the engine while retaining only the result data needed for the report. The
 prompt is written while the stream is already being drained, because a task-sized prompt
 and a session-sized reply each outgrow a pipe buffer and writing one before reading the
 other would hang the step. Reading stops at the terminal result message rather than at
 end-of-stream, because a provider's own children can hold the pipe open after it has
 answered; a provider that then declines to exit is stopped and the fact recorded under
-`detail`, never at the cost of the answer it already gave. It adds model and budget flags only when supplied. Plan tool
-rules become repeated `--disallowedTools` flags only in that provider module. Cairn handles
-no credentials and creates no process groups.
+`detail`, never at the cost of the answer it already gave. It adds model and budget flags only when supplied. Tool
+rules become repeated `--disallowedTools` flags only in that provider module, and **Cairn's
+own denials lead**: a fixed set the plan adds to and cannot remove, because those tools'
+whole contract is that something will re-invoke the session and under `-p` nothing does. The
+`--settings` document arms one `Stop` hook per session and is composed per invocation, so
+nothing is written to any settings file on the machine. A session that ends a turn without
+its structured report is resumed once, `--resume` in place of `--session-id`, under what is
+left of the step's dollar ceiling ([step-protocol.md](step-protocol.md)). Cairn handles
+no credentials, and the only process group it creates is the detached engine's
+([supervision.md](supervision.md)).
 
 The whole prompt reaches the provider on stdin, but reaches Cairn on its own argv, so a
 step's task text is visible to anything that can read the process table. The task is what
@@ -213,12 +227,18 @@ workflow check` reads one and writes nothing. Both run at authoring time and are
 start` accepts; `start` spends it exactly once and hands the engine the run. The offer lives
 at `<git-common-dir>/cairn/offers/<offer-id>.json` beside the runs it authorises, and its
 `.spent` sibling is claimed by an exclusive link, so a second acceptance of one offer is a
-refusal rather than a second run. Every refusal — an id naming no offer, a damaged one, one
-already spent, a definition that moved since it was priced, a reply with no words in it at
-all, an engine that is not the pin — happens **before** the token is consumed, so a refused
+refusal rather than a second run; that marker records the run id and the engine invocation
+beside the words it was accepted with, so a start whose process died still left a name a
+recovery can quote. Every refusal — an id naming no offer, a damaged one, one already spent,
+a definition that moved since it was priced, a reply with no words in it at all, an engine
+that is not the pin, a shell the engine cannot start a run from, and an engine that cannot
+say where it keeps its run history — happens **before** the token is consumed, so a refused
 start leaves the acceptance standing. Both verbs exit `1` on a refusal; `start` exits `0`
-once the engine has been handed the run, because whether that run worked is the record's
-answer and not this command's ([run-model.md](run-model.md)).
+once the engine has been handed the run **and** where the engine has neither taken it on nor
+exited within its bound, because in that case the run may still begin and the acceptance is
+spent either way — whether a run worked is the record's answer and not this command's
+([run-model.md](run-model.md)). The one refusal that costs the acceptance is an engine that
+exited without taking the run on.
 
 **`start` does not read `--reply` for meaning, and no refusal above is about what it said.**
 The value is whatever the caller passed, so a caller that heard "no" and passed "yes, run it"

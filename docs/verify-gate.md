@@ -88,8 +88,8 @@ The gate reads two things and opens only when both agree:
 | The assertion  | The step's report     | The gate | Cause                    | Divergence                               |
 | -------------- | --------------------- | -------- | ------------------------ | ---------------------------------------- |
 | exit 0         | `done` or `noop`      | opens    | —                        | —                                        |
+| either         | `failed` with `cause: provider_protocol` | closes | `provider_protocol` | **yes** where the assertion passed — verified true, reported nothing |
 | exit 0         | `failed`              | closes   | `reported_failure`       | **yes** — verified true, reported failed |
-| either         | `failed`, `provider_protocol` | closes | `provider_protocol` | **yes** where the assertion passed — verified true, reported nothing |
 | nonzero        | `done` or `noop`      | closes   | `verify_failed`          | **yes** — reported done, verified false  |
 | nonzero        | `failed`              | closes   | `reported_failure`       | — they agree                             |
 | either         | `needs_user_decision` | closes   | `user_decision_required` | —                                        |
@@ -124,7 +124,7 @@ never reached from one killed before it could write.
 | ------------------------ | ---------------------------------------------------- | -------------- |
 | `verify_failed`          | the assertion exited nonzero                         | the gate       |
 | `reported_failure`       | the step's own report vetoed it                      | the gate       |
-| `provider_protocol`      | the step's session ended without reporting at all    | the gate       |
+| `provider_protocol`      | the step left no readable account of itself          | the gate       |
 | `user_decision_required` | the step is blocked on a human decision              | the gate       |
 | `not_reached`            | the step left no report of this run, so it never ran | the gate       |
 | `gate_indeterminate`     | the gate could not establish what happened           | the gate       |
@@ -135,7 +135,14 @@ never reached from one killed before it could write.
 `gate_indeterminate` exists because folding an unreadable report into `not_reached` would
 claim a step never ran when it may have done all of its work.
 
-`provider_protocol` exists for the same shape of reason one row up. A session that ends a
+The rows are read in the order the gate reads them, which is why the `provider_protocol` row
+comes first: a report can carry `failed` **and** that cause, and the cause is the narrower
+fact.
+
+`provider_protocol` exists for the same shape of reason one row up. It covers every
+unreadable-protocol fault — a malformed stream line, an unknown status, a summary that is not
+a string — and a session that ended a turn without reporting at all is only the commonest of
+them; the step's own recorded summary says which it was. A session that ends a
 turn without producing its structured report is written `failed` by the runtime, because
 that is the only status a report can carry when there is nothing to carry — and reading
 that back as `reported_failure` tells the person their session claimed a failure it never

@@ -23,9 +23,15 @@ _INDEX_NAMES = ("README.md", "WORKLIST.md", "PLAN.md", "index.md")
 # A backlog document names itself by the id every other document in that plan already uses
 # for it, and the rest of the file name is its title — `task-381 - Report entry points for
 # a repository of vscode's scale…`. Two spellings measured against real documents:
-# `task-381 - Title` and `TASK-381.4 Title`. The whitespace after the id is required, so a
-# folder genuinely called `task-381-migration` is a name and keeps all of itself.
-_TASK_ID = re.compile(r"^(task[-_ ]?\d+(?:\.\d+)*)\s", re.IGNORECASE)
+# `task-381 - Title` and `TASK-381.4 Title`.
+#
+# **The punctuation is required, and that is the whole of the narrowness.** `task 12` with a
+# bare space is how an ordinary sentence begins — `Task 12 things to fix in the parser` is a
+# title, not an id — and matching it would collapse that document to the slug `task-12` and
+# throw its title away. So the id must be punctuated (`task-381`, `task_381`, `TASK-381.4`)
+# and must be followed by whitespace, which is what separates an id from the title after it.
+# A folder genuinely called `task-381-migration` has no such boundary and keeps all of itself.
+_TASK_ID = re.compile(r"^(task[-_]\d+(?:\.\d+)*)\s", re.IGNORECASE)
 
 # Eight hex characters, against the sixteen `verify_handle` spends on a step handle. The
 # population here is the plans in one repository's three namespaces rather than every step

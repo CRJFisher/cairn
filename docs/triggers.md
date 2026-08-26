@@ -228,7 +228,7 @@ Cairn's own trigger **detaches**. `run start` prints the run's identity and addr
 it invokes the engine, launches the engine in its own session with its output going to
 `runs/<run-id>/engine.log`, and returns once the engine's own history says it has the run.
 It does not wait for the run to end, and nothing is lost by not waiting: the release handler
-writes the run's record whether anyone is watching or not ([run-record](run-model.md)). The
+writes the run's record whether anyone is watching or not ([the run model](run-model.md)). The
 spent offer beside it records the run id and the engine command, so a start whose process
 died is still a run somebody can name. `--wait` is the exception, for a caller that wants
 the engine's exit status in line.

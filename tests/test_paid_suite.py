@@ -35,7 +35,7 @@ from cairn.core import CairnError
 from cairn.gitio import git, runs_root, state_directory
 from cairn.layout import reports_directory
 from cairn.plan.cli import main as plan_main
-from cairn.plan.schema import ASSERTION_OUTCOMES
+from cairn.plan.schema import ASSERTION_OUTCOMES, WORK_PREFIX
 from cairn.record.cli import main as record_main
 from cairn.record.vocabulary import (
     EXIT_EXCLUSIONS,
@@ -1386,10 +1386,23 @@ class AReadingProbeCannotSpendOnARun(unittest.TestCase):
                 for path in sorted(reports.glob("*.json"))
             ]
             self.assertTrue(said, "the bought run left no reports at all")
+            # About a step that *could* have opened a session, not merely about some
+            # failure: a run that halted at `lock_acquire` would satisfy a bare "something
+            # failed" while never reaching a paid step at all, and the empty session list
+            # above would then be an accident rather than containment.
+            paid = [
+                report
+                for report in said
+                if str(report.get("step_id", "")).startswith(WORK_PREFIX)
+            ]
+            self.assertTrue(paid, f"the run never reached an agent step: {said}")
             self.assertTrue(
-                any(report.get("status") == "failed" for report in said),
-                f"a run with no provider came back green: {said}",
+                any(report.get("status") == "failed" for report in paid),
+                f"a run with no provider came back green: {paid}",
             )
+            # And `--wait` really waited, rather than returning on its taken-on bound and
+            # turning the assertions above into a race.
+            self.assertNotIn("has not registered", started.stdout)
 
     def test_the_probe_reads_the_seeded_run_through_the_engines_own_home(self) -> None:
         """What `DAGU_HOME` is for: the history is resolved from it by arithmetic, and no

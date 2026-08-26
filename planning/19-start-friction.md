@@ -1,8 +1,8 @@
-# 19 — Start friction: the three walls between an authored workflow and a running one
+# 19 — Start friction: the four walls between an authored workflow and a running one
 
 The second person to drive Cairn had a plan that parsed, validated, answered its assertions and
 priced a run — and still needed three attempts and one spent acceptance to get an engine run
-registered. None of the three walls is a bug in what the invariants promise. Each is a **fact
+registered. None of the four walls is a bug in what the invariants promise. Each is a **fact
 about the engine or the host that Cairn learns too late**: at the gate instead of the derivation,
 inside the run instead of before the offer, or never.
 
@@ -21,7 +21,8 @@ each of 17 steps with `verify` for the 15 that carry an assertion — and no `se
 ## What a person hit, in the order they hit it
 
 1. **Generation refused the file at the engine gate, naming a path cut short.** The plan's slug,
-   derived from its document's file name, was 112 characters; the engine caps a DAG name under 40. Cairn's own validator had passed the slug, and the refusal that finally came named neither
+   derived from its document's file name, was 112 characters; the engine caps a DAG name at 40
+   — its own message says "less than 40", which is off by one against the measurement. Cairn's own validator had passed the slug, and the refusal that finally came named neither
    the rule nor the length.
 2. **`run start` blocked for the whole run, and a killed start cost the acceptance.** The command
    spends the offer, then calls the engine synchronously and prints the run id only when the engine
@@ -34,6 +35,12 @@ each of 17 steps with `verify` for the 15 that carry an assertion — and no `se
    silent for two minutes, wrote no status and no log, and was killed by wall 2 before it said
    anything. The authoring gate had passed in that same shell, because `dagu validate` and
    `dagu dry` never bind.
+
+4. **A session did the work and never said so, and the run threw it away.** Step 2 edited
+   the tree, its assertion passed, and the session then ended its turn expecting to be
+   re-invoked. Nothing did. The run recorded it as a step that "reported failure" over an
+   assertion that passed, halted the chain, and discarded $10.89 of proven work. This wall
+   is met inside the run rather than before it, which is why it comes last ([D](#d--a-headless-session-that-defers-its-own-completion-leaves-no-report)).
 
 The first is a derivation defect with a one-line fix. The second and third are the same shape:
 **a cause the person could have cleared before the offer was spent, surfaced only after it was.**
@@ -62,11 +69,22 @@ is the ordinary shape of a plan a person already has, and its name is the whole 
 - The slug derivation **bounds its output to the engine's limit**, and the bound is a named
   constant beside the grammar. A file name that opens with a task-shaped id (`task-381 - …`,
   `TASK-381.4 …`) takes the id as the slug, because it is the name every document in that plan
-  already uses for it; any other name is cut at the last hyphen before the bound and, where the
-  cut would collide in any of the three namespaces `--against` checks, carries a short digest of
-  the full name.
+  already uses for it; any other name is cut at the last hyphen before the bound and carries a
+  short digest of the full name. **The digest rides on every cut, not only on a colliding
+  one** — a correction to this rule as first written. Making it conditional on what is already
+  on disk would make the slug a function of filesystem state: the same document would derive
+  one name before its worktree parent existed and another after, and a re-derivation would
+  quietly re-point the plan at a different worktree, a different workflow file and a different
+  run record. The task-id branch is the one place two documents can still derive one slug —
+  two documents claiming one task id are one task — and `--against` is what refuses it.
 - The validator's `plan_slug` error enforces the bound, so a graph that cannot be authored is
   refused at derivation and not at the gate.
+- **The gate judges the name that will run.** Found while building this: authoring gated a
+  `mkstemp` file called `.<slug>.yaml.<8 random>.authoring`, and the engine reads a DAG's
+  name off its file name — so the gate judged a name fifteen characters longer than the one
+  that would be published, and any slug near the bound was refused under a name nobody
+  chose. Bounding the slug alone would not have cleared this wall. The pending file now
+  lives in a unique *directory* under its published name.
 - The preflight's `engine_validate` refusal carries the engine's own reason line, whole, and the
   path is never truncated in a refusal. A refusal that hides its cause is a refusal the person
   has to reproduce by hand to read.
@@ -76,9 +94,11 @@ plans in one repository cannot adopt each other's worktrees; `--against` still r
 already present in any of the three namespaces; the person still confirms the slug in the parse
 report before anything is generated.
 
-**Touches.** `cairn/plan/cli.py` (`slug`), `cairn/plan/validate.py` (`plan_slug`),
-`cairn/workflow/gate.py` (the refusal text), `docs/plan-contract.md` _Identifiers_, a fixture
-plan whose document name is longer than the bound, `tests/test_plan_contract.py`.
+**Touches.** `cairn/plan/ids.py` (`derive_plan_slug`, `is_plan_slug`), `cairn/plan/schema.py`
+(the bound, beside the grammar), `cairn/plan/validate.py` (`plan_slug`),
+`cairn/workflow/cli.py` (the pending name), `cairn/workflow/gate.py` (`engine_reason` and the
+refusal text), `docs/plan-contract.md` _Identifiers_, a fixture plan whose document name is
+longer than the bound, `tests/test_plan_contract.py`, `tests/test_workflow.py`.
 
 ## B — `run start` returns when the engine has the run, not when the run ends
 
@@ -222,8 +242,11 @@ and nothing holds the session to it.
 - **Rescue before discarding.** A result with `stop_reason: tool_use` and no `structured_output`
   is a session that ended a turn without reporting, not a session that failed. Resume it once —
   `claude -p --resume <session_id>`, the spelling `resume_command` already knows — with one
-  message: _the session is ending; report now through the structured output_. One resume, bounded
-  by the step's remaining timeout, recorded in the report's `detail` as `resumed_for_report`.
+  message: _the session is ending; report now through the structured output_. One resume,
+  bounded by what is left of the step's own **dollar ceiling** — the offer priced one ceiling
+  and a second pass carrying a fresh one would double what was agreed — and recorded in the
+  report's `detail` as `resumed_for_report`. Nothing bounds it in *time* beyond the engine's
+  own per-step timeout, which is still running.
   Measured here, the alternative was discarding $10.89 of work an assertion had just proved.
 - **The cause is named for what it is.** `provider_protocol` is not `reported_failure`: the step
   reported nothing. The gate carries the protocol cause through to the mark report and the
@@ -234,8 +257,10 @@ did not say what it did is not recorded as done — and the assertion still neve
 And a step's session keeps every tool that has a blocking form: the deny list names only what
 cannot be waited for, because a step that cannot fan work out is a step that cannot do the work.
 
-**Touches.** `cairn/protocol.py` (the preamble), `cairn/providers.py` (`run_claude` deny
-defaults, the composed `--settings` document, the one-resume rescue in `run_provider`), the
+**Touches.** `cairn/protocol.py` (the preamble and the resume message), `cairn/providers.py`
+(`run_claude` deny defaults, the composed `--settings` document, and the one-resume rescue —
+in `run_claude` rather than `run_provider`, because `--resume` is the provider's own spelling
+and `run_provider`'s seam has no slot for it), the
 `Stop` hook's own verb (`cairn/__main__.py`), `cairn/verify.py` (the cause carried through),
 `cairn/report/` (the divergence phrasing), `docs/step-protocol.md` _The preamble_,
 `docs/verify-gate.md` _Why a step contributed no verified work_, `tests/test_step_protocol.py`.
@@ -269,17 +294,19 @@ the overrun question is still open.
 
 ## The bucket
 
-Small start-path defects, appended as they surface, with how they were found.
+Small start-path defects, appended as they surface, with how they were found. `done` means
+closed on the `task-19-start-friction` branch; the rows still `open` are the ones that were
+never designed here and are carried forward.
 
 | #   | Symptom                                                                                                                                                                                                                 | Where it lives                                                           | State |
 | --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ----- |
-| A   | A plan slug longer than the engine's 40-character name limit passes the validator and dies at the gate, with the cause cut out of the message                                                                           | `cairn/plan/cli.py`, `cairn/plan/validate.py`, `cairn/workflow/gate.py`  | open  |
-| B   | `run start` blocks for the whole run; a killed start spends the offer and loses the run id                                                                                                                              | `cairn/skill/trigger.py`, `cairn/skill/cli.py`, `cairn/skill/consent.py` | open  |
-| C   | The engine cannot bind its run socket from a sandboxed shell; the version pin is the only pre-spend engine check                                                                                                        | `cairn/skill/trigger.py`                                                 | open  |
+| A   | A plan slug longer than the engine's 40-character name limit passes the validator and dies at the gate, with the cause cut out of the message                                                                           | `cairn/plan/cli.py`, `cairn/plan/validate.py`, `cairn/workflow/gate.py`  | done  |
+| B   | `run start` blocks for the whole run; a killed start spends the offer and loses the run id                                                                                                                              | `cairn/skill/trigger.py`, `cairn/skill/cli.py`, `cairn/skill/consent.py` | done  |
+| C   | The engine cannot bind its run socket from a sandboxed shell; the version pin is the only pre-spend engine check                                                                                                        | `cairn/skill/trigger.py`                                                 | done  |
 | D   | `plan propose --json` exits nonzero when steps are unanswered, so a caller cannot tell a listing from a failure by exit status                                                                                          | `cairn/plan/cli.py`                                                      | open  |
-| E   | The offer prices worktrees and merges for a chain-shaped plan whose definition has neither; the disclosure is a fixed sentence, not the topology                                                                        | `cairn/skill/consent.py` (`disclosure`)                                  | open  |
-| F   | A `-p` session that leaves a background shell running ends the process with it unread and reports nothing; $10.89 of assertion-passing work is discarded                                                                | `cairn/protocol.py`, `cairn/providers.py`                                | open  |
-| G   | A `provider_protocol` failure reaches the gate and the report as `reported_failure`, and the divergence says the step "reported failed"                                                                                 | `cairn/verify.py`, `cairn/report/`                                       | open  |
+| E   | The offer prices worktrees and merges for a chain-shaped plan whose definition has neither; the disclosure is a fixed sentence, not the topology                                                                        | `cairn/skill/consent.py` (`disclosure`)                                  | done  |
+| F   | A `-p` session that leaves a background shell running ends the process with it unread and reports nothing; $10.89 of assertion-passing work is discarded                                                                | `cairn/protocol.py`, `cairn/providers.py`                                | done  |
+| G   | A `provider_protocol` failure reaches the gate and the report as `reported_failure`, and the divergence says the step "reported failed"                                                                                 | `cairn/verify.py`, `cairn/report/`                                       | done  |
 | H   | A chain-segment step that fails after editing leaves its edits uncommitted in the repository; a recovery's first act refuses the dirty tree, and the report's next action says `settle_merge` for a chain with no merge | `cairn/record/`, `capabilities/running.md`                               | open  |
 | I   | Fifteen never-reached steps are recorded `gate_indeterminate` and listed as needing a person, where [08](08-verify-gate.md) says `not_reached`                                                                          | `cairn/verify.py`                                                        | open  |
 | J   | The release writes `record.json` with verdict `running`, `finished_at: None` and the engine's status `running` for a run that has ended; `cairn report` rebuilds it as `green_with_exclusions`                          | `cairn/record/`, the `handler_on.exit` body                              | open  |

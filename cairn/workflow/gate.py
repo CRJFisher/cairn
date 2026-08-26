@@ -32,6 +32,15 @@ from cairn.workflow.schema import ENGINE_VERSION, WORKFLOW_SUFFIX
 
 GATE_TIMEOUT = 120
 
+# The rehearsal's own bound, and it is deliberately not `GATE_TIMEOUT`. This check exists so
+# a person driving Cairn through an agent harness learns their shell cannot start a run
+# *before* the harness's own tool call is killed — and that call is two minutes. A rehearsal
+# bounded at two minutes would be killed at the same moment its refusal printed, leaving
+# exactly the silence it was written to replace ([19 C]). Measured at 0.25s against a
+# working engine, so twenty seconds is thirty times the observed cost and a sixth of the
+# budget the caller has.
+REHEARSAL_TIMEOUT = 20
+
 # The engine writes its own structured log to stderr before it writes its findings, and the
 # findings are last: `time=… level=WARN msg=…` lines, then `Error: Validation failed for
 # <path>`, then one `- field '<name>': <reason>` per finding. A reader that kept the head of
@@ -159,7 +168,7 @@ def rehearse_start(*, binary: str | None = None) -> None:
 
     Against a scratch home and never the machine's own, for the reason `scratch_home` states.
     The rehearsal DAG runs `true`, so it takes no lock, writes no report and touches no
-    repository. Measured: one second, `Result: Succeeded`.
+    repository. Measured at 0.25s against a working engine, `Result: Succeeded`.
     """
     engine = engine_path(binary)
     with tempfile.TemporaryDirectory(prefix="cairn-rehearsal-") as scratch:
@@ -172,7 +181,7 @@ def rehearse_start(*, binary: str | None = None) -> None:
                 (engine, "start", "--dagu-home", str(home), str(definition)),
                 capture_output=True,
                 text=True,
-                timeout=GATE_TIMEOUT,
+                timeout=REHEARSAL_TIMEOUT,
                 check=False,
             )
         except subprocess.TimeoutExpired as silent:
@@ -182,7 +191,7 @@ def rehearse_start(*, binary: str | None = None) -> None:
             # while the acceptance is still standing.
             raise EngineUnavailable(
                 f"{ENGINE_BINARY} did not take a one-step rehearsal run on within "
-                f"{GATE_TIMEOUT}s, so this shell cannot start a run. Every run opens a unix "
+                f"{REHEARSAL_TIMEOUT}s, so this shell cannot start a run. Every run opens a unix "
                 "socket before any step runs; a sandboxed shell is refused the bind. Issue "
                 "the start from a shell allowed to bind a unix socket"
             ) from silent

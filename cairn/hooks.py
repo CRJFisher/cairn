@@ -67,8 +67,18 @@ def unread_shells(payload: object) -> list[str]:
             continue
         if str(entry.get("status", "")).lower() not in LIVE_STATUSES:
             continue
-        command = entry.get("command") or entry.get("description") or entry.get("id")
-        found.append(str(command))
+        # The payload is another program's JSON, so a missing or oddly-typed name is an
+        # ordinary input. Naming the shell is the entire point of holding the turn open, so
+        # a fallback phrase beats printing `None` at a session that has to act on it.
+        named = next(
+            (
+                value
+                for key in ("command", "description", "id")
+                if isinstance(value := entry.get(key), str) and value.strip()
+            ),
+            "an unnamed background shell",
+        )
+        found.append(named)
     return found
 
 

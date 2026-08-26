@@ -584,6 +584,33 @@ class TheConsentRuleIsStatedOnce(unittest.TestCase):
         self.assertIn(str(worktrees_parent(Path("/srv/work/product"))), joined)
         self.assertIn("it merges", joined)
 
+    def test_a_definition_cairn_did_not_name_is_priced_for_everything(self) -> None:
+        """Reading the roles is what lets a chain drop two facts. A name that will not parse
+        is not evidence that the role is absent — it is evidence the file was hand-edited,
+        and dropping a cost on that evidence would buy a yes on terms nobody was given."""
+        edited = json.loads(
+            (WORKFLOWS / "fan-out.yaml").read_text(encoding="utf-8")
+        )
+        for step in edited["steps"]:
+            if step["name"].startswith("setup_"):
+                step["name"] = "not-a-node-name"
+        with tempfile.TemporaryDirectory() as scratch:
+            hand_edited = Path(scratch) / "hand-edited.yaml"
+            hand_edited.write_text(json.dumps(edited), encoding="utf-8")
+            stated = consent.disclosure(hand_edited)
+        self.assertEqual(len(stated), len(RUN_COST_FACTS))
+        self.assertIn(
+            str(worktrees_parent(Path("/srv/work/product"))), " ".join(stated)
+        )
+
+    def test_the_branch_asked_for_reaches_the_merge_sentence(self) -> None:
+        """The chain golden cannot exercise it, so the fan-out has to."""
+        stated = " ".join(
+            consent.disclosure(WORKFLOWS / "fan-out.yaml", parent_branch="release")
+        )
+        self.assertIn("landed on release", stated)
+        self.assertIn("lands on release", stated)
+
     def test_every_priced_fact_is_the_vocabularys_and_keeps_its_order(self) -> None:
         for name in ("linear-chain", "mixed-kinds", "single-step", "fan-out", "multi-wave"):
             with self.subTest(workflow=name):
@@ -1846,12 +1873,19 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
         quote — the run id died with the process before ([19 B])."""
         _, spoken = self._offer()
         offer_id = self._minted(spoken)
-        self._start(offer_id, "yes, go ahead")
+        _, said = self._start(offer_id, "yes, go ahead")
         spent = consent.acceptance_of(self.repository, offer_id)
         self.assertIsNotNone(spent)
         held = cast(consent.Acceptance, spent)
-        self.assertTrue(held.run_id)
         self.assertEqual(tuple(held.command), tuple(self.launched[0]))
+        # **One id, three places.** The whole of B is that the run the person was told
+        # about, the run the engine was given, and the run the marker names are one — a
+        # marker naming some other well-formed id would be worse than naming none.
+        launched = list(self.launched[0])
+        self.assertEqual(held.run_id, launched[launched.index("--run-id") + 1])
+        printed = re.search(r"^started\s+(\S+)$", said, re.MULTILINE)
+        self.assertIsNotNone(printed)
+        self.assertEqual(held.run_id, cast(re.Match[str], printed).group(1))
         # And the claim is exactly as exclusive as it was.
         again = consent.spend(
             self.repository, offer_id, reply="yes, go ahead", run_id=RUN_ID

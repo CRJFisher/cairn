@@ -1,3 +1,4 @@
+import contextlib
 import copy
 import io
 import json
@@ -21,7 +22,7 @@ from unittest.mock import patch
 from cairn.__main__ import asks_for_help, main
 from cairn.core import CairnError, CommandResult
 from cairn.emitters import emit_step, marker_gate
-from cairn.hooks import HOLD_IT_OPEN, HOOK_VERB, LET_IT_END, hook_main
+from cairn.hooks import HOLD_IT_OPEN, HOOK_VERB, LET_IT_END, STOP_EVENT, hook_main
 from cairn.layout import occasion_path, reports_directory
 from cairn.marker import (
     MARKER_DIRECTORY,
@@ -38,7 +39,7 @@ from cairn.marker import (
 )
 from cairn.plan.schema import SCOPES, normalise
 from cairn.protocol import PREAMBLE, STEP_REPORT_SCHEMA, compose_prompt
-from cairn.providers import PROVIDER_RUNNERS
+from cairn.providers import PROVIDER_RUNNERS, hook_settings, run_claude
 from cairn.topology import node_name
 
 CAIRN_ROOT = Path(__file__).resolve().parent.parent
@@ -241,6 +242,41 @@ class TheSessionIsHeldOpenForWhatItLeftRunning(unittest.TestCase):
         spoken = io.StringIO()
         with redirect_stderr(spoken):
             self.assertEqual(hook_main(["stop"], io.StringIO("not json")), LET_IT_END)
+
+    def test_the_verb_holds_the_turn_through_its_real_entry_point(self) -> None:
+        """`hook_main` is asserted directly elsewhere; this is the code the harness reads."""
+        with patch("sys.stdin", io.StringIO(json.dumps(_payload()))):
+            self.assertEqual(main([HOOK_VERB, "stop"]), HOLD_IT_OPEN)
+
+    def test_the_settings_document_arms_this_verb_and_no_other(self) -> None:
+        """The hook fails open by design, so a typo here is a silently disarmed hook — D's
+        leak returning with the suite green and nothing in any record saying so."""
+        armed = json.loads(hook_settings())
+        hooks = armed["hooks"]["Stop"][0]["hooks"]
+        self.assertEqual(len(hooks), 1)
+        self.assertEqual(hooks[0]["type"], "command")
+        self.assertTrue(
+            hooks[0]["command"].endswith(f"-m cairn {HOOK_VERB} {STOP_EVENT}"),
+            hooks[0]["command"],
+        )
+        # The running interpreter, not a bare `python3`: the hook is a grandchild of this
+        # process and naming it removes the one PATH dependency it would otherwise carry.
+        self.assertTrue(hooks[0]["command"].startswith(shlex.quote(sys.executable)))
+
+    def test_every_session_is_armed_with_it(self) -> None:
+        made: list[list[str]] = []
+
+        def factory(command: list[str], **_options: Any) -> Any:
+            made.append(command)
+            raise AssertionError("the argv is the subject; nothing is launched")
+
+        with contextlib.suppress(AssertionError):
+            run_claude("do work", Path("/tmp"), "auto", None, None, [], factory)
+        self.assertTrue(made)
+        self.assertIn("--settings", made[0])
+        self.assertEqual(
+            made[0][made[0].index("--settings") + 1], hook_settings()
+        )
 
     def test_the_verb_resolves_no_runtime_identity_and_leaves_no_report(self) -> None:
         """It runs as a grandchild of a step and inherits the step's own environment. One

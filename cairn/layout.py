@@ -148,6 +148,7 @@ def occasion_path(runs_root: Path, run_id: str) -> Path:
 
 __all__ = [
     "ENGINE_HOST_ENV",
+    "ENGINE_LOG_FILE",
     "ENGINE_PORT_ENV",
     "OCCASION_FILE",
     "RECORD_FILE",
