@@ -17,16 +17,18 @@ scheduler hazard that re-executes every failed run on the machine ([09]).
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from cairn.baseconfig import BASE_CONFIG_NAME, ensure_dag_retry_disabled
 from cairn.enginehome import ENGINE_BINARY
 from cairn.workflow.preflight import Fault
-from cairn.workflow.schema import ENGINE_VERSION
+from cairn.workflow.schema import ENGINE_VERSION, WORKFLOW_SUFFIX
 
 GATE_TIMEOUT = 120
 
@@ -111,11 +113,92 @@ def assert_pinned(binary: str | None = None) -> None:
         )
 
 
-def _scratch_home(root: Path) -> Path:
+def scratch_home(root: Path) -> Path:
+    """An engine home the run rehearsal and both gate commands can be pointed at.
+
+    Shared rather than copied, because the rule it keeps is the sharp one: a `--dagu-home`
+    the engine has never seen is created carrying `retry_policy: {limit: 3}` **active**,
+    arming the scanner that re-executes every failed run on the machine ([09]). A second
+    copy of this is how the two come to disagree, and the disagreement would arm it.
+    """
     home = root / "home"
     home.mkdir(parents=True, exist_ok=True)
     ensure_dag_retry_disabled(home / BASE_CONFIG_NAME)
     return home
+
+
+# One step that exits immediately, under a name well inside the engine's own bound so a
+# rehearsal can never fail on its own name and report the host's fault as the plan's.
+REHEARSAL_NAME = "cairn-rehearsal"
+REHEARSAL_DAG: dict[str, Any] = {
+    "type": "graph",
+    "steps": [
+        {
+            "name": "probe",
+            "run": "true",
+            "timeout_sec": 30,
+            "retry_policy": {"limit": 0, "interval_sec": 1},
+        }
+    ],
+}
+
+
+def rehearse_start(*, binary: str | None = None) -> None:
+    """Refuse a shell the engine cannot take a run on, before anyone pays for finding out.
+
+    **What the two gate commands structurally cannot ask.** Every `dagu start` opens a unix
+    socket for the run — `/tmp/@dagu__<home>_<dag>_<hash>.sock` — before any step runs, and
+    a shell that may not `bind` one gets `failed to start the unix socket server: listen
+    unix …: bind: operation not permitted`. `dagu validate` and `dagu dry` never bind, so a
+    workflow authors cleanly in an environment that cannot run it — and the cause reached
+    the person only after their acceptance had been spent ([19 C]). That is exactly the cost
+    `refuse_unusable_engine` exists to prevent, and until now it checked only the version.
+
+    Anyone driving Cairn through a coding-agent harness is who this is for: such harnesses
+    sandbox their shell by default, and the person may not know a socket is involved at all.
+
+    Against a scratch home and never the machine's own, for the reason `scratch_home` states.
+    The rehearsal DAG runs `true`, so it takes no lock, writes no report and touches no
+    repository. Measured: one second, `Result: Succeeded`.
+    """
+    engine = engine_path(binary)
+    with tempfile.TemporaryDirectory(prefix="cairn-rehearsal-") as scratch:
+        root = Path(scratch)
+        home = scratch_home(root)
+        definition = root / f"{REHEARSAL_NAME}{WORKFLOW_SUFFIX}"
+        definition.write_text(json.dumps(REHEARSAL_DAG, indent=2) + "\n", encoding="utf-8")
+        try:
+            completed = subprocess.run(
+                (engine, "start", "--dagu-home", str(home), str(definition)),
+                capture_output=True,
+                text=True,
+                timeout=GATE_TIMEOUT,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as silent:
+            # The other spelling of the same fault: in the machine's own engine home the
+            # bind was observed to sit for two minutes writing no status and no log, rather
+            # than failing outright. A bound turns that silence into a refusal that arrives
+            # while the acceptance is still standing.
+            raise EngineUnavailable(
+                f"{ENGINE_BINARY} did not take a one-step rehearsal run on within "
+                f"{GATE_TIMEOUT}s, so this shell cannot start a run. Every run opens a unix "
+                "socket before any step runs; a sandboxed shell is refused the bind. Issue "
+                "the start from a shell allowed to bind a unix socket"
+            ) from silent
+        except (OSError, subprocess.SubprocessError) as unusable:
+            raise EngineUnavailable(
+                f"{ENGINE_BINARY} could not be asked to start a rehearsal run: {unusable}"
+            ) from unusable
+        if completed.returncode != 0:
+            raise EngineUnavailable(
+                f"{ENGINE_BINARY} could not take a one-step rehearsal run on from this "
+                f"shell, so it could not take this plan's run on either: "
+                f"{engine_reason(completed)}. Every run opens a unix socket before any step "
+                "runs, and the shell that starts it must be allowed to bind one — a "
+                "sandboxed agent harness usually is not. Issue the start from a shell with "
+                "the sandbox lifted for that command"
+            )
 
 
 def gate(path: Path, *, binary: str | None = None, named: Path | None = None) -> list[Fault]:
@@ -135,7 +218,7 @@ def gate(path: Path, *, binary: str | None = None, named: Path | None = None) ->
     target = path.resolve()
     faults: list[Fault] = []
     with tempfile.TemporaryDirectory(prefix="cairn-gate-") as scratch:
-        home = _scratch_home(Path(scratch))
+        home = scratch_home(Path(scratch))
         for verb in ("validate", "dry"):
             try:
                 completed = subprocess.run(
@@ -167,4 +250,6 @@ __all__ = [
     "engine_reason",
     "engine_version",
     "gate",
+    "rehearse_start",
+    "scratch_home",
 ]

@@ -36,6 +36,7 @@ from cairn.core import CairnError
 from cairn.gitio import CAIRN_STATE, common_directory
 from cairn.marker import OCCASION_PATTERN, mint_occasion
 from cairn.skill.vocabulary import (
+    COST_BY_ROLE,
     COST_SENTENCES,
     REFUSED_ALREADY_SPENT,
     REFUSED_NO_SUCH_OFFER,
@@ -44,7 +45,7 @@ from cairn.skill.vocabulary import (
     REFUSED_WORKFLOW_MOVED,
     RUN_COST_FACTS,
 )
-from cairn.topology import worktrees_parent
+from cairn.topology import TopologyError, parse_node_name, worktrees_parent
 from cairn.workflow.schema import (
     PARENT_BRANCH_PARAM,
     REPOSITORY_PARAM,
@@ -207,6 +208,36 @@ def session_bounds(document: Any) -> list[SessionBound]:
     return found
 
 
+def node_roles(document: Any) -> frozenset[str]:
+    """Every topology role this definition actually emits, read back from its node names.
+
+    The topology names every node `<role>_<subject>` and the roles are a closed set, so this
+    is a reading of the file rather than a guess about it — the same grammar the run model
+    parses names back with ([docs/topology.md]). A name that will not parse is a hand-edited
+    definition and is passed over rather than refused, the same tolerance `_readable` keeps:
+    the consequence of failing to recognise a role is a fact stated that did not apply, and
+    over-stating a cost is the safe direction. Under-stating it buys a yes on terms the
+    person was never given.
+    """
+    found: set[str] = set()
+    if not isinstance(document, dict):
+        return frozenset()
+    steps = cast(dict[str, Any], document).get("steps")
+    if not isinstance(steps, list):
+        return frozenset()
+    for step in cast(list[Any], steps):
+        if not isinstance(step, dict):
+            continue
+        name = cast(dict[str, Any], step).get("name")
+        if not isinstance(name, str):
+            continue
+        try:
+            found.add(parse_node_name(name).role)
+        except TopologyError:
+            continue
+    return frozenset(found)
+
+
 def longest_timeout(document: Any) -> int:
     """The largest per-attempt bound any step in this definition runs under."""
     if not isinstance(document, dict):
@@ -275,7 +306,14 @@ def disclosure(workflow: Path, parent_branch: str | None = None) -> tuple[str, .
         "parent_branch": parent,
         "worktrees_root": worktrees_parent(Path(repository)),
     }
-    return tuple(COST_SENTENCES[fact].format(**filled) for fact in RUN_COST_FACTS)
+    # Every fact this definition's own topology actually incurs, in the vocabulary's order.
+    # A chain creates no worktree and lands no merge, so it is priced for neither ([19 E]).
+    roles = node_roles(document)
+    return tuple(
+        COST_SENTENCES[fact].format(**filled)
+        for fact in RUN_COST_FACTS
+        if fact not in COST_BY_ROLE or COST_BY_ROLE[fact] in roles
+    )
 
 
 def make_offer(

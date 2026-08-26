@@ -25,7 +25,7 @@ from typing import NamedTuple
 from cairn.enginehome import ENGINE_BINARY
 from cairn.layout import check_run_id, view_url
 from cairn.skill.consent import Authorisation, refuse_uncarriable
-from cairn.workflow.gate import EngineUnavailable, assert_pinned
+from cairn.workflow.gate import EngineUnavailable, assert_pinned, rehearse_start
 from cairn.workflow.schema import OCCASION_PARAM, PARENT_BRANCH_PARAM, WORKFLOW_SUFFIX
 
 # What actually launches the engine. A seam rather than a mock: the gate that proves no
@@ -49,8 +49,16 @@ def refuse_unusable_engine() -> None:
     offer's marker is claimed and a machine carrying the wrong engine is a cause a person
     can clear. Making them answer for the run twice, for a refusal that started nothing, is
     the one thing the single-use rule must not be allowed to cost.
+
+    **Two questions, and the order is load-bearing.** The version pin is answered by asking
+    the binary what it is, which costs nothing and needs no engine home; the rehearsal
+    actually starts a one-step run, which is the only way to find out whether this shell can
+    bind the socket every run opens ([gate.rehearse_start]). Pinning first means a machine
+    with no engine at all is refused by the cheaper question, and the rehearsal is never
+    reached with nothing to rehearse against.
     """
     assert_pinned()
+    rehearse_start()
 
 
 def dag_name(workflow: Path) -> str:
@@ -129,6 +137,7 @@ __all__ = [
     "Started",
     "dag_name",
     "refuse_unusable_engine",
+    "rehearse_start",
     "start",
     "start_command",
 ]

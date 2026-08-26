@@ -164,6 +164,8 @@ COST_MUTATES = "mutates"
 COST_WORKTREES = "worktrees"
 COST_LOCK = "lock"
 COST_COMMITS = "commits"
+COST_MERGES = "merges"
+COST_SOCKET = "socket"
 
 # What a person is agreeing to. The money fact leads, asserted, because it is the one a
 # person most needs before saying yes and the one no other surface states at all — and the
@@ -178,7 +180,21 @@ RUN_COST_FACTS: tuple[str, ...] = (
     COST_WORKTREES,
     COST_LOCK,
     COST_COMMITS,
+    COST_MERGES,
+    COST_SOCKET,
 )
+
+# The two facts that are the topology's rather than every run's, each named by the node role
+# that incurs it. A fact absent from this map is priced on every run.
+#
+# Every wave of a chain holds one step and a one-step wave runs in the repository itself
+# ([07]), so a chain-shaped definition emits no `setup` and no `merge` — and quoting a price
+# for something the definition cannot do is quoting a cost nobody agreed to. Read from the
+# definition in hand rather than from the request, for the same reason every other fact is.
+COST_BY_ROLE: dict[str, str] = {
+    COST_WORKTREES: "setup",
+    COST_MERGES: "merge",
+}
 
 # The headline a question names when one of its branches is a run. Doc 15 task 5 wants the
 # price stated wherever a run is offered, and a question offering one is such a place — but
@@ -226,8 +242,20 @@ COST_SENTENCES: dict[str, str] = {
         "is refused with this one named for as long as it holds"
     ),
     COST_COMMITS: (
-        "it commits: each verified step's work and its marker land in one commit on the "
-        "step's branch, and every verified branch is merged into {parent_branch}"
+        "it commits: each verified step's work and its marker land in one commit, and "
+        "verified work lands on {parent_branch}"
+    ),
+    COST_MERGES: (
+        "it merges: each verified step runs on its own branch and those branches are "
+        "landed on {parent_branch} one at a time, so a merge can conflict"
+    ),
+    # No field from the definition, because it is the one line about the machine rather
+    # than about the run. Stated in the price because it is a cause a person can clear
+    # before saying yes, and finding it out afterwards costs them the yes ([19 C]).
+    COST_SOCKET: (
+        "the engine opens a unix socket for every run before any step runs, so the shell "
+        "this start is issued from must be allowed to bind one — a sandboxed coding-agent "
+        "harness usually is not"
     ),
 }
 

@@ -68,9 +68,27 @@ a run is an ordinary start carrying the occasion it continues. Never `dagu retry
 ## Refusals, and which of them cost the acceptance
 
 **Before the offer is spent**, and so leaving the yes standing: a malformed run id, an engine
-that is not the pinned version, a reply that acknowledges or declines rather than accepts, an
-id naming no offer, an offer already spent, a damaged offer, and a definition that changed
-since it was priced. Clear the cause and answer once — the same acceptance is still good.
+that is not the pinned version, **a shell the engine cannot start a run from**, a reply that
+acknowledges or declines rather than accepts, an id naming no offer, an offer already spent,
+a damaged offer, and a definition that changed since it was priced. Clear the cause and
+answer once — the same acceptance is still good.
+
+### The shell has to be allowed to bind a unix socket
+
+Every run opens one — `/tmp/@dagu__<home>_<dag>_<hash>.sock` — before any step runs, so a
+shell that may not `bind` cannot start a run at all. This is the ordinary case when Cairn is
+driven through a coding-agent harness, because such harnesses sandbox their shell by default
+and the person may not know a socket is involved. It has **two spellings**:
+
+- the immediate refusal — `failed to start the unix socket server: listen unix …: bind:
+  operation not permitted`;
+- **silence** — the start sits with no status data and no log until something kills it.
+
+Neither is visible at authoring time: `dagu validate` and `dagu dry` never bind, so a
+workflow authors cleanly in an environment that cannot run it. `run start` therefore
+rehearses a one-step run in a scratch engine home before it spends the offer, and refuses
+with the engine's own words. What clears it is issuing the start from a shell with the
+sandbox lifted for that one command.
 
 **After it, inside the run**, because they are the run's first act rather than the start's:
 

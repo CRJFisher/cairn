@@ -24,6 +24,7 @@ from collections.abc import Callable
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any, ClassVar, cast
+from unittest.mock import patch
 
 from cairn.core import CairnError, RuntimeContext
 from cairn.parameters import parameter
@@ -43,6 +44,7 @@ from cairn.workflow.gate import (
     assert_pinned,
     engine_reason,
     gate,
+    rehearse_start,
 )
 from cairn.workflow.preflight import RULES, Fault, check, rehearse_gate
 from cairn.workflow.schema import (
@@ -861,6 +863,47 @@ class TheEngineVersionIsPinned(unittest.TestCase):
         path.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
         path.chmod(0o755)
         return str(path)
+
+    def test_a_shell_that_cannot_start_a_run_is_refused_in_the_engines_own_words(self) -> None:
+        """The fault `dagu validate` and `dagu dry` structurally cannot find, because
+        neither binds the unix socket every run opens before any step runs ([19 C])."""
+        bind_refused = (
+            "echo 'time=t level=WARN msg=noise' >&2\n"
+            "echo 'Error: failed to start the unix socket server: listen unix "
+            "/tmp/@dagu__x.sock: bind: operation not permitted' >&2\n"
+            "exit 1"
+        )
+        with self.assertRaises(EngineUnavailable) as caught:
+            rehearse_start(binary=self.stub(bind_refused))
+        said = str(caught.exception)
+        self.assertIn("bind: operation not permitted", said)
+        self.assertNotIn("level=WARN", said)
+        # It has to say what clears it, or a person cannot act on it.
+        self.assertIn("unix socket", said)
+
+    def test_a_rehearsal_that_never_answers_is_refused_rather_than_waited_on(self) -> None:
+        """The other spelling: in the machine's own home the bind was observed to sit
+        silent for two minutes rather than fail, which a bound turns into a refusal."""
+        with patch("cairn.workflow.gate.GATE_TIMEOUT", 1), self.assertRaises(
+            EngineUnavailable
+        ) as caught:
+            rehearse_start(binary=self.stub("sleep 30"))
+        self.assertIn("did not take", str(caught.exception))
+
+    def test_a_rehearsal_never_names_the_machines_own_engine_home(self) -> None:
+        """An engine home the binary has never seen is created carrying an active retry
+        policy that re-executes paid work ([09]), so reading whether the engine works must
+        never be the thing that arms it."""
+        recorder = self.root / "argv"
+        with self.assertRaises(EngineUnavailable):
+            rehearse_start(
+                binary=self.stub(f'printf "%s\\n" "$@" > {recorder}\nexit 1')
+            )
+        argv = recorder.read_text(encoding="utf-8").splitlines()
+        self.assertIn("--dagu-home", argv)
+        home = Path(argv[argv.index("--dagu-home") + 1])
+        self.assertFalse(home.exists(), "the scratch home outlived the rehearsal")
+        self.assertNotEqual(home, Path(os.environ.get("DAGU_HOME", "")))
 
     def test_the_pin_is_the_version_the_generator_was_measured_against(self) -> None:
         self.assertEqual(ENGINE_VERSION, "2.11.0")

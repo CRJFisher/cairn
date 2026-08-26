@@ -31,7 +31,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import redirect_stderr, redirect_stdout
 from itertools import combinations
 from pathlib import Path
@@ -71,6 +71,7 @@ from cairn.skill.vocabulary import (
     CONSENT_GATED,
     CONSENT_OUTCOMES,
     COST_BY_READING,
+    COST_BY_ROLE,
     COST_SENTENCES,
     DOCUMENT_BY_CAPABILITY,
     FAMILY_HARMLESS_CHOICE,
@@ -91,7 +92,7 @@ from cairn.skill.vocabulary import (
     VERB_RECOUNTING,
     WRITES_NOTHING,
 )
-from cairn.topology import worktrees_parent
+from cairn.topology import ROLES, worktrees_parent
 from cairn.verify import EXCLUSION_CAUSES
 from cairn.workflow.schema import PARENT_BRANCH_PARAM, REPOSITORY_PARAM
 from cairn.workflow.stamp import workflow_path
@@ -105,7 +106,8 @@ CORPUS = json.loads(
     (PACKAGE_ROOT / "fixtures" / "invocations" / "cases.json").read_text(encoding="utf-8")
 )
 CASES = cast(list[dict[str, Any]], CORPUS["cases"])
-GOLDEN_WORKFLOW = PACKAGE_ROOT / "fixtures" / "workflows" / "mixed-kinds.yaml"
+WORKFLOWS = PACKAGE_ROOT / "fixtures" / "workflows"
+GOLDEN_WORKFLOW = WORKFLOWS / "mixed-kinds.yaml"
 
 CAPABILITY_DOCUMENTS = tuple(sorted(set(DOCUMENT_BY_CAPABILITY.values())))
 
@@ -549,16 +551,55 @@ class TheConsentRuleIsStatedOnce(unittest.TestCase):
         """Task 5. A cost typed into prose is a cost that goes stale silently, so the only
         statement of it is built from the file that is about to run."""
         self.assertEqual(set(COST_SENTENCES), set(RUN_COST_FACTS))
+        self.assertLessEqual(set(COST_BY_ROLE), set(RUN_COST_FACTS))
+        self.assertLessEqual(set(COST_BY_ROLE.values()), set(ROLES))
         stated = consent.disclosure(GOLDEN_WORKFLOW)
-        self.assertEqual(len(stated), len(RUN_COST_FACTS))
         for sentence in stated:
             with self.subTest(sentence=sentence):
                 self.assertNotIn("{", sentence)
         joined = " ".join(stated)
         self.assertIn("/srv/work/product", joined)
-        self.assertIn(str(worktrees_parent(Path("/srv/work/product"))), joined)
         self.assertIn("run lock", joined)
         self.assertIn("commits", joined)
+
+    def test_a_chain_is_priced_for_no_worktrees_and_no_merge(self) -> None:
+        """A wave holding one step runs in the repository itself ([07]), so a chain creates
+        no worktree and lands no merge — and a price for what a definition cannot do is a
+        price nobody agreed to."""
+        chain = " ".join(consent.disclosure(WORKFLOWS / "mixed-kinds.yaml"))
+        self.assertNotIn(str(worktrees_parent(Path("/srv/work/product"))), chain)
+        self.assertNotIn("it merges", chain)
+        # The facts that are every run's are still all there, the branch among them.
+        self.assertIn("run lock", chain)
+        self.assertIn("lands on main", chain)
+        self.assertIn("unix socket", chain)
+
+    def test_a_fan_out_is_priced_for_both(self) -> None:
+        """Paired with the chain, this is what proves the price reads the file."""
+        wide = consent.disclosure(WORKFLOWS / "fan-out.yaml")
+        self.assertEqual(len(wide), len(RUN_COST_FACTS))
+        joined = " ".join(wide)
+        self.assertIn(str(worktrees_parent(Path("/srv/work/product"))), joined)
+        self.assertIn("it merges", joined)
+
+    def test_every_priced_fact_is_the_vocabularys_and_keeps_its_order(self) -> None:
+        for name in ("linear-chain", "mixed-kinds", "single-step", "fan-out", "multi-wave"):
+            with self.subTest(workflow=name):
+                stated = consent.disclosure(WORKFLOWS / f"{name}.yaml")
+                every = [COST_SENTENCES[fact] for fact in RUN_COST_FACTS]
+                position = -1
+                for sentence in stated:
+                    template = next(
+                        line for line in every if line.split("{")[0] in sentence
+                    )
+                    self.assertGreater(every.index(template), position)
+                    position = every.index(template)
+
+    def test_the_price_names_the_socket_every_run_opens(self) -> None:
+        """A cause a person can clear before saying yes, and one that costs the yes after."""
+        joined = " ".join(consent.disclosure(GOLDEN_WORKFLOW))
+        self.assertIn("unix socket", joined)
+        self.assertIn("bind", joined)
 
     def test_the_disclosure_states_the_ceiling_the_model_and_the_timeout(self) -> None:
         """17.3 task 4: the three bounds the definition writes are three of the facts a
@@ -841,6 +882,7 @@ class NoInvocationStartsARunWithoutAQualifyingYes(unittest.TestCase):
             return
         with (
             patch("cairn.skill.trigger.assert_pinned"),
+            patch("cairn.skill.trigger.rehearse_start"),
             patch("subprocess.run", side_effect=AssertionError("started a process")),
             patch("subprocess.Popen", side_effect=AssertionError("started a process")),
         ):
@@ -938,6 +980,55 @@ class NoInvocationStartsARunWithoutAQualifyingYes(unittest.TestCase):
         second = self._offer()
         self._start(second.offer_id, "yes, go ahead")
         self.assertEqual(len(self.launched), 2)
+
+    def test_the_pre_spend_check_rehearses_a_run_as_well_as_reading_the_version(self) -> None:
+        """`dagu validate` and `dagu dry` never bind a socket, so a workflow authors cleanly
+        in a shell that cannot run it. Only actually starting a run finds that out, and it
+        has to be found out before the offer is spent."""
+        order: list[str] = []
+
+        def note(what: str) -> Callable[..., None]:
+            def recorded(*_args: object, **_keywords: object) -> None:
+                order.append(what)
+
+            return recorded
+
+        with (
+            patch("cairn.skill.trigger.assert_pinned", side_effect=note("pinned")),
+            patch("cairn.skill.trigger.rehearse_start", side_effect=note("rehearsed")),
+        ):
+            trigger.refuse_unusable_engine()
+        # The cheaper question first, so a machine with no engine at all is refused by it
+        # and the rehearsal is never reached with nothing to rehearse against.
+        self.assertEqual(order, ["pinned", "rehearsed"])
+
+    def test_a_shell_that_cannot_bind_the_run_socket_costs_nobody_their_yes(self) -> None:
+        """The refusal that used to arrive inside the run, where it had already cost the
+        acceptance — now it arrives before the offer is spent ([19 C])."""
+        made = self._offer()
+        with patch(
+            "cairn.skill.cli.refuse_unusable_engine",
+            side_effect=EngineUnavailable(
+                "failed to start the unix socket server: listen unix "
+                "/tmp/@dagu__x.sock: bind: operation not permitted"
+            ),
+        ):
+            refused = run_main(
+                [
+                    "start",
+                    "--repository",
+                    str(self.repository),
+                    "--offer",
+                    made.offer_id,
+                    "--reply",
+                    "yes, go ahead",
+                ]
+            )
+        self.assertEqual(refused, 1)
+        self.assertIsNone(consent.acceptance_of(self.repository, made.offer_id))
+        # And the same offer still buys exactly one run once the cause is cleared.
+        self._start(made.offer_id, "yes, go ahead")
+        self.assertEqual(len(self.launched), 1)
 
     def test_a_refusal_that_started_nothing_leaves_the_acceptance_standing(self) -> None:
         """An engine the run could not have used is a cause a person can clear, so it must
@@ -1514,6 +1605,7 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
     def _start(self, offer_id: str, reply: str) -> tuple[int, str]:
         with (
             patch("cairn.skill.trigger.assert_pinned"),
+            patch("cairn.skill.trigger.rehearse_start"),
             patch(
                 "cairn.skill.trigger.subprocess.call",
                 side_effect=self._record,
@@ -1550,7 +1642,7 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
 
     def test_an_offer_prices_the_branch_the_run_will_land_on(self) -> None:
         _, spoken = self._offer("--parent-branch", "release")
-        self.assertIn("merged into release", spoken)
+        self.assertIn("lands on release", spoken)
         offered = consent.read_offer(self.repository, self._minted(spoken))
         self.assertIsNotNone(offered)
         self.assertEqual(cast(consent.Offer, offered).parent_branch, "release")
@@ -1570,6 +1662,7 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
         _, spoken = self._offer()
         with (
             patch("cairn.skill.trigger.assert_pinned"),
+            patch("cairn.skill.trigger.rehearse_start"),
             patch("cairn.skill.trigger.subprocess.call", return_value=1),
         ):
             code, said = self._said(
