@@ -99,7 +99,7 @@ The gate reads two things and opens only when both agree:
 | _(unverified)_ | `done` or `noop`      | opens    | —                        | —                                        |
 
 A report can carry `failed` **and** `cause: provider_protocol`; the cause is the narrower
-fact, so that row is judged before the plain `failed` row above it.
+fact, so that row is judged before the plain `failed` rows below it.
 
 **Every fault closes it.** This is the exact inverse of the marker gate, which opens on every
 fault it meets. Both are the safe direction, and the asymmetry is the design: redoing

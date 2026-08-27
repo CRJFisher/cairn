@@ -970,10 +970,9 @@ class NoInvocationStartsARunWithoutAQualifyingYes(unittest.TestCase):
             patch("subprocess.run", side_effect=AssertionError("started a process")),
             patch("subprocess.Popen", side_effect=AssertionError("started a process")),
         ):
+            where = trigger.address(granted, run_id, self.repository / "runs")
             trigger.start(
-                granted,
-                run_id,
-                runs_root=self.repository / "runs",
+                where,
                 records=self.repository / "records",
                 popen_factory=self._factory,
                 registered=lambda _identity: True,

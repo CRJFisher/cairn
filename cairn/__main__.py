@@ -346,12 +346,13 @@ def _parser(*, add_help: bool = True) -> argparse.ArgumentParser:
         description=__doc__,
         add_help=add_help,
         epilog=(
-            "Eleven more commands are dispatched before these and take no step identity: "
+            "Twelve more commands are dispatched before these and take no step identity: "
             "`cairn plan`, `cairn occasion new`, `cairn marker absent`, "
             "`cairn verify gate`, `cairn supervise`, `cairn schedule`, "
-            "`cairn workflow`, `cairn record`, `cairn report`, `cairn run` and "
-            "`cairn explain`. Each has its own --help. None of them is the surface: "
-            "type `/cairn` and say what you want, and the skill runs these for you."
+            "`cairn workflow`, `cairn record`, `cairn report`, `cairn run`, "
+            "`cairn explain` and `cairn hook stop`. Each has its own --help. None of them "
+            "is the surface: type `/cairn` and say what you want, and the skill runs "
+            "these for you."
         ),
     )
     subcommands = parser.add_subparsers(dest="command_name", required=True)

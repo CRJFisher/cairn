@@ -90,10 +90,11 @@ a run is an ordinary start carrying the occasion it continues. Never `dagu retry
 ## Refusals, and which of them cost the acceptance
 
 **Before the offer is spent**, and so leaving the yes standing: a malformed run id, an engine
-that is not the pinned version, **a shell the engine cannot start a run from**, a reply that
-acknowledges or declines rather than accepts, an id naming no offer, an offer already spent,
-a damaged offer, and a definition that changed since it was priced. Clear the cause and
-answer once — the same acceptance is still good.
+that is not the pinned version, **a shell the engine cannot start a run from**, an engine
+that cannot say where it keeps its run history, a reply that acknowledges or declines rather
+than accepts, an id naming no offer, an offer already spent, a damaged offer, and a
+definition that changed since it was priced. Clear the cause and answer once — the same
+acceptance is still good.
 
 ### The shell has to be allowed to bind a unix socket
 

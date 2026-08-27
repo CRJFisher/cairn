@@ -147,15 +147,26 @@ def _readable(workflow: Path) -> Any:
         ) from unreadable
 
 
-def _bodies(document: Any) -> list[str]:
+def _step_list(document: Any) -> list[Any] | None:
+    """This definition's own `steps` list, or `None` where it does not have one.
+
+    The one guard every reader of a definition's steps needs before it can begin walking
+    them, factored out so `_bodies`, `node_roles` and `longest_timeout` share the same
+    answer to "is there anything here to read" instead of three copies that could drift.
+    """
     if not isinstance(document, dict):
-        return []
+        return None
     steps = cast(dict[str, Any], document).get("steps")
-    if not isinstance(steps, list):
+    return cast(list[Any], steps) if isinstance(steps, list) else None
+
+
+def _bodies(document: Any) -> list[str]:
+    steps = _step_list(document)
+    if steps is None:
         return []
     return [
         body
-        for step in cast(list[Any], steps)
+        for step in steps
         if isinstance(step, dict) and isinstance(body := cast(dict[str, Any], step).get("run"), str)
     ]
 
@@ -225,13 +236,11 @@ def node_roles(document: Any) -> tuple[frozenset[str], bool]:
     person was never given.
     """
     found: set[str] = set()
-    if not isinstance(document, dict):
-        return frozenset(), False
-    steps = cast(dict[str, Any], document).get("steps")
-    if not isinstance(steps, list):
+    steps = _step_list(document)
+    if steps is None:
         return frozenset(), False
     every_name_parsed = True
-    for step in cast(list[Any], steps):
+    for step in steps:
         if not isinstance(step, dict):
             every_name_parsed = False
             continue
@@ -248,14 +257,12 @@ def node_roles(document: Any) -> tuple[frozenset[str], bool]:
 
 def longest_timeout(document: Any) -> int:
     """The largest per-attempt bound any step in this definition runs under."""
-    if not isinstance(document, dict):
-        return 0
-    steps = cast(dict[str, Any], document).get("steps")
-    if not isinstance(steps, list):
+    steps = _step_list(document)
+    if steps is None:
         return 0
     timeouts = [
         timeout
-        for step in cast(list[Any], steps)
+        for step in steps
         if isinstance(step, dict)
         and isinstance(timeout := cast(dict[str, Any], step).get("timeout_sec"), int)
         and not isinstance(timeout, bool)

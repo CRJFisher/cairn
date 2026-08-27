@@ -26,19 +26,28 @@ from pathlib import Path
 from typing import Any
 
 from cairn.baseconfig import BASE_CONFIG_NAME, ensure_dag_retry_disabled
+from cairn.emitters import retry_policy
 from cairn.enginehome import ENGINE_BINARY
+from cairn.plan.schema import RETRY_INTERVAL
 from cairn.workflow.preflight import Fault
 from cairn.workflow.schema import ENGINE_VERSION, WORKFLOW_SUFFIX
 
 GATE_TIMEOUT = 120
+
+# `dagu version` prints a fixed string and does no work, unlike `validate`/`dry`, which
+# parse a real file and can legitimately need the full `GATE_TIMEOUT`. `assert_pinned` runs
+# immediately before `rehearse_start` in `refuse_unusable_engine`'s pre-spend check, so the
+# two share one harness-tool-call budget — a version check bounded at `GATE_TIMEOUT` could
+# by itself consume the two minutes `REHEARSAL_TIMEOUT` below was tuned to leave room under.
+VERSION_TIMEOUT = 10
 
 # The rehearsal's own bound, and it is deliberately not `GATE_TIMEOUT`. This check exists so
 # a person driving Cairn through an agent harness learns their shell cannot start a run
 # *before* the harness's own tool call is killed — and that call is two minutes. A rehearsal
 # bounded at two minutes would be killed at the same moment its refusal printed, leaving
 # exactly the silence it was written to replace ([19 C]). Measured at 0.25s against a
-# working engine, so twenty seconds is thirty times the observed cost and a sixth of the
-# budget the caller has.
+# working engine, so twenty seconds is thirty times the observed cost and, together with
+# `VERSION_TIMEOUT` ahead of it, well inside the budget the caller has.
 REHEARSAL_TIMEOUT = 20
 
 # The engine writes its own structured log to stderr before it writes its findings, and the
@@ -91,7 +100,7 @@ def engine_version(binary: str | None = None) -> str:
             (engine_path(binary), "version"),
             capture_output=True,
             text=True,
-            timeout=GATE_TIMEOUT,
+            timeout=VERSION_TIMEOUT,
             check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:
@@ -146,7 +155,7 @@ REHEARSAL_DAG: dict[str, Any] = {
             "name": "probe",
             "run": "true",
             "timeout_sec": 30,
-            "retry_policy": {"limit": 0, "interval_sec": 1},
+            "retry_policy": retry_policy(0, RETRY_INTERVAL),
         }
     ],
 }

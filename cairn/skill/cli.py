@@ -176,13 +176,7 @@ def _cmd_start(args: argparse.Namespace) -> int:
     print(f"watch    {where.view}")
     print(f"read     python3 -m cairn report --run {where.run_id} --repository {repository}")
 
-    started = start(
-        granted,
-        run_id,
-        runs_root=runs_root(repository),
-        records=records,
-        wait=bool(args.wait),
-    )
+    started = start(where, records=records, wait=bool(args.wait))
     if not started.taken_on:
         if started.exit_code is None:
             # Neither registered nor exited. The engine may still take it on, so this is a

@@ -193,10 +193,8 @@ def launch_detached(command: tuple[str, ...], log: Path, factory: PopenFactory) 
 
 
 def start(
-    authorisation: Authorisation,
-    run_id: str,
+    where: Address,
     *,
-    runs_root: Path,
     records: Path,
     wait: bool = False,
     popen_factory: PopenFactory | None = None,
@@ -204,7 +202,12 @@ def start(
     monotonic: Callable[[], float] = time.monotonic,
     sleeper: Callable[[float], None] = time.sleep,
 ) -> Started:
-    """Begin the run this authorisation bought, and return once the engine has it.
+    """Begin the run this address names, and return once the engine has it.
+
+    Takes the `Address` itself, composed once by the caller from an `Authorisation`, rather
+    than the `Authorisation` and `runs_root` it would be derived from again here — a caller
+    that already needs the address to print the run's identity before invoking the engine
+    ([19 B]) would otherwise be paying for the same derivation twice.
 
     **It returns when the engine has the run, not when the run ends.** The engine is
     launched detached and this waits only until the engine's own history says it took the
@@ -225,7 +228,6 @@ def start(
     `refuse_unusable_engine` — so a machine that cannot run the plan does not cost a person
     their acceptance.
     """
-    where = address(authorisation, run_id, runs_root)
     factory: PopenFactory = subprocess.Popen if popen_factory is None else popen_factory
     holds: RunRegistered = (
         (lambda identity: engine_holds(records, identity))
@@ -235,7 +237,7 @@ def start(
     process = launch_detached(where.command, where.log, factory)
     deadline = monotonic() + TAKEN_ON_TIMEOUT
     while True:
-        if holds(run_id):
+        if holds(where.run_id):
             # The engine has the run. Under `--wait` the caller asked for the status in
             # line and gets it; otherwise the process is left to outlive this one.
             return Started(
@@ -248,7 +250,7 @@ def start(
             # Asked once more after the exit: a run short enough to finish between the two
             # checks did register, and reporting it as never taken on would refuse a run
             # that actually happened.
-            return Started(address=where, taken_on=holds(run_id), exit_code=exited)
+            return Started(address=where, taken_on=holds(where.run_id), exit_code=exited)
         if monotonic() >= deadline:
             # Neither taken on nor exited. The child is deliberately **not** killed: it may
             # be a moment from registering, and killing a run the offer has already paid
@@ -262,7 +264,7 @@ def start(
             if not wait:
                 return Started(address=where, taken_on=False, exit_code=None)
             waited = process.wait()
-            return Started(address=where, taken_on=holds(run_id), exit_code=waited)
+            return Started(address=where, taken_on=holds(where.run_id), exit_code=waited)
         sleeper(TAKEN_ON_INTERVAL)
 
 

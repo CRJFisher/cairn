@@ -157,7 +157,7 @@ def verify_handle(step_id: str) -> str:
     digest keeps the handle inside the bound without letting two steps share one.
     """
     name = verify_name(step_id)
-    if len(name) <= ENGINE_NAME_MAX_BYTES:
+    if len(name.encode("utf-8")) <= ENGINE_NAME_MAX_BYTES:
         return name
     return f"v_{hashlib.sha256(step_id.encode()).hexdigest()[:_DIGEST_LENGTH]}"
 

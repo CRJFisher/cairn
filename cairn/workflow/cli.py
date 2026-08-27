@@ -129,6 +129,14 @@ def _author(args: argparse.Namespace) -> int:
     pending = scratch / target.name
     try:
         pending.write_text(serialise(document), encoding="utf-8")
+        # `write_text` creates the file at a mode the process umask decides, unlike the
+        # `tempfile.mkstemp` this replaced (always 0600 regardless of umask) — and
+        # `os.replace` below carries whatever mode `pending` has straight into `target`,
+        # a file the codebase otherwise keeps at 0600 throughout (`locks.py`,
+        # `supervise.py`, `baseconfig.py`, and this same definition's own `.stamp.json`
+        # sidecar). Set explicitly so a permissive umask cannot publish a world-readable
+        # workflow definition.
+        pending.chmod(0o600)
         faults = preflight(_load(str(pending)))
         if not faults:
             faults = gate(pending, named=target)
@@ -143,7 +151,17 @@ def _author(args: argparse.Namespace) -> int:
         os.replace(stamp_path(pending), stamp_path(target))
         os.replace(pending, target)
     finally:
-        shutil.rmtree(scratch, ignore_errors=True)
+        # Never `ignore_errors=True`: that would also silence a real removal failure (a
+        # lock held on the just-written file, a permission or disk fault), leaving the
+        # scratch directory — which can still hold the gated candidate's bytes, on the
+        # refusal path above — behind forever with nothing to say so. Only "already gone"
+        # needs silencing, and rmtree's own walk already tolerates that.
+        try:
+            shutil.rmtree(scratch)
+        except FileNotFoundError:
+            pass
+        except OSError as leftover:
+            print(f"warning  {scratch} could not be removed: {leftover}", file=sys.stderr)
 
     print(divergence.summary)
     print(f"{target}")

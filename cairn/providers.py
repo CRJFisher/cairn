@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import shlex
 import subprocess
 import sys
@@ -25,6 +26,7 @@ from cairn.core import (
 )
 from cairn.hooks import HOOK_VERB, STOP_EVENT
 from cairn.protocol import RESUME_FOR_REPORT, STEP_REPORT_SCHEMA, compose_prompt
+from cairn.verify import PROVIDER_PROTOCOL
 
 PROMPT_WRITER_JOIN_SECONDS = 5.0
 PROVIDER_EXIT_GRACE_SECONDS = 30.0
@@ -363,11 +365,22 @@ RESUME_STILL_SILENT = "still_silent"
 
 
 def _as_float(value: object) -> float:
-    """A number the provider reported, or zero — never a raise over a malformed figure."""
+    """A number the provider reported, or zero — never a raise over a malformed figure.
+
+    `bool` is excluded even though it is an `int` subtype, and `NaN`/`inf` are excluded even
+    though `float()` accepts them without complaint — both would otherwise fold a malformed
+    provider figure into `both_costs`/`both_turns` as a plausible-looking number, masking the
+    protocol fault this rescue exists to surface rather than reporting it as the zero a
+    genuinely missing figure gets. `int(_as_float(...))` over an unfiltered `NaN` raises
+    `ValueError`, which is worse: it would escape as an unrelated crash rather than a cost.
+    """
+    if isinstance(value, bool):
+        return 0.0
     try:
-        return float(cast(float, value))
+        parsed = float(cast(float, value))
     except (TypeError, ValueError):
         return 0.0
+    return parsed if math.isfinite(parsed) else 0.0
 
 
 def _as_list(value: object) -> list[Any]:
@@ -475,6 +488,18 @@ def run_claude(
             except CairnError as unreachable:
                 # The first session's account is now the only one there is, and its cost is
                 # the number the record is read for.
+                #
+                # **The cause is forced to `provider_protocol`, whatever the resume attempt's
+                # own reason was.** The fact this whole branch answers is "the step's session
+                # gave no report" — a resume that never reaches the provider (a launch failure,
+                # a broken pipe) leaves that fact exactly as true as a resume that reports
+                # nothing. Left as `unreachable.cause`, a cause like `process_launch_failed`
+                # would fall past `judge()`'s `provider_protocol` branch into the plain
+                # `reported == "failed"` one, reproducing the false "reported failure over a
+                # passing assertion" divergence this rescue exists to prevent. The original
+                # cause survives in `detail` under `resumed_for_report`/the exception's own
+                # message, so nothing about why the resume failed is lost.
+                unreachable.cause = PROVIDER_PROTOCOL
                 unreachable.detail = {
                     **unreachable.detail,
                     **first_detail,

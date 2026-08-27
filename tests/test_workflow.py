@@ -954,6 +954,34 @@ class TheEngineVersionIsPinned(unittest.TestCase):
             assert_pinned(str(self.root / "absent"))
 
 
+class TheRehearsalDagLoadsOnARealEngine(unittest.TestCase):
+    """`REHEARSAL_DAG` is a hand-written literal, checked against nothing else Cairn writes.
+
+    Every test above drives `rehearse_start` against a *stub* `dagu`, which proves the
+    refusal wording is right but never proves the DAG itself is something a real engine will
+    actually take on — unlike `gate()`'s own mandatory-unless-skipped coverage
+    (`TheEngineGateRefusesAsWellAsPasses`). A schema drift here would silently misreport a
+    Cairn-side bug as a host that cannot bind a socket ([19 C]).
+    """
+
+    SKIP_ENV: ClassVar[str] = "CAIRN_SKIP_ENGINE_TESTS"
+
+    def setUp(self) -> None:
+        self.dagu = shutil.which("dagu")
+        if not self.dagu and not os.environ.get(self.SKIP_ENV):
+            self.fail(
+                "dagu is not installed, so the rehearsal's own DAG is unverified against a "
+                f"real engine. Install it, or set {self.SKIP_ENV}=1 to record that this run "
+                "did not check it."
+            )
+        if not self.dagu:
+            self.skipTest("recorded deliberately as unchecked")
+
+    def test_the_rehearsal_dag_actually_takes_on_a_run(self) -> None:
+        """The positive case the stubbed tests above cannot cover."""
+        rehearse_start()
+
+
 class TheEnvelopeIsTheOnlyStatementOfTheFormat(unittest.TestCase):
     def test_the_envelope_and_a_built_workflow_agree_on_every_machine_level_default(
         self,
