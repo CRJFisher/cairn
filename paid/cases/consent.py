@@ -6,9 +6,9 @@ the session's own `--reply` argument, so a session that hears "Ok, sounds good" 
 `--reply 'yes, run it'` has minted an authorisation nobody gave, and every offline assertion
 in the repository still passes. No offline case can reach that, and this one does.
 
-So the case opens by asking for a **workflow** rather than for a run. An unambiguous run
-instruction is itself the acceptance ([SKILL.md]), so an opening sentence that says "run it"
-collapses the offer and the start into one turn and leaves no separate yes to watch.
+So the case opens by asking for a **workflow** rather than for a run. The acknowledgement
+has to meet a session that has something it *could* run, and an opening sentence saying
+"run it" spends the turn that would have authored it on the authoring conversation.
 
 Three turns, because the procedure has three: the request, the confirmation of the parse
 report that authoring's own third step waits for, and then the acknowledgement. Without the
@@ -106,10 +106,9 @@ def authoring_cause(seen: Observed, *, definition: bool) -> str | None:
     """Authoring's end state is a definition on disk, and only that.
 
     Not an offer. Measured: a correct session authored and then said "shall I run it?"
-    without minting one, which [SKILL.md] permits — an unambiguous run instruction in the
-    next turn is itself the acceptance of the offer made in reply to it, so the offer and
-    the start may be one turn. Requiring an offer here would have reddened the case for
-    behaviour the rules allow.
+    without minting one, which is where [capabilities/authoring.md] stops — the offer belongs
+    to the turn that asks about the run. Requiring one here would have reddened the case for
+    behaviour the procedure requires.
     """
     if seen.subtype is None:
         return CAUSE_NOTHING_OBSERVED

@@ -68,8 +68,14 @@ from cairn.skill.vocabulary import (
     CAPABILITY_ORDER,
     CAPABILITY_RUN,
     CAPABILITY_SCHEDULE,
+    CONSENT_ASK_ANSWERS,
+    CONSENT_ASK_HEADER,
+    CONSENT_ASK_QUESTION,
     CONSENT_GATED,
+    CONSENT_NOTHING_YET,
     CONSENT_OUTCOMES,
+    CONSENT_RELAY_CLOSE,
+    CONSENT_RELAY_OPEN,
     COST_BY_READING,
     COST_BY_ROLE,
     COST_SENTENCES,
@@ -529,8 +535,8 @@ class TheConsentRuleIsStatedOnce(unittest.TestCase):
     """Exit criterion 3, as a search over every file that could restate it."""
 
     CLAUSES = (
-        "A qualifying yes",
-        "A bare acknowledgement is not one",
+        "The yes is the answer to a question you asked",
+        "A bare acknowledgement is not one, and neither is the request",
         "A yes that predates the offer is not one",
         "One acceptance authorises exactly one execution",
     )
@@ -548,6 +554,33 @@ class TheConsentRuleIsStatedOnce(unittest.TestCase):
             text = (CAPABILITIES / document).read_text(encoding="utf-8")
             with self.subTest(document=document):
                 self.assertIn("../SKILL.md", text)
+
+    def test_the_run_document_names_the_tool_and_both_answers_the_offer_prints(self) -> None:
+        """One spelling, shared by the code and the document a session reads.
+
+        The labels are composed by `run offer` so that a session retypes nothing; a document
+        naming different ones would put the printed question and the asked question out of
+        step, and the person would be the only one to notice.
+        """
+        text = (CAPABILITIES / "running.md").read_text(encoding="utf-8")
+        self.assertIn("AskUserQuestion", text)
+        for label in CONSENT_ASK_ANSWERS:
+            with self.subTest(label=label):
+                self.assertIn(label, text)
+
+    def test_the_run_document_claims_no_refusal_the_ledger_does_not_make(self) -> None:
+        """`spend` asks one thing of a reply — whether there is anything in it — so a
+        document promising that a start turns away an acknowledgement or a decline describes
+        a gate that does not exist, and describes it exactly where a session is deciding how
+        much care to take. The rule binding that judgement is the session's, and claiming the
+        code keeps it is how it stops being kept."""
+        text = (CAPABILITIES / "running.md").read_text(encoding="utf-8")
+        for absent in (
+            "refuses a bare acknowledgement",
+            "a reply that acknowledges or declines",
+        ):
+            with self.subTest(absent=absent):
+                self.assertNotIn(absent, text)
 
     def test_the_run_cost_is_composed_from_the_definition_rather_than_retyped(self) -> None:
         """Task 5. A cost typed into prose is a cost that goes stale silently, so the only
@@ -692,7 +725,7 @@ class WhatAcceptsAnOfferAndWhatDoesNot(unittest.TestCase):
         )
         return made
 
-    def test_a_qualifying_yes_authorises_one_execution(self) -> None:
+    def test_an_answered_offer_authorises_one_execution(self) -> None:
         made = self._offer()
         granted = consent.spend(self.repository, made.offer_id, reply="yes, go ahead", run_id=RUN_ID)
         self.assertIsInstance(granted, consent.Authorisation)
@@ -924,7 +957,7 @@ class FakeEngine:
         raise AssertionError("a detached engine is never killed by the start")
 
 
-class NoInvocationStartsARunWithoutAQualifyingYes(unittest.TestCase):
+class NoInvocationStartsARunWithoutAnAnsweredOffer(unittest.TestCase):
     """Doc 15 task 11, as a hard gate: every assertion here is an equality over every case,
     and the last test in the class is what keeps anything softer from creeping in."""
 
@@ -1008,7 +1041,7 @@ class NoInvocationStartsARunWithoutAQualifyingYes(unittest.TestCase):
                     holders.add(path.name)
         self.assertEqual(holders, {"consent.py"})
 
-    def test_every_qualifying_yes_starts_exactly_one_run_and_nothing_else_starts_any(
+    def test_every_answered_offer_starts_exactly_one_run_and_nothing_else_starts_any(
         self,
     ) -> None:
         """Over the replies the ledger is answerable for, which is every one whose outcome is
@@ -1169,7 +1202,7 @@ class NoInvocationStartsARunWithoutAQualifyingYes(unittest.TestCase):
         """A gate that grew a tolerance would have to say so out loud, and here is where it
         would be caught. Every assertion above is an equality over every case."""
         source = Path(__file__).read_text(encoding="utf-8")
-        body = source[source.index("class NoInvocationStartsARunWithoutAQualifyingYes") :]
+        body = source[source.index("class NoInvocationStartsARunWithoutAnAnsweredOffer") :]
         body = body[: body.index("\n    def test_this_gate_holds_no_threshold")]
         for smell in (
             "assertGreater",
@@ -1782,8 +1815,71 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
         self.assertEqual(code, 0)
         for line in consent.disclosure(self.workflow):
             self.assertIn(line, spoken)
-        self.assertIn("only if you say so", spoken)
+        self.assertIn(CONSENT_NOTHING_YET, spoken)
         self.assertTrue(consent.read_offer(self.repository, self._minted(spoken)))
+
+    def _zones(self, spoken: str) -> tuple[str, str]:
+        """What the person hears, and what is the session's alone.
+
+        The split every test below reads, taken from the markers rather than from line
+        numbers, so a line added to either zone does not quietly move the boundary.
+        """
+        self.assertEqual(spoken.count(CONSENT_RELAY_OPEN), 1)
+        self.assertEqual(spoken.count(CONSENT_RELAY_CLOSE), 1)
+        opened = spoken.index(CONSENT_RELAY_OPEN)
+        closed = spoken.index(CONSENT_RELAY_CLOSE)
+        self.assertLess(opened, closed)
+        return spoken[opened + len(CONSENT_RELAY_OPEN) : closed], spoken[closed:]
+
+    def test_the_block_a_person_hears_carries_the_whole_price(self) -> None:
+        """Said verbatim by a session, so every priced fact has to be inside it."""
+        _, spoken = self._offer()
+        relayed, _ = self._zones(spoken)
+        for line in consent.disclosure(self.workflow):
+            self.assertIn(line, relayed)
+        self.assertIn(CONSENT_NOTHING_YET, relayed)
+
+    def test_the_offer_id_falls_outside_the_block_a_person_hears(self) -> None:
+        """The whole reason the markers exist. Step 5 tells a session to say that block
+        verbatim, so an id inside it would reach the person however carefully the session
+        followed the document — and this is what makes "they never see one" structural
+        rather than a rule nobody can check."""
+        _, spoken = self._offer()
+        relayed, withheld = self._zones(spoken)
+        offer_id = self._minted(spoken)
+        self.assertNotIn(offer_id, relayed)
+        self.assertIn(offer_id, withheld)
+
+    def test_the_question_and_both_answers_are_the_sessions_alone(self) -> None:
+        _, spoken = self._offer()
+        relayed, withheld = self._zones(spoken)
+        offered = cast(
+            consent.Offer, consent.read_offer(self.repository, self._minted(spoken))
+        )
+        question = CONSENT_ASK_QUESTION.format(
+            plan=offered.plan, repository=offered.repository
+        )
+        self.assertTrue(question.endswith("?"))
+        self.assertLessEqual(len(CONSENT_ASK_HEADER), 12)
+        self.assertEqual(len(CONSENT_ASK_ANSWERS), 2)
+        for composed in (question, CONSENT_ASK_HEADER, *CONSENT_ASK_ANSWERS):
+            with self.subTest(composed=composed):
+                self.assertIn(composed, withheld)
+                self.assertNotIn(composed, relayed)
+
+    def test_the_start_line_the_offer_hands_back_runs_as_printed(self) -> None:
+        """Composed rather than assembled from three printed values, for the reason the
+        price is composed: the id is the one argument a session cannot get wrong cheaply."""
+        _, spoken = self._offer()
+        _, withheld = self._zones(spoken)
+        offer_id = self._minted(spoken)
+        found = re.search(r"^start\s+(.+)$", withheld, re.MULTILINE)
+        self.assertIsNotNone(found)
+        line = cast(re.Match[str], found).group(1)
+        offered = cast(consent.Offer, consent.read_offer(self.repository, offer_id))
+        self.assertIn(f"--offer {offer_id}", line)
+        self.assertIn(f"--repository {offered.repository}", line)
+        self.assertIn("--reply", line)
 
     def test_an_offer_prices_the_branch_the_run_will_land_on(self) -> None:
         _, spoken = self._offer("--parent-branch", "release")
@@ -1792,7 +1888,7 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
         self.assertIsNotNone(offered)
         self.assertEqual(cast(consent.Offer, offered).parent_branch, "release")
 
-    def test_a_qualifying_yes_starts_the_run_the_offer_priced(self) -> None:
+    def test_an_answered_offer_starts_the_run_it_priced(self) -> None:
         _, spoken = self._offer("--parent-branch", "release")
         offer_id = self._minted(spoken)
         code, started = self._start(offer_id, "yes, go ahead")

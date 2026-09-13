@@ -606,8 +606,9 @@
       "id": "consent-an-imperative-yes",
       "family": "consent",
       "reply": "run it",
+      "judged_by": "session",
       "expect": {"outcome": "accepted"},
-      "why": "an unambiguous instruction is itself the acceptance of the offer made in reply to it"
+      "why": "the same words can be the request that prompted the offer or an answer typed in place of a click, and which one they were is not a fact about the string — so the ledger spends and only the session that put the question can tell"
     },
     {
       "id": "consent-ok",
@@ -723,8 +724,9 @@
       "id": "consent-the-instruction-itself",
       "family": "consent",
       "reply": "run offline-export against /Users/me/src/product",
+      "judged_by": "session",
       "expect": {"outcome": "accepted"},
-      "why": "an unambiguous run instruction is the acceptance of the offer made in reply to it, so the words that accept are the instruction's own"
+      "why": "an offer is what replies to a request, so the request can never be the answer to the offer's own question — the ledger spends on it and SKILL.md is what forbids passing it"
     },
     {
       "id": "consent-an-instruction-carrying-its-own-yes",
@@ -741,6 +743,21 @@
       "offer": "absent",
       "expect": {"outcome": "no_such_offer"},
       "why": "a yes that predates the offer cannot quote an id that did not exist when it was given"
+    },
+    {
+      "id": "consent-the-affirmative-answer",
+      "family": "consent",
+      "reply": "Yes, run it",
+      "expect": {"outcome": "accepted"},
+      "why": "the label the offer itself printed, coming back as the answer to the question it was printed for — the ordinary path, and the only reply in this family that is nobody's to second-guess"
+    },
+    {
+      "id": "consent-the-declining-answer",
+      "family": "consent",
+      "reply": "No, not now",
+      "judged_by": "session",
+      "expect": {"outcome": "accepted"},
+      "why": "the other label the offer printed, and the sharpest member of this list: a string the session is handed by the tool it asked with, which buys a run if it passes it on"
     },
     {
       "id": "consent-a-damaged-ledger",

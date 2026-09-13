@@ -32,28 +32,42 @@
    definition does and whether it is still the file Cairn wrote, and starts nothing.
 
 5. **Offer it.** `python3 -m cairn run offer --plan <slug> --repository <path> --trigger
-<shape>`. It prints the price, the occasion reading it is taking and what the other reading
-   would have cost, and one offer id. **Print what it printed.** Do not summarise the cost
-   and do not compose your own — and do not expect a fixed list of facts, because the price
-   is composed from the definition's own topology. Every run states its paid sessions with
-   their ceilings, models and timeouts, the working tree, the run lock, the commits, and the
-   unix socket the starting shell must be allowed to bind; the worktrees and the merge are
-   stated only by a definition that has them, so a chain-shaped plan prices neither.
+<shape>`. It prints two blocks. **Say everything between the two markers, verbatim** — the
+   price, the occasion reading it is taking and what the other reading would have cost. Do
+   not summarise the cost and do not compose your own — and do not expect a fixed list of
+   facts, because the price is composed from the definition's own topology. Every run states
+   its paid sessions with their ceilings, models and timeouts, the working tree, the run
+   lock, the commits, and the unix socket the starting shell must be allowed to bind; the
+   worktrees and the merge are stated only by a definition that has them, so a chain-shaped
+   plan prices neither.
+
+   **Below the closing marker is yours and is never said aloud**: the offer id, the question
+   to put, its header, the two answers, and the start line. A person answers a question about
+   a run and never handles the token authorising it. The **run** id is the opposite — step 7
+   prints it and it is theirs, the durable name for watching, reporting and recovering.
 
    The branch comes from the definition, which already declares one, and that is the branch
    priced. Pass `--parent-branch <name>` only where the request asked for a different one;
    then that branch is what is priced and what the run will use. There is no way to change it
    afterwards, which is the point.
 
-6. **Wait for a qualifying yes** ([../SKILL.md](../SKILL.md)) — unless the request was
-   itself an unambiguous run instruction, in which case it already is one and the offer and
-   the start are the same turn. Either way:
-   `python3 -m cairn run start --repository <path> --offer <offer-id> --reply '<their words,
-verbatim>'`. The run id is minted for you; pass `--run-id` only to choose one. It refuses
-   a bare acknowledgement, a reply that declines, an id that names no offer, an offer already
-   spent, a definition that changed since it was priced, and a working tree with uncommitted
-   work or an unresolved merge in it — and every one of those refusals happens before the
-   offer is spent, so the acceptance still stands.
+6. **Ask, and start on the answer.** Put the run to the person with the ask tool
+   (`AskUserQuestion`), using what the offer printed below the marker: the question, the
+   header, and exactly two options labelled `Yes, run it` and `No, not now`, each with a
+   one-line description. The price goes in neither — it is a paragraph and a question is a
+   sentence, which is why step 5 said it aloud first — and nor does the offer id. Their click
+   is the answer; where they type in the box instead, their words are; an unanswered question
+   is no answer ([../SKILL.md](../SKILL.md)). **Where the harness has no such tool**, put the
+   same question in words and let the next turn answer it. What must never happen is a run
+   nobody was asked about.
+
+   Then: `python3 -m cairn run start --repository <path> --offer <offer-id> --reply '<their
+answer, verbatim>'`. The run id is minted for you; pass `--run-id` only to choose one.
+   **It does not read the reply for meaning** — whatever you pass is taken as the words of
+   someone who said yes. It refuses a reply with no words in it at all, an id that names no
+   offer, an offer already spent, a definition that changed since it was priced, and a
+   working tree with uncommitted work or an unresolved merge in it — and every one of those
+   refusals happens before the offer is spent, so the acceptance still stands.
 
 7. **Hand over the address.** The command prints four lines — the run id, the branch, where
    the run can be watched, and the command that reads its record — and it prints them
@@ -94,9 +108,9 @@ a run is an ordinary start carrying the occasion it continues. Never `dagu retry
 that is not the pinned version, **a shell the engine cannot start a run from**, an engine
 that cannot say where it keeps its run history, **a working tree with uncommitted work in
 it, or a merge, rebase or cherry-pick left unresolved** — the refusal names the paths, and a
-person settles them — a reply that acknowledges or declines rather than accepts, an id
-naming no offer, an offer already spent, a damaged offer, and a definition that changed
-since it was priced. Clear the cause and answer once — the same acceptance is still good.
+person settles them — a reply with no words in it at all, an id naming no offer, an offer
+already spent, a damaged offer, and a definition that changed since it was priced. Clear
+the cause and answer once — the same acceptance is still good.
 
 ### The shell has to be allowed to bind a unix socket
 
@@ -106,7 +120,7 @@ driven through a coding-agent harness, because such harnesses sandbox their shel
 and the person may not know a socket is involved. It has **two spellings**:
 
 - the immediate refusal — `failed to start the unix socket server: listen unix …: bind:
-  operation not permitted`;
+operation not permitted`;
 - **silence** — the start sits with no status data and no log until something kills it.
 
 Neither is visible at authoring time: `dagu validate` and `dagu dry` never bind, so a

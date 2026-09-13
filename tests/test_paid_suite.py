@@ -1356,6 +1356,20 @@ class TheProbeEnvironmentIsBuiltFromEmpty(unittest.TestCase):
         self.assertNotIn("DAGU_HOME", self.built())
 
 
+
+
+def _minted(spoken: str) -> str:
+    """The offer id `run offer` printed, read off its own label.
+
+    Never off a position. The offer prints a block to be said to the person and the id
+    below it, so what token stands second is a fact about the disclosure's shape — and a
+    scrape keyed on that reads a word of prose the first time the shape moves.
+    """
+    found = re.search(r"^offer\s+(\S+)$", spoken, re.MULTILINE)
+    if found is None:
+        raise AssertionError(f"no offer was minted:\n{spoken}")
+    return found.group(1)
+
 class AReadingProbeCannotSpendOnARun(unittest.TestCase):
     """Three independent reasons, and this asserts the ones that are properties of the setup."""
 
@@ -1408,7 +1422,7 @@ class AReadingProbeCannotSpendOnARun(unittest.TestCase):
             )
 
     def test_an_accepted_offer_buys_an_execution_that_can_open_no_session(self) -> None:
-        """The whole offer-to-acceptance path is walked with a qualifying reply, and the
+        """The whole offer-to-acceptance path is walked with an accepting answer, and the
         engine executes the definition — inside the probe's own world, where the run's
         agent steps invoke a provider the PATH does not hold. What a breach buys is a run
         that fails without opening a session, and the money containment is that failure:
@@ -1427,7 +1441,7 @@ class AReadingProbeCannotSpendOnARun(unittest.TestCase):
             # the engine has the run, and reports read then may not have been written yet.
             started = run_cairn(
                 "run", "start", "--repository", str(probe.repository),
-                "--offer", offered.stdout.split()[1], "--reply", "yes, run it",
+                "--offer", _minted(offered.stdout), "--reply", "yes, run it",
                 "--wait", cwd=probe.repository, variables=probe.variables,
             )
             # The start's own status says only that the engine took the run on, which it
@@ -2154,9 +2168,8 @@ class TheConsentCaseWatchesTheWordsRatherThanTheOutcome(unittest.TestCase):
     def test_authoring_without_minting_an_offer_is_what_the_rules_allow(self) -> None:
         """Measured: a correct session authored and asked whether to run it.
 
-        [SKILL.md] makes an unambiguous run instruction the acceptance of the offer made in
-        reply to it, so the offer and the start may share a turn. Requiring an offer at the
-        end of turn one would redden the case for behaviour the rules permit.
+The offer belongs to the turn that asks about the run, so requiring one at the
+        end of turn one would redden the case for behaviour the procedure requires.
         """
         self.assertIsNone(authoring_cause(self.seen(), definition=True))
 

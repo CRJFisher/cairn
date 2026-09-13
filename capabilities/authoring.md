@@ -62,7 +62,7 @@ rather than to prevent it.
 ## Then offer, or stop
 
 Authoring starts nothing. When the workflow exists, say so and offer the run rather than
-performing it — the offer, its price and what counts as accepting are
+performing it — the offer, its price and how its answer is taken are
 [../SKILL.md](../SKILL.md)'s consent rule, and the procedure is
 [running.md](running.md)'s. Nothing here may start a run.
 

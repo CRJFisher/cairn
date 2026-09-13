@@ -74,17 +74,17 @@ silently, so an over-long step id is an error naming the arithmetic instead.
 The emitter reads a role-specific `detail` from every node, so the key set is as much a
 contract as the name is.
 
-| Role     | `detail` keys                     |
-| -------- | --------------------------------- |
-| `lock`   | `action`, `plan`                  |
-| `setup`  | `plan`, `branch`, `worktree`, `base` |
-| `work`   | `kind`                            |
+| Role     | `detail` keys                                                                       |
+| -------- | ----------------------------------------------------------------------------------- |
+| `lock`   | `action`, `plan`                                                                    |
+| `setup`  | `plan`, `branch`, `worktree`, `base`                                                |
+| `work`   | `kind`                                                                              |
 | `verify` | `command` for a step's assertion; `merge`, `candidates`, `into` for a merge's proof |
-| `mark`   | `verified`, `position`            |
-| `commit` | `branch`, `position`              |
-| `join`   | `branches`                        |
-| `merge`  | `slot`, `candidates`, `into`, `provider` |
-| `prune`  | `plan`, `steps`, `worktrees`, `branches`, `parent` |
+| `mark`   | `verified`, `position`                                                              |
+| `commit` | `branch`, `position`                                                                |
+| `join`   | `branches`                                                                          |
+| `merge`  | `slot`, `candidates`, `into`, `provider`                                            |
+| `prune`  | `plan`, `steps`, `worktrees`, `branches`, `parent`                                  |
 
 A `verify` node names a step when it runs that step's own assertion and names none when it
 proves a merge. Both answer "is what was claimed actually there"; only the first is a

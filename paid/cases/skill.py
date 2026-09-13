@@ -7,8 +7,9 @@ the conversation, and the sessions working inside the run that session started �
 bounded before the first turn.
 
 The opening sentence asks for a workflow rather than a run, for the reason
-[consent.py](consent.py) opens the same way: an unambiguous run instruction is itself the
-acceptance, so a case opening with "run it" has no separate yes to watch.
+[consent.py](consent.py) opens the same way: a case has to reach a definition on disk before
+there is anything to offer, and asking for the run first spends the opening turn on the
+authoring conversation instead.
 
 **Four turns, because the procedure waits twice.** Authoring's third step shows the parse
 report and *waits* — the author's confirmation is what makes the graph the plan's rather
@@ -16,7 +17,7 @@ than the derivation's — so a case that expected a definition after one turn re
 session following the rules. Its fourth step waits again: the plan's steps state their end
 states in English and assert nothing, so Cairn offers a command drawn from each step's own
 words and **the answer is the author's, never the session's**. Turn two confirms the report, turn
-three answers the offer, turn four is the qualifying yes, and what the case then proves is
+three answers the offer, turn four answers the run's own question, and what the case proves is
 that the words `run start` quoted are the person's own.
 
 **Authoring acceptance comes out of that third turn**, and the divergence rate out of the
@@ -45,10 +46,9 @@ procedure's order is carried on the line as a fact the argv shows. Whether the p
 price was relayed unsummarised is a claim about meaning, so it is a judge's verdict
 ([17.7]): a grader reads what the session said against the sentences `run offer` printed —
 both on the line, the evidence read from the repository's own offer records. It is judged
-on the acceptance unit, after the accepting turn, because an unambiguous run instruction
-lets the offer and the start share that turn and no committed draw had minted an offer
-before it. Neither field feeds a rate, because a pass/fail layer that failed on an
-assumption is a layer somebody switches off.
+on the acceptance unit, after the accepting turn, because the offer is minted in the turn
+that asks and no committed draw had minted one before it. Neither field feeds a rate,
+because a pass/fail layer that failed on an assumption is a layer somebody switches off.
 
 The steps' model is the plan's own pin: `emit_agent` writes it into each body, argv is what
 `providers.py` records, and those steps' lines name it — the schema default, since nothing
@@ -278,8 +278,8 @@ def authoring_cause(seen: Observed, *, definition: bool) -> str | None:
     """Authoring's own end state is a definition, and the offer is the next turn's.
 
     Measured: a correct session authored, said so, and asked whether to run it without
-    minting an offer — which [SKILL.md] permits, because an unambiguous run instruction in
-    reply is itself the acceptance of the offer made to it, and the two may share a turn.
+    minting an offer — which is where [capabilities/authoring.md] stops. The offer belongs to
+    the turn that asks about the run, so requiring one here reddens a correct session.
     """
     if seen.subtype is None:
         return CAUSE_NOTHING_OBSERVED
@@ -564,10 +564,9 @@ def run(harness: Harness) -> None:
         )
         started = runs_of(probe.repository)
         accepted = accepted_words(probe.repository)
-        # The relay is judged here rather than at authoring, because an unambiguous run
-        # instruction lets the offer and the start share the accepting turn — measured: no
-        # committed draw had minted an offer before it, so a field taken any earlier reads
-        # the session's vocabulary and calls it a relay.
+        # The relay is judged here rather than at authoring, because the offer is minted in
+        # the turn that asks — measured: no committed draw had minted one before it, so a
+        # field taken any earlier reads the session's vocabulary and calls it a relay.
         said = harness.scrub(
             assistant_text(
                 events(

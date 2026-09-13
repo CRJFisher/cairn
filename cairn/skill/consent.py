@@ -14,13 +14,17 @@ Every one of those is a property of a file on disk, which is why they are a gate
 the words mean yes is not in the table and cannot be**: the reply reaching `spend` is the
 session's own `--reply` argument, so the judgement has already happened upstream of anything
 here, and no comparison made here could see the case where it went wrong. Nothing in this
-module inspects the reply for meaning. `SKILL.md` states the fourth clause — a bare
-acknowledgement is not a yes — as a rule binding the session, which is where it can be kept.
+module inspects the reply for meaning. `SKILL.md` states the fourth clause — that a yes is
+what came back from a question the session put, rather than the request that prompted it or
+an acknowledgement of the answer — as a rule binding the session, which is where it can be
+kept. Nothing on disk distinguishes a label a person clicked from the same string a session
+typed unasked, so the asking is a rule and this ledger is the instrument.
 
-What none of this proves is that a person was ever asked. The ledger records the moment the
-offer was made, the moment it was spent, and the words it was spent with, so what authorised
-a run is answerable from the repository afterwards and a zero gap between the two moments is
-visible in the record rather than prevented — an honest instrument rather than a claim.
+What none of this proves is that a person was ever asked, or how. The ledger records the
+moment the offer was made, the moment it was spent, and the words it was spent with, so what
+authorised a run is answerable from the repository afterwards and a zero gap between the two
+moments is visible in the record rather than prevented — an honest instrument rather than a
+claim.
 """
 
 from __future__ import annotations

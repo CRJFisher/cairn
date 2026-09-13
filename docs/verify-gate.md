@@ -328,7 +328,7 @@ The routing rests on facts that source reading got wrong, so each is pinned by a
 | a node its own precondition skipped lets its dependents run only under `continue_on: {skipped: true}`, and `${<id>.exit_code}` resolves to `0` for it                          | the assertion node carries the flag, and the gate reads the reference only where the assertion's gate says it ran |
 | a step excluded with no failed node anywhere reports `Succeeded` with exit 0                                                                                                   | the failed assertion node is what keeps a run honest                                                              |
 | a step killed at its bound is a `failed` node whose error reads `step timed out after <elapsed> (timeout: <bound>): context deadline exceeded`, the durations in Go's spelling | the run record derives `timed_out`, the bound and the elapsed time from that sentence                             |
-| `DAG_RUN_STEP_NAME` carries a node's `name` even where it declares a different `id`                                                                                            | the assertion's gate writes its account under `verify_<step>`, which is where both readers of it look            |
+| `DAG_RUN_STEP_NAME` carries a node's `name` even where it declares a different `id`                                                                                            | the assertion's gate writes its account under `verify_<step>`, which is where both readers of it look             |
 
 An assertion runs under the interpreter named by the operator's `$SHELL`, with `pipefail` and
 `nounset` off. The last command of a pipeline is the assertion, and an assertion that already

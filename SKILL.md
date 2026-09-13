@@ -25,8 +25,8 @@ means, and why a step was excluded.
 ## Three rules above all others
 
 **A run is never a default and never an inference.** Executing a plan spends money and
-mutates a repository. It happens only on an unambiguous instruction or an accepted offer,
-and an ambiguous request is asked back rather than guessed.
+mutates a repository. It happens only on an offer whose price was stated and a yes given in
+answer to it, and an ambiguous request is asked back rather than guessed.
 
 **A scheduler is its own escalation.** A cron schedule and an external webhook both cost a
 running scheduler, whose retry scanner re-executes every failed run on this machine from the
@@ -109,7 +109,7 @@ and a bare workflow name is `no_verb`, whose column includes Run, so it is asked
 question offering a costly reading names the kind of cost in one clause; a _number_ comes
 only from an offer, which has a definition in hand.
 
-## What a run costs, and what counts as a yes
+## What a run costs, and how a yes is taken
 
 State the cost from the offer itself; never retype it from here. Making an offer composes it
 out of the definition in hand — every fact that definition incurs, and only those, so a plan
@@ -117,17 +117,16 @@ that runs as one chain prices no worktrees and no merge — and printing it is t
 minting the one token a start requires. There is no path to a run whose price was never
 stated.
 
-**A qualifying yes** names the action rather than the telling: run it, start it, yes run it.
-An unambiguous run instruction is one — it asked for the run in so many words — so it is
-itself the acceptance of the offer you make in reply to it, and it costs no extra turn:
-offer, state the cost, and start with the instruction's own words as the accepting reply.
-Anything short of unambiguous belongs to the ask list, not to this rule.
-
-- **A bare acknowledgement is not one**, and neither is a refusal. "ok", "sure", "got it",
-  "thanks", "sounds good" acknowledge the offer without accepting it; "no", "hold on", "I'd
-  rather not" decline it. Nothing downstream re-reads either: whatever you pass to a start is
-  taken as the words of someone who accepted, and there is no list anywhere that would catch
-  a mistake here. The judgement is yours alone, and this is where it is made.
+- **The yes is the answer to a question you asked.** Say the price, put the run as a question
+  with two answers, and start on the affirmative one alone. Every run is asked about,
+  including one the request demanded in so many words: the question is where the price is
+  read, so skipping it spends money nobody priced.
+- **A bare acknowledgement is not one, and neither is the request.** "ok", "sure", "thanks",
+  "sounds good" acknowledge the offer without accepting it; "no", "not yet", "I'd rather not"
+  decline it; and "run it" asked for the run rather than answering for it. Nothing downstream
+  re-reads any of them: whatever you pass to a start is taken as the words of someone who
+  accepted, and there is no list anywhere that would catch a mistake here. The judgement is
+  yours alone, and this is where it is made.
 - **A yes that predates the offer is not one.** Standing permission and "as agreed earlier"
   are about a decision made before there was anything to decide about. An acceptance quotes
   the offer it accepts, and an offer minted after the words were spoken cannot be quoted by

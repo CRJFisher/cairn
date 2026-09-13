@@ -7,8 +7,10 @@ they want and never learns one of these lines.
 
 `run` has two verbs and they are two on purpose. `offer` states the price and mints the one
 token `start` accepts, so there is no path to a run whose cost was never stated and no way
-to spend one acceptance twice. `explain` has three, one per question it answers, and none of
-them starts, locks or writes anything.
+to spend one acceptance twice. It prints that price in one block and the token in another,
+because a person hears what a run costs and never learns the id it is authorised by.
+`explain` has three, one per question it answers, and none of them starts, locks or writes
+anything.
 """
 
 from __future__ import annotations
@@ -41,7 +43,16 @@ from cairn.skill.trigger import (
     refuse_unusable_engine,
     start,
 )
-from cairn.skill.vocabulary import TRIGGER_SHAPES
+from cairn.skill.vocabulary import (
+    CONSENT_ASK_HEADER,
+    CONSENT_ASK_NO,
+    CONSENT_ASK_QUESTION,
+    CONSENT_ASK_YES,
+    CONSENT_NOTHING_YET,
+    CONSENT_RELAY_CLOSE,
+    CONSENT_RELAY_OPEN,
+    TRIGGER_SHAPES,
+)
 from cairn.workflow.stamp import workflow_path
 
 EXIT_REFUSED = 1
@@ -122,7 +133,12 @@ def _cmd_offer(args: argparse.Namespace) -> int:
         occasion_reading=reading.reading,
         occasion=reading.occasion,
     )
-    print(f"offer   {offer.offer_id}")
+    # Two zones, and the markers are the whole point. Everything above the close is said to
+    # the person verbatim; everything below it is the session's clerical work, the offer id
+    # among it. A person answers a question about a run and never handles the token that
+    # authorises it, and a test asserts the id falls outside the relayed block — so saying
+    # that block whole cannot leak one.
+    print(CONSENT_RELAY_OPEN)
     print(f"plan    {offer.plan} → {offer.repository} on {offer.parent_branch}")
     print("cost    a run of this plan is not free:")
     for line in cost:
@@ -130,9 +146,23 @@ def _cmd_offer(args: argparse.Namespace) -> int:
     print(f"occasion  {reading.reading}: {reading.taken}")
     if reading.disclose:
         print(f"          the other reading would mean: {reading.forgone}")
+    print(CONSENT_NOTHING_YET)
+    print(CONSENT_RELAY_CLOSE)
+    print(f"offer   {offer.offer_id}")
     print(
-        "\nThis run happens only if you say so. Quote the offer id when you do; an "
-        "acceptance authorises exactly one execution."
+        "ask     "
+        + CONSENT_ASK_QUESTION.format(plan=offer.plan, repository=offer.repository)
+    )
+    print(f"header  {CONSENT_ASK_HEADER}")
+    print(f"yes     {CONSENT_ASK_YES}")
+    print(f"no      {CONSENT_ASK_NO}")
+    # Composed here rather than left to be assembled from three printed values, for the
+    # reason the price is composed rather than templated: the id is the one argument a
+    # session cannot get wrong cheaply, and `_cmd_start` already hands back its `report`
+    # line the same way.
+    print(
+        f"start   python3 -m cairn run start --repository {offer.repository} "
+        f"--offer {offer.offer_id} --reply '<their answer, verbatim>'"
     )
     return 0
 

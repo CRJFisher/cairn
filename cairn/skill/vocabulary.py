@@ -286,6 +286,29 @@ CONSENT_OUTCOMES: tuple[str, ...] = (
 )
 
 
+# What an offer prints, in two zones. The person hears everything between the markers and
+# nothing below them, because an offer id is the argument a start carries and a person who
+# handles one is doing the session's clerical work. The markers are what make that mechanical
+# rather than a judgement: a test asserts the id falls outside them, so relaying the block
+# whole cannot leak it.
+CONSENT_RELAY_OPEN = "--- say this to the person, all of it ---"
+CONSENT_RELAY_CLOSE = "--- end. what follows is yours, and the person never sees it ---"
+
+# The question the run is put as, and the only two answers it offers. Composed here for the
+# reason `COST_SENTENCES` are: one spelling exists, the document and the code can be asserted
+# against each other, and a session retypes nothing. The header is what a harness renders
+# beside the question and it is capped at twelve characters.
+CONSENT_ASK_QUESTION = "Run {plan} against {repository}?"
+CONSENT_ASK_HEADER = "paid run"
+CONSENT_ASK_YES = "Yes, run it"
+CONSENT_ASK_NO = "No, not now"
+CONSENT_ASK_ANSWERS: tuple[str, ...] = (CONSENT_ASK_YES, CONSENT_ASK_NO)
+
+# What the person is left with once the price has been said: the assurance that reading it
+# cost them nothing. It replaces an instruction to quote a token, which was never theirs.
+CONSENT_NOTHING_YET = "nothing runs until you answer the question that comes next."
+
+
 # Which document holds each capability's procedure. Here rather than only in `SKILL.md`'s
 # prose and a test constant, because it is the answer to "what do I change to add one" and
 # it is the mapping a totality assertion can be keyed on. Four documents for six
@@ -342,8 +365,16 @@ __all__ = [
     "CAPABILITY_REPORT",
     "CAPABILITY_RUN",
     "CAPABILITY_SCHEDULE",
+    "CONSENT_ASK_ANSWERS",
+    "CONSENT_ASK_HEADER",
+    "CONSENT_ASK_NO",
+    "CONSENT_ASK_QUESTION",
+    "CONSENT_ASK_YES",
     "CONSENT_GATED",
+    "CONSENT_NOTHING_YET",
     "CONSENT_OUTCOMES",
+    "CONSENT_RELAY_CLOSE",
+    "CONSENT_RELAY_OPEN",
     "COST_BY_READING",
     "COST_BY_ROLE",
     "COST_CEILING",

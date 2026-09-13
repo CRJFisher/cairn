@@ -240,7 +240,11 @@ workflow check` reads one and writes nothing. Both run at authoring time and are
 [workflow.md](workflow.md).
 
 `cairn run offer` prices one execution of a definition and mints the one token `cairn run
-start` accepts; `start` spends it exactly once and hands the engine the run. The offer lives
+start` accepts; `start` spends it exactly once and hands the engine the run. `offer` prints
+the price between two markers and, below them, the id, the question the run is to be put as,
+its header, the two answers it offers and the start line to issue: the disclosure is the
+person's and the id is the skill's, so nobody outside the session ever handles the token a
+run is authorised by. The offer lives
 at `<git-common-dir>/cairn/offers/<offer-id>.json` beside the runs it authorises, and its
 `.spent` sibling is claimed by an exclusive link, so a second acceptance of one offer is a
 refusal rather than a second run; that marker records the run id and the engine invocation
@@ -257,8 +261,10 @@ spent either way — whether a run worked is the record's answer and not this co
 exited without taking the run on.
 
 **`start` does not read `--reply` for meaning, and no refusal above is about what it said.**
-The value is whatever the caller passed, so a caller that heard "no" and passed "yes, run it"
-has minted an authorisation nobody gave, and nothing downstream can tell. What the reply is
+The value is the answer the question came back with — one of the two labels `offer` printed,
+or whatever was typed in their place — and it is whatever the caller passed, so a caller that
+heard "no" and passed "yes, run it" has minted an authorisation nobody gave, and nothing
+downstream can tell. What the reply is
 for is the ledger: it is written into the `.spent` sibling, so what authorised a run is a
 fact about the repository afterwards. The rule that binds the judgement is `SKILL.md`'s.
 

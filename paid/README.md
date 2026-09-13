@@ -58,7 +58,7 @@ Inside a probe: the environment is built from empty rather than filtered, the pr
 off a reading probe's PATH and launched by absolute path — so no session can open another by
 name — the reading is taken at `run offer`, which prices a run and starts nothing, and every
 session runs in its own process group that is killed when its window closes. Measured: with
-an offer minted and a qualifying reply supplied, the engine executes the definition inside
+an offer minted and an accepting answer supplied, the engine executes the definition inside
 the probe's own world, and the run fails without opening a session, because a provider the
 PATH does not hold cannot be launched — a session is the only thing in a run that costs
 anything.

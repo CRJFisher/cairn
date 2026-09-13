@@ -18,9 +18,11 @@ plan", "schedule this nightly" — reaches whatever else is installed, and Cairn
 rather than competing for it. That is the price of a tool that spends money and commits to a
 repository: it is entered on purpose, and naming it is itself the first consent.
 
-A run is never a default. It happens on an unambiguous instruction or an accepted offer, the
-offer states what the run costs before you answer it, and one acceptance authorises exactly
-one execution. [SKILL.md](SKILL.md) is where those rules live.
+A run is never a default. Cairn prices it, asks you in so many words, and starts only on your
+answer: the offer states what the run costs before the question is put, the question has two
+answers, and one acceptance authorises exactly one execution. You never see the token that
+authorises a run — that is the skill's to carry. [SKILL.md](SKILL.md) is where those rules
+live.
 
 **What is under it:** derive a plan graph from a plan's documents, validate it, and
 read the parse report; answer the authoring conversation for a step whose plan named no
@@ -215,8 +217,8 @@ Measured by `python3 -m scripts.measure_surface`. Tokens are an estimate at 4 ch
 | Paid                          | What                                   | Characters | Lines | Tokens (est.) |
 | ----------------------------- | -------------------------------------- | ---------: | ----: | ------------: |
 | when Cairn is named           | the skill's description                |      `211` |   `1` |          `53` |
-| when Cairn is named           | `SKILL.md`                             |    `13641` | `193` |        `3411` |
-| when a capability is selected | `capabilities/running.md`, the largest |    `10359` | `154` |        `2590` |
+| when Cairn is named           | `SKILL.md`                             |    `13602` | `192` |        `3401` |
+| when a capability is selected | `capabilities/running.md`, the largest |    `11365` | `168` |        `2842` |
 
 **None of it is unavoidable.** Cairn declares `disable-model-invocation: true`, so its
 description stays out of a session's context until someone types `/cairn` — a session that
