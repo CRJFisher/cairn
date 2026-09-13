@@ -6,6 +6,8 @@ import json
 import os
 import signal
 import tempfile
+import threading
+import time
 from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -62,7 +64,20 @@ class Cancelled(Exception):
     """Raised inside the running subcommand when the step is asked to stop."""
 
 
+# Set while this process is broadcasting a stop to its own group, so the copy of that
+# signal it delivers to itself is not read as the engine asking the step to stop. A flag
+# rather than `SIG_IGN` because the sweep is issued from a timer thread as well as from the
+# main one, and `signal.signal` is main-thread-only — a guard installed the other way would
+# raise there and leave the broadcast unissued ([providers.py]).
+_SWEEPING = threading.Event()
+# How long the guard outlives the broadcast. Delivery is asynchronous, so a window closed
+# the instant `killpg` returns can still let this process's own copy through as a cancel.
+SWEEP_SETTLE_SECONDS = 0.25
+
+
 def _raise_cancelled(_signum: int, _frame: FrameType | None) -> None:
+    if _SWEEPING.is_set():
+        return
     raise Cancelled
 
 
@@ -104,14 +119,20 @@ def stop_orphans() -> None:
     process and its descendants. SIGTERM is where it stops: escalating to SIGKILL across
     the group would kill this process before it writes its report, so a descendant that
     ignores SIGTERM stays for the engine's own reaping.
+
+    Callable from any thread, which is what the step's own deadline needs ([providers.py]).
     """
     if os.getpgrp() != os.getpid():
         return
-    with _sigterm(signal.SIG_IGN):
+    _SWEEPING.set()
+    try:
         try:
             os.killpg(os.getpgrp(), signal.SIGTERM)
         except (ProcessLookupError, PermissionError):
             pass
+        time.sleep(SWEEP_SETTLE_SECONDS)
+    finally:
+        _SWEEPING.clear()
 
 
 class CairnError(Exception):
@@ -230,20 +251,32 @@ def write_text(path: Path, text: str) -> None:
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
-    """One JSON document, replaced in a single step."""
+    """One JSON document, replaced in a single step.
+
+    Escaped to ASCII, because a report carries paths and git hands back the bytes a
+    filesystem holds: a name that is not valid UTF-8 arrives as lone surrogates, which
+    `utf-8` refuses to encode. Unescaped, one such name in the tree would cost the step its
+    whole report. The escapes read back as the same string, so nothing is lost but width.
+    """
     write_text(
-        path, json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+        path, json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True) + "\n"
     )
 
 
-def write_report(
-    context: RuntimeContext, result: CommandResult, duration_seconds: float
+def write_report_for(
+    context: RuntimeContext, node_name: str, result: CommandResult, duration_seconds: float
 ) -> dict[str, Any]:
-    """Atomically write the shared report shape used by every subcommand."""
+    """Atomically write the shared report shape under the name of the node it speaks for.
+
+    Almost every report is a step's own, written under its own name. The one exception is
+    an assertion's: it runs bare and can write nothing, so its gate opens its account and
+    the mark gate that follows completes it with the exit it read ([assertions.py]). Both
+    write under the assertion node's name, which is the name the record reads it by.
+    """
     if result.status not in STATUSES:
         raise CairnError("invalid_report", f"unknown report status {result.status!r}")
     report: dict[str, Any] = {
-        "step_id": context.step_id,
+        "step_id": node_name,
         # The run this account belongs to. A report is read by the gate that decides
         # whether a step's work may be recorded, and one left by an earlier run would
         # otherwise green-light a step this run never started.
@@ -257,8 +290,15 @@ def write_report(
         "cause": result.cause,
         "detail": result.detail,
     }
-    write_json(context.report_path, report)
+    write_json(context.report_path.parent / f"{node_name}.json", report)
     return report
+
+
+def write_report(
+    context: RuntimeContext, result: CommandResult, duration_seconds: float
+) -> dict[str, Any]:
+    """Atomically write this step's own report."""
+    return write_report_for(context, context.step_id, result, duration_seconds)
 
 
 def read_step_report(directory: Path, step_id: str, run_id: str) -> dict[str, Any]:
@@ -332,5 +372,6 @@ __all__ = [
     "sweep_stale_reports",
     "write_json",
     "write_report",
+    "write_report_for",
     "write_text",
 ]

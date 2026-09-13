@@ -1100,7 +1100,7 @@ class TheThreeStates(unittest.TestCase):
 
         env = runtime_env(self.root)
         gate = ["marker", "absent", "--step", "a", "--scope", "once"]
-        agent = ["agent", "run", "--provider", "echo", "--prompt", "do the work"]
+        agent = ["agent", "run", "--provider", "echo", "--prompt", "do the work", "--timeout", "600"]
 
         def run_the_step() -> int:
             with patch.dict(PROVIDER_RUNNERS, {"echo": record}):
@@ -1183,13 +1183,16 @@ class TheThreeStates(unittest.TestCase):
         for arguments in (
             ["exec", "--command", "printf ok > out.txt"],
             ["wait", "--for", "0.01", "--timeout", "5"],
-            ["agent", "run", "--provider", "echo", "--prompt", "do it"],
+            ["agent", "run", "--provider", "echo", "--prompt", "do it", "--timeout", "600"],
         ):
             with (
                 self.subTest(subcommand=arguments[0]),
                 patch.dict(PROVIDER_RUNNERS, {"echo": finished}),
             ):
-                run_cli(arguments, env, self.root)
+                exit_code, _, _ = run_cli(arguments, env, self.root)
+                # Asserted so the case cannot pass by never reaching the subcommand: argv
+                # the parser rejects writes no marker either, and would prove nothing.
+                self.assertEqual(exit_code, 0, f"{arguments[0]} never ran")
                 self.assertFalse(
                     (self.root / MARKER_DIRECTORY).exists(),
                     f"{arguments[0]} recorded its own completion",

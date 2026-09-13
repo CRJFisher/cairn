@@ -29,6 +29,7 @@ import subprocess
 import tempfile
 from typing import Any, NamedTuple, cast
 
+from cairn.assertions import NEEDED_VERB
 from cairn.plan.schema import INPUTS_SCOPE, ONCE_SCOPE
 from cairn.topology import TopologyError, check_name, parse_node_name
 from cairn.verify import verify_handle
@@ -50,12 +51,15 @@ from cairn.workflow.schema import (
 GATE_PROBE_TIMEOUT = 30
 EXIT_CODE_SUFFIX = ".exit_code"
 
-# The two gates, as the argv the emitters actually build. Matched as a token prefix rather
+# The three gates, as the argv the emitters actually build. Matched as a token prefix rather
 # than as text anywhere in the condition: a plan supplies operands — a step id, a path it
 # reads — and one containing the words "verify gate" would otherwise route a marker-gated
-# step to the rule for a verify-gated one.
+# step to the rule for a verify-gated one. Three exact prefixes and never a widened
+# `cairn verify`: the assertion's gate and the marker's gate want opposite answers to
+# `skipped`, and one prefix for both would let a closed gate's skip reach the commit.
 MARKER_GATE_ARGV = (*CAIRN_INVOCATION, "marker", "absent")
 VERIFY_GATE_ARGV = (*CAIRN_INVOCATION, "verify", "gate")
+ASSERTION_GATE_ARGV = (*CAIRN_INVOCATION, "verify", NEEDED_VERB)
 
 
 class Rule(NamedTuple):
@@ -93,6 +97,7 @@ RULES: tuple[Rule, ...] = (
     Rule("gate_without_skipped", "a correct no-op cascades and the plan evaporates into a success"),
     Rule("commit_without_skipped", "an excluded branch's skip cascades and the wave lands nothing"),
     Rule("marker_with_skipped", "the commit runs anyway and lands exactly the unverified work"),
+    Rule("assertion_without_skipped", "a declined assertion's skip cascades into its marker and commit, and the step leaves no account of the halt"),
     Rule("gate_unresolvable", "every step skips into a clean success"),
     Rule("foreign_condition", "the gate runs a command Cairn did not write, and `dagu dry` runs it"),
     Rule("scope_without_occasion", "a recovery cannot continue the occasion it is recovering"),
@@ -209,7 +214,7 @@ def _words(text: str) -> list[str] | None:
         return None
 
 
-def _gate_kind(condition: str) -> str | None:
+def gate_kind(condition: str) -> str | None:
     words = _words(condition)
     if words is None:
         return None
@@ -217,6 +222,8 @@ def _gate_kind(condition: str) -> str | None:
         return "marker"
     if tuple(words[: len(VERIFY_GATE_ARGV)]) == VERIFY_GATE_ARGV:
         return "verify"
+    if tuple(words[: len(ASSERTION_GATE_ARGV)]) == ASSERTION_GATE_ARGV:
+        return "assertion"
     return None
 
 
@@ -562,9 +569,9 @@ def _check_gates(
     step: dict[str, Any], document: Any, name: str | None, flags: dict[str, Any]
 ) -> list[Fault]:
     faults: list[Fault] = []
-    kinds = {kind for c in _conditions(step) if (kind := _gate_kind(c)) is not None}
+    kinds = {kind for c in _conditions(step) if (kind := gate_kind(c)) is not None}
     for condition in _conditions(step):
-        if _gate_kind(condition) is None:
+        if gate_kind(condition) is None:
             faults.append(
                 Fault(
                     "foreign_condition",
@@ -584,6 +591,14 @@ def _check_gates(
                 "marker_with_skipped",
                 name,
                 "a verify-gated step must let a closed gate reach the commit",
+            )
+        )
+    if "assertion" in kinds and flags.get("skipped") is not True:
+        faults.append(
+            Fault(
+                "assertion_without_skipped",
+                name,
+                "an assertion its gate declined must still let the marker's gate run",
             )
         )
     # The commit is the one node in a step's group that routes, and only in an isolated wave.
@@ -754,6 +769,7 @@ __all__ = [
     "Rule",
     "check",
     "consequence_of",
+    "gate_kind",
     "preflight",
     "rehearse_gate",
 ]

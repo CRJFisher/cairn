@@ -53,7 +53,8 @@ The cancel path exists and is correct: `cancel_on_termination` turns a `SIGTERM`
 
 ## Acceptance
 
-- A step the engine kills at its bound is recorded with cause `timed_out`, the bound, the elapsed time, the commits it left, and its assertion's result; `not_reached` appears only on a node the engine itself skipped, and the engine node and the record never disagree about whether a step ran.
+- A step the engine kills at its bound is recorded with cause `timed_out`, the bound and the elapsed time; `not_reached` appears only on a node the engine itself skipped, and the engine node and the record never disagree about whether a step ran.
+- **Such a step carries no assertion verdict and names no commits, and that is the shape rather than a gap in it.** The gate [24 B](24-recovery-economics.md) puts on every assertion declines it whenever the work node left no report of the run — which is how a killed step is defined — so nothing asserts over what the step left, and its commit node never runs. The record says the work is unproven rather than claiming it holds. A session the wrapper stops at its own bound is the other shape, and does leave a report: that is where a divergence over a stopped step comes from, and it is the common one now that an agent step owns its bound.
 - An agent step's session is stopped at the step's own bound inside the wrapper, before the engine's, and the step's report reaches the run directory carrying the session id, turns and cost — as `done` where the resumed session reported, as `timed_out` where it did not.
 - The report's next action for a timed-out step with a passing assertion says the work is in the tree before it says re-run.
 - Reproduction: an agent step bounded at 60 s whose task cannot finish in 60 s. The run record names the timeout; the reports directory holds the step's report; the engine's own log shows the wrapper stopped the session before the engine did.

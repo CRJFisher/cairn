@@ -119,9 +119,20 @@ succeeded and a failed run would hold its repository for the whole reclaim windo
 The owner check is what stays hard: a run that halted _because_ the repository was busy
 reaches this same code, and must never release the lock of the run it lost to.
 
-A run also refuses to start against a repository that already has uncommitted work in it. A
-chain step commits in the repository itself and stages everything there, so anything the
-user left behind would be swept into a commit the plan claims as a step's output.
+A run also refuses to start against a repository that already has uncommitted work in it —
+before the offer is spent, and again here as the backstop for a tree that dirtied itself in
+between ([../capabilities/running.md](../capabilities/running.md)). A chain step commits in
+the repository itself, and its commit stages only what its own session dirtied: it
+snapshots the dirty paths before the session and stages the paths dirty afterwards that
+were not dirty before, plus its marker by path. A path dirty both before and after is left
+alone and named in the step's record rather than swept into a commit the plan claims as a
+step's output — which is why a person already working in the same checkout when a step
+starts keeps their edits, and why an edit the step itself needed to make to such a path
+cannot land until they settle it. The snapshot is taken before the session, so this scopes
+what was already dirty and not what someone first touches while the step runs: that is
+indistinguishable from the step's own work and still lands. The commit names its paths, so
+nothing another session staged mid-step rides along either. A tree git will not answer about
+is a refusal rather than a commit of the marker alone.
 
 ## How git itself is invoked
 
@@ -195,6 +206,11 @@ with `pidStartedAt`. The status field is never the evidence: after a crash it sa
 forever. A recycled identifier cannot make a dead run look alive, because the start times
 would not match.
 
+A reader that may not inspect processes at all — a sandboxed harness shell, where `ps` is
+refused — cannot decide liveness, and says so: the record is left alone as owner unknown
+rather than repaired, because a terminal status written into a run that may still be going
+is the more damaging direction. Run the reconcile from a shell that can look.
+
 When the owner is gone, a terminal snapshot is **appended**, carrying a finish time and an
 error naming the reconciliation, with every still-running node marked failed too — so the
 report never describes a dead run's steps as running.
@@ -238,13 +254,18 @@ I7 forbids an unbounded step, and the engine supplies neither bound by default: 
 timeout is none, and a step retries not at all while the _DAG_ around it retries three times.
 Both are written on every emitted step, and a test fails if any step is emitted without them.
 
-| Kind                     | Timeout                    | Retries |
-| ------------------------ | -------------------------- | ------- |
-| `agent.*`                | 3600s                      | 0       |
-| `command`                | 600s                       | 0       |
-| `command` (`wait_until`) | the wait's own bound + 15s | 0       |
-| verify                   | 600s                       | 0       |
-| Cairn's own subcommands  | 600s                       | 0       |
+| Kind                     | Timeout                     | Retries |
+| ------------------------ | --------------------------- | ------- |
+| `agent.*`                | the step's own bound + 180s | 0       |
+| `command`                | 600s                        | 0       |
+| `command` (`wait_until`) | the wait's own bound + 15s  | 0       |
+| verify                   | 600s                        | 0       |
+| Cairn's own subcommands  | 600s                        | 0       |
+
+An agent step's own bound is the `--timeout` its body carries, enforced by the wrapper: the
+session is stopped there, resumed once under the 180-second grace to give the account it
+owes, and its report is written before the engine's kill — which lands the grace later and
+erases nothing a report could have said. The grace is for the report, never the work.
 
 Two further bounds sit inside a support step's 600 seconds: a writer waits **300 seconds**
 for the git write mutex and then reports `git_mutex_timeout` rather than being killed by the

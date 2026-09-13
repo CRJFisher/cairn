@@ -8,6 +8,7 @@ import shlex
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from collections.abc import Callable, Iterable
 from pathlib import Path
@@ -23,10 +24,12 @@ from cairn.core import (
     CommandResult,
     PopenFactory,
     launch,
+    stop_orphans,
 )
 from cairn.hooks import HOOK_VERB, STOP_EVENT
+from cairn.plan.schema import AGENT_REPORT_GRACE, AGENT_RESUME_MARGIN
 from cairn.protocol import RESUME_FOR_REPORT, STEP_REPORT_SCHEMA, compose_prompt
-from cairn.verify import PROVIDER_PROTOCOL
+from cairn.verify import PROVIDER_PROTOCOL, TIMED_OUT
 
 PROMPT_WRITER_JOIN_SECONDS = 5.0
 PROVIDER_EXIT_GRACE_SECONDS = 30.0
@@ -40,9 +43,14 @@ ProviderRunner = Callable[
         float | None,
         list[str],
         PopenFactory,
+        float | None,
     ],
     CommandResult,
 ]
+
+
+class Deadline(Exception):
+    """The step's own bound stopped the provider before it gave its result."""
 
 
 def _object(value: object, field: str) -> dict[str, Any]:
@@ -284,12 +292,21 @@ def _session_in(
     prompt: str,
     working_directory: Path,
     popen_factory: PopenFactory,
+    *,
+    deadline_seconds: float | None = None,
 ) -> tuple[int, dict[str, Any], list[dict[str, Any]], str | None, bool]:
     """One provider invocation, drained to its result message.
 
     Factored out because a session may have to be opened twice — once for the work and once
     to collect a report it ended a turn without giving ([19 D]) — and the pipe handling here
     is exactly the part that must not be written twice.
+
+    `deadline_seconds` is the step's own bound. A timer stops the provider when it fires,
+    and the stream then ends without a result, which is reported as `Deadline` rather than
+    as a protocol fault: the session did not misbehave, it was stopped ([22 B]). The
+    process group is signalled too, because a provider's own children can hold the pipe
+    open after it is gone — and a reader blocked on a pipe nobody will close never reaches
+    the report the deadline exists to write.
     """
     process = launch(
         popen_factory,
@@ -301,6 +318,18 @@ def _session_in(
         text=True,
     )
     writer: threading.Thread | None = None
+    stopped = threading.Event()
+    timer: threading.Timer | None = None
+
+    def stop_at_deadline() -> None:
+        stopped.set()
+        stop_child(process)
+        stop_orphans()
+
+    if deadline_seconds is not None:
+        timer = threading.Timer(deadline_seconds, stop_at_deadline)
+        timer.daemon = True
+        timer.start()
     try:
         if process.stdin is None or process.stdout is None:
             raise CairnError("provider_protocol", "provider pipes were not created")
@@ -312,6 +341,13 @@ def _session_in(
         )
         writer.start()
         result, rate_limits, api_key_source = _parse_lines(process.stdout, tee=sys.stdout)
+        # The provider has answered, so the bound has nothing left to stop. Cancelled here
+        # rather than in `finally`: a timer firing during the exit wait below would stop a
+        # session that had already reported, and its negative exit status would be read as
+        # `provider_failed` — discarding paid work over a process that was merely slow to
+        # leave.
+        if timer is not None:
+            timer.cancel()
         process.stdout.close()
         exited_on_its_own = True
         try:
@@ -322,10 +358,23 @@ def _session_in(
             stop_child(process)
             exited_on_its_own = False
             return_code = 0
+        if stopped.is_set():
+            # The timer fired in the moment between the result arriving and the cancel
+            # above. The provider answered; being stopped afterwards says nothing about
+            # the answer.
+            exited_on_its_own = False
+            return_code = 0
+    except CairnError:
+        if stopped.is_set():
+            raise Deadline() from None
+        stop_child(process)
+        raise
     except BaseException:
         stop_child(process)
         raise
     finally:
+        if timer is not None:
+            timer.cancel()
         if writer is not None:
             writer.join(timeout=PROMPT_WRITER_JOIN_SECONDS)
         # Closing a pipe the writer thread still holds would block on its buffer lock,
@@ -335,6 +384,18 @@ def _session_in(
         if process.stdout is not None:
             process.stdout.close()
     return return_code, result, rate_limits, api_key_source, exited_on_its_own
+
+
+def resume_bound_seconds() -> float:
+    """How long a resume asking for a report may run.
+
+    What is left of the report grace once the two things that must still happen inside it
+    are paid for: stopping the provider, which is the exit grace, and writing the report,
+    which is the margin. A resume bounded by the margin alone hands the exit wait the whole
+    remainder and leaves nothing for the write the engine's own bound is about to land on.
+    Read rather than precomputed, so a caller shortening the grace shortens this with it.
+    """
+    return max(0.0, AGENT_REPORT_GRACE - AGENT_RESUME_MARGIN - PROVIDER_EXIT_GRACE_SECONDS)
 
 
 def ended_without_reporting(process_exit: int, result: dict[str, Any]) -> bool:
@@ -395,9 +456,17 @@ def run_claude(
     budget: float | None,
     tools: list[str],
     popen_factory: PopenFactory = subprocess.Popen,
+    deadline_seconds: float | None = None,
 ) -> CommandResult:
-    """Run the selected plain-CLI path and translate its two status channels."""
+    """Run the selected plain-CLI path and translate its two status channels.
+
+    `deadline_seconds` is the step's own bound ([22 B]). A session stopped at it is
+    resumed once, under what is left of the report grace, to ask for the account it owes;
+    a session that has done its work answers in a turn. Either way a report reaches the
+    run directory before the engine's own bound, which lands the grace later.
+    """
     session_id = str(uuid.uuid4())
+    started = time.monotonic()
     # The plan's own list **adds** to Cairn's; it never replaces it. A plan cannot hand a
     # step back a tool whose contract the session cannot keep.
     denied = [*NEVER_DELIVERED, *tools]
@@ -433,12 +502,26 @@ def run_claude(
             composed.extend(("--disallowedTools", pattern))
         return composed
 
-    return_code, result, rate_limits, api_key_source, exited_on_its_own = _session_in(
-        invocation(budget_usd=budget, resuming=False),
-        prompt,
-        working_directory,
-        popen_factory,
-    )
+    try:
+        return_code, result, rate_limits, api_key_source, exited_on_its_own = _session_in(
+            invocation(budget_usd=budget, resuming=False),
+            prompt,
+            working_directory,
+            popen_factory,
+            deadline_seconds=deadline_seconds,
+        )
+    except Deadline:
+        return _report_after_deadline(
+            invocation(budget_usd=budget, resuming=True),
+            working_directory,
+            popen_factory,
+            session_id=session_id,
+            bound_seconds=cast(float, deadline_seconds),
+            elapsed_seconds=time.monotonic() - started,
+            permission_mode=permission_mode,
+            deny_patterns=denied,
+            model=model,
+        )
 
     rescue: dict[str, Any] = {}
     if ended_without_reporting(return_code, result):
@@ -484,6 +567,11 @@ def run_claude(
                     RESUME_FOR_REPORT,
                     working_directory,
                     popen_factory,
+                    # Bounded like the deadline's own resume. This one opens at any point
+                    # in the step, so an unbounded ask for a report could itself outrun the
+                    # engine's bound and leave the step with no report at all — the very
+                    # loss the rescue exists to prevent ([22 B]).
+                    deadline_seconds=resume_bound_seconds(),
                 )
             except CairnError as unreachable:
                 # The first session's account is now the only one there is, and its cost is
@@ -572,6 +660,89 @@ def run_claude(
     return translated._replace(detail=detail)
 
 
+def _report_after_deadline(
+    resume: list[str],
+    working_directory: Path,
+    popen_factory: PopenFactory,
+    *,
+    session_id: str,
+    bound_seconds: float,
+    elapsed_seconds: float,
+    permission_mode: str,
+    deny_patterns: list[str],
+    model: str | None,
+) -> CommandResult:
+    """The one resume a session stopped at its bound is given, and what it comes to.
+
+    The first pass gave no result message, so what it spent is unknown — a killed stream
+    carries no figure — and the resume therefore carries the step's **whole** ceiling
+    again rather than a remainder nobody can compute. That is a ceiling a stopped step can
+    exceed, and the offer says so in the sentence it prices the run with, because a run
+    whose stated ceiling is quietly wrong is worse than one whose ceiling is honest
+    ([skill/vocabulary.py]). Time is what bounds it instead: the resume runs under what is
+    left of the report grace. A resumed session that reports is recorded as it reported,
+    with the bound and the elapsed time beside it; one that does not is the step stopped at
+    its bound, with the session id and whatever the resume cost.
+    """
+    stopped: dict[str, Any] = {
+        "timed_out": True,
+        "timeout_seconds": bound_seconds,
+        "elapsed_seconds": round(elapsed_seconds, 3),
+        "session_id": session_id,
+        "generated_session_id": session_id,
+        "model": model,
+        "permission_mode": permission_mode,
+        "deny_patterns": list(deny_patterns),
+        "resumed_for_report": RESUME_ATTEMPTED,
+    }
+
+    def silence(state: str, extra: dict[str, Any]) -> CommandResult:
+        return CommandResult(
+            EXIT_FAILED,
+            "failed",
+            f"the session was stopped at its {bound_seconds:g} s bound and gave no report",
+            [],
+            False,
+            TIMED_OUT,
+            {**stopped, **extra, "resumed_for_report": state},
+        )
+
+    try:
+        return_code, resumed, rate_limits, api_key_source, _ = _session_in(
+            resume,
+            RESUME_FOR_REPORT,
+            working_directory,
+            popen_factory,
+            deadline_seconds=resume_bound_seconds(),
+        )
+    except Deadline:
+        return silence(RESUME_STILL_SILENT, {})
+    except CairnError as unreachable:
+        return silence(RESUME_FAILED, unreachable.detail)
+    account = {
+        "total_cost_usd": _as_float(resumed.get("total_cost_usd")),
+        "turn_count": int(_as_float(resumed.get("num_turns"))),
+        "cost_is_notional": api_key_source == "none",
+        "api_key_source": api_key_source,
+    }
+    if resumed.get("structured_output") is None:
+        return silence(RESUME_STILL_SILENT, account)
+    try:
+        translated = _translate_result(
+            return_code,
+            resumed,
+            rate_limits,
+            generated_session_id=session_id,
+            permission_mode=permission_mode,
+            deny_patterns=deny_patterns,
+            model=model,
+            api_key_source=api_key_source,
+        )
+    except CairnError as unreadable:
+        return silence(RESUME_FAILED, {**account, **unreadable.detail})
+    return translated._replace(detail={**translated.detail, **stopped})
+
+
 PROVIDER_RUNNERS: dict[str, ProviderRunner] = {
     "claude": run_claude,
 }
@@ -602,6 +773,7 @@ def run_provider(
     *,
     runners: dict[str, ProviderRunner] = PROVIDER_RUNNERS,
     popen_factory: PopenFactory = subprocess.Popen,
+    deadline_seconds: float | None = None,
 ) -> CommandResult:
     try:
         runner = runners[provider]
@@ -615,4 +787,5 @@ def run_provider(
         budget,
         tools,
         popen_factory,
+        deadline_seconds,
     )

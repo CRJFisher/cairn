@@ -130,6 +130,7 @@ naming the offending step, never a warning a run proceeds past.
 | `gate_without_skipped`         | a correct no-op cascades and the plan evaporates into a success      |
 | `commit_without_skipped`       | an excluded branch's skip cascades and the wave lands nothing        |
 | `marker_with_skipped`          | the commit runs anyway and lands exactly the unverified work         |
+| `assertion_without_skipped`    | a declined assertion's skip cascades into its marker and commit      |
 | `gate_unresolvable`            | every step skips into a clean success                                |
 | `foreign_condition`            | the gate runs a command Cairn did not write, and `dagu dry` runs it  |
 | `scope_without_occasion`       | the step re-pays and is excluded on every run, for ever              |
@@ -165,10 +166,15 @@ there lets the next slot write over a conflicted index.
 
 A marker-gated step must carry `continue_on: {skipped: true}` and a verify-gated one must
 not, because a flag there lets the commit land exactly the unverified work the gate refused
-to record. A commit carries it exactly when a join waits on that commit, which is what makes
-the wave's position readable from the file rather than guessed from the name. And a gate is
-recognised by its argv rather than by text anywhere in the condition, so a plan that reads a
-file called `verify gate.md` is not mistaken for one.
+to record. A step's assertion node is gated a third way, on `cairn verify needed`, which
+declines it where the step's work node left no report of this run, and again where the same
+command was already proven against this tree in this run — and that node must
+carry `skipped: true` too, so a declined assertion still lets the marker's gate run and
+record the halt rather than cascading past it unaccounted for. A commit carries the flag
+exactly when a join waits on that commit, which is what makes the wave's position readable
+from the file rather than guessed from the name. And a gate is recognised by its argv — one
+of three exact prefixes, never a widened `cairn verify` — rather than by text anywhere in the
+condition, so a plan that reads a file called `verify gate.md` is not mistaken for one.
 
 **Every precondition must be a gate Cairn emitted.** `dagu dry` executes preconditions for
 real, so the mandatory gate runs whatever a file's conditions contain; a condition Cairn did
@@ -268,6 +274,11 @@ Every input is pinned, because a golden only one machine could reproduce records
 | the occasion     | the empty string               | nothing: the run mints its own                    |
 | the package root | `/opt/cairn`                   | `PYTHONPATH` would carry this checkout            |
 
+A generated definition is a **per-machine build product**, not a portable artifact: it
+encodes the package root, the repository and the runs root of the machine it was authored on,
+and it is authored on the machine that runs it. Moving a plan to another machine is
+re-authoring it there, never editing the file.
+
 Because that package root is a fiction, a recorded file is judged by the preflight's rules and
 never by the gate rehearsal, which runs `python3 -m cairn` under the `PYTHONPATH` the file
 declares. Both engine checks still pass on one, which the suite holds to for `multi-wave` exactly
@@ -305,12 +316,12 @@ holds — a declined assertion, a step with retries, a plan whose repository pat
 
 ## Where the files live
 
-| Thing                | Path                                                   |
-| -------------------- | ------------------------------------------------------ |
-| the definition       | `<git-common-dir>/cairn/workflows/<plan-slug>.yaml`    |
-| the provenance stamp | the same name plus `.stamp.json`                       |
+| Thing                | Path                                                                                                                                                    |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the definition       | `<git-common-dir>/cairn/workflows/<plan-slug>.yaml`                                                                                                     |
+| the provenance stamp | the same name plus `.stamp.json`                                                                                                                        |
 | the authoring copy   | a file under a dotted sibling **directory**, carrying the published name so the gate judges the DAG that will run, replaced into place only if it gates |
-| the gate's scratch   | a temporary directory, removed afterwards              |
+| the gate's scratch   | a temporary directory, removed afterwards                                                                                                               |
 
 Nothing generated is written into the repository's working tree. The admin directory is
 where git's own files live, so no commit step can stage a generated file and no worktree

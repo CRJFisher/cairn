@@ -56,6 +56,9 @@ class StepRecord(TypedDict):
     branch: str | None
     commit: str | None
     diffstat: Diffstat | None
+    # Paths the step's commit left alone because they were already dirty when its session
+    # started: somebody else's in-flight work, named rather than swept in or lost ([21]).
+    left_uncommitted: list[str]
     cost_usd: float | None
     cost_is_notional: bool
     turns: int | None
@@ -68,6 +71,21 @@ class StepRecord(TypedDict):
     started_at: str | None
     finished_at: str | None
     exit_code: int | None
+    # What the assertion exited, and which execution backed it: the step's own, or another
+    # step's proof of the same command against the same tree ([24 A]). Recorded by the
+    # assertion's own gate and the mark gate rather than derived, because the engine drops
+    # the number on the way to disk.
+    assertion_exit: int | None
+    assertion_source: str | None
+    assertion_backed_by: str | None
+    # Present only on a step a bound stopped: the bound that fired and how long the step
+    # had run. Derived from the engine's own sentence, because the node is a plain `failed`
+    # and the kill survives nowhere else ([22 A]).
+    timeout_seconds: int | None
+    elapsed_seconds: float | None
+    # The end of what a failed assertion printed, read from the engine's own log for it,
+    # so the report can quote why the gate closed rather than name a log path ([23 B]).
+    assertion_tail: str | None
     nodes: list[str]
     provenance: dict[str, str]
 

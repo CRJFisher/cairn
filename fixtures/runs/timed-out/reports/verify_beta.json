@@ -1,0 +1,16 @@
+{
+  "cause": null,
+  "detail": {
+    "command_sha256": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b",
+    "decision": "skipped_upstream",
+    "tree_sha256": null
+  },
+  "duration": 0.000820445828139782,
+  "follow_up_work": [],
+  "needs_user_decision": false,
+  "run_id": "fixture-timedout",
+  "status": "noop",
+  "step_id": "verify_beta",
+  "summary": "the step left no report of this run, so its assertion has nothing to assert",
+  "working_directory": "/private/var/folders/tc/95b1f46j1g3cjktn__xcv6z80000gn/T/tmpjf9fc2s3/work"
+}

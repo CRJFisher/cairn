@@ -15,6 +15,15 @@ import time
 import traceback
 from typing import Any, TypedDict, cast
 
+from cairn.assertions import (
+    DECISION_RUN,
+    DECISION_SHARED,
+    DECISION_SKIPPED_UPSTREAM,
+    assertion_report,
+    decision_of,
+    record_executed,
+    shared_exit,
+)
 from cairn.core import (
     ENDED_WITHOUT_REPORTING,
     EXIT_FAILED,
@@ -87,6 +96,11 @@ REPORTED_NOTHING = "nothing"
 # because the divergence is the only channel this fact has into the record and a single
 # word would make the run record contradict the gate's own summary beside it.
 REPORTED_UNREADABLE = "unreadable"
+# And where the step was stopped at a bound before it could say anything: the engine's, read
+# back out of its record ([22 A]), or its own, enforced by the wrapper ([22 B]). The
+# assertion still ran over whatever the step left, and this is the reading that lets the
+# record weigh that against a session nobody heard from.
+REPORTED_KILLED = "killed"
 
 
 class Divergence(TypedDict):
@@ -134,6 +148,11 @@ def divergence_line(divergence: Divergence) -> str:
         return f"the step's session ended without reporting, and its assertion {asserted}"
     if divergence["reported"] == REPORTED_UNREADABLE:
         return f"the step left no readable account of itself, and its assertion {asserted}"
+    if divergence["reported"] == REPORTED_KILLED:
+        return (
+            f"the step was stopped at its bound before it reported, and its assertion "
+            f"{asserted} over the work it left"
+        )
     return f"the step reported {divergence['reported']!r} while its assertion {asserted}"
 
 
@@ -227,6 +246,22 @@ def judge(verify_exit: int | None, report: dict[str, Any] | None) -> Verdict:
                 else f"{said}, so nothing said what it did"
             ),
         )
+    if reported == "failed" and report.get("cause") == TIMED_OUT:
+        # The wrapper stopped the session at the step's own bound and it never reported.
+        # That is not a veto — the step said nothing — so the divergence weighs the
+        # assertion against a session nobody heard from, as the engine's own kill does
+        # in the run record ([22 B]).
+        return Verdict(
+            record=False,
+            cause=TIMED_OUT,
+            divergence=Divergence(reported=REPORTED_KILLED, asserted=True) if asserted else None,
+            summary=(
+                "the step was stopped at its own bound before it reported, over an "
+                "assertion that passed"
+                if asserted
+                else "the step was stopped at its own bound before it reported"
+            ),
+        )
     if reported == "failed":
         return Verdict(
             record=False,
@@ -250,9 +285,7 @@ def judge(verify_exit: int | None, report: dict[str, Any] | None) -> Verdict:
     return Verdict(record=True, cause=None, divergence=None, summary=report["summary"])
 
 
-def _read_verify_exit(raw: str | None) -> int | None:
-    if raw is None:
-        return None
+def _read_verify_exit(raw: str) -> int:
     try:
         return int(raw)
     except ValueError as exc:
@@ -263,27 +296,78 @@ def _read_verify_exit(raw: str | None) -> int | None:
         ) from exc
 
 
+def _assertion_exit(
+    step_id: str, verify_exit_text: str | None, context: RuntimeContext
+) -> int | None:
+    """The assertion's exit status, read only where the assertion's own gate says it ran.
+
+    Measured against Dagu 2.11.0: `${<id>.exit_code}` resolves to `0` for a node its
+    precondition skipped, so the reference alone would record a marker over an assertion
+    that never ran. The assertion node's report says whether it did, or names the step
+    whose proof of the same command against the same tree stands in for it; where it ran,
+    the exit read here completes that report and becomes the proof later gates share
+    ([assertions.py]).
+    """
+    if verify_exit_text is None:
+        return None
+    account = assertion_report(context.report_path.parent, step_id, context.run_id)
+    decision = decision_of(account)
+    if decision == DECISION_SHARED and account is not None:
+        exit_code = shared_exit(account)
+        if exit_code is None:
+            raise CairnError(
+                "gate_indeterminate",
+                "the assertion's gate shared a proof that carries no exit status",
+            )
+        return exit_code
+    if decision != DECISION_RUN or account is None:
+        raise CairnError(
+            "gate_indeterminate",
+            "the assertion did not run"
+            if decision == DECISION_SKIPPED_UPSTREAM
+            else "the assertion's own gate left no account of whether the assertion ran, "
+            "so its exit status cannot be trusted",
+        )
+    exit_code = _read_verify_exit(verify_exit_text)
+    record_executed(context, step_id, account, exit_code)
+    return exit_code
+
+
 def run_verify_gate(
     step_id: str, position: str, verify_exit_text: str | None, context: RuntimeContext
 ) -> tuple[Verdict, dict[str, Any]]:
-    """Decide, and assemble what the record needs when the answer is no."""
+    """Decide, and assemble what the record needs when the answer is no.
+
+    The work report outranks everything about the assertion: a step that left no report
+    never ran, whatever the assertion's exit status reads ([24 B]). The assertion's exit
+    is still read and filed where it ran, because the work it proved is in the tree even
+    when the step that did it was killed before reporting ([22 A]).
+    """
     verify_exit: int | None = None
     report: dict[str, Any] | None = None
+    unread: CairnError | None = None
     try:
         if position not in POSITIONS:
             raise CairnError("invalid_arguments", f"unknown graph position {position!r}")
-        verify_exit = _read_verify_exit(verify_exit_text)
         # The work node's own name, not the bare step id: the topology names every node
         # `<role>_<subject>`, so that is the file the step actually wrote.
         report = read_step_report(
             context.report_path.parent, work_name(step_id), context.run_id
         )
-        verdict = judge(verify_exit, report)
     except CairnError as exc:
+        unread = exc
+    try:
+        verify_exit = _assertion_exit(step_id, verify_exit_text, context)
+        fault = unread
+    except CairnError as exc:
+        fault = unread or exc
+    if fault is not None:
         # A step that left no report never ran; every other fault leaves what happened
         # unestablished, and the two must not be recorded as the same thing.
-        cause = "not_reached" if exc.cause == "missing_report" else "gate_indeterminate"
-        verdict = Verdict(record=False, cause=cause, divergence=None, summary=str(exc))
+        cause = "not_reached" if fault.cause == "missing_report" else "gate_indeterminate"
+        verdict = Verdict(record=False, cause=cause, divergence=None, summary=str(fault))
+    else:
+        verdict = judge(verify_exit, cast(dict[str, Any], report))
     detail: dict[str, Any] = {
         "position": position,
         "verify_exit": verify_exit,
@@ -378,6 +462,7 @@ __all__ = [
     "ORCHESTRATOR_DIED",
     "POSITIONS",
     "PROVIDER_PROTOCOL",
+    "REPORTED_KILLED",
     "REPORTED_NOTHING",
     "REPORTED_UNREADABLE",
     "Divergence",

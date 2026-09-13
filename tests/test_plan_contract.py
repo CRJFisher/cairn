@@ -229,6 +229,21 @@ class ValidatorMessages(unittest.TestCase):
         finding = self._first("cycle", "cycle")
         self.assertIn("checker -> emitter -> parser -> checker", finding.message)
 
+    def test_a_timeout_the_document_did_not_state_is_a_warning_naming_the_bound(self) -> None:
+        """A bound carries no quotation the way an edge does, so the person confirming the
+        parse is told the derivation supplied it — never refused ([22])."""
+        finding = self._first("mixed-kinds", "derived_timeout")
+        self.assertIn("7200 s", finding.message)
+        self.assertIn("3600 s", finding.message)
+        self.assertEqual(finding.step, "refresh_the_corpus")
+        result = validate(load("mixed-kinds", "graph.json"))
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            sorted(str(f.step) for f in result.warnings if f.code == "derived_timeout"),
+            ["refresh_the_corpus", "wait_for_the_index_to_settle"],
+        )
+        self.assertNotIn("derived_timeout", [f.code for f in validate(load("linear-chain", "graph.json")).warnings])
+
     def test_an_unresolved_dependency_names_both_ends(self) -> None:
         finding = self._first("dangling-dependency", "unresolved_dependency")
         self.assertIn("write_the_renderer", finding.message)

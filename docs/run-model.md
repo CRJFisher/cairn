@@ -64,6 +64,13 @@ Seven values, and three overlays that ride beside them.
 **`pending` and `not_reached` are distinct on purpose.** One is a run still in flight and
 the other is a run that gave up; collapsing them would report the two as the same thing.
 
+**A step behind a halt is `not_reached` however the engine spelled the skip.** The engine
+spells a chain halt and a marker no-op both `skipped`; the gate tells them apart, because a
+no-op leaves its report and a step behind a halt leaves none, so its gate closes with the
+cause that says so. That step never ran and never will, and the run is `failed` — a halted
+chain is not a near-clean success with exclusions, which is what reading the skip as an
+exclusion made it.
+
 A `no_op` carries the scope its key matched under and both keys, so a reader can tell a step
 that is permanently done (`once`) from one that is merely fresh enough (`daily`). The
 difference between correct caching and stale research is invisible otherwise.
@@ -78,6 +85,16 @@ Overlays are a list beside the outcome rather than values of it. They are orthog
 block rides an exclusion, a divergence rides either — and folding them in would multiply
 seven outcomes by eight combinations, which is exactly how one state acquires four
 spellings. They are always emitted in the order above.
+
+**A step the engine stopped at its bound is `failed`, never `not_reached`.** The gate reads
+an absent report as a step that never ran, and for a step the engine killed that is false:
+it ran until it was killed, and its assertion ran afterwards over whatever it left. The
+engine's node says so — `failed`, with the kill, the bound and the elapsed time spelled in its
+error — and the record reads that node over the gate's `not_reached`, carries the bound and
+the elapsed time, and weighs the assertion's result against the session nobody heard from as
+a divergence. A killed step whose work is in the tree reads as exactly that, and the engine
+node and the record never disagree about whether a step ran ([verify-gate.md](verify-gate.md)
+names the cause).
 
 Why a step contributed no verified work is a **separate** frozen vocabulary, and
 [verify-gate.md](verify-gate.md) owns it. The record carries whichever of those causes the
@@ -95,6 +112,13 @@ Naming the order here is what makes every renderer conform to one definition rat
 inventing a subset. It is deliberately **not** the verdict's order: a block outranks a
 failure for a reader, because a person can act on it now.
 
+A `failure` item is one step, in dependency order — except the steps a halt left behind,
+which come as **one** item: its subject is the first of them, its summary names the step
+the halt is at and counts the rest, and its cause is theirs. Fourteen identical "never ran"
+lines outnumber the one line that names the fault, and none of the fourteen is a thing a
+person can act on. Every such step keeps its own outcome in `steps`; the attention list is
+for action.
+
 An `excluded` item's subject is a step's id where a step's own gate declined it, and a
 **branch name** where a wave's census did — the one exclusion no step outcome can speak for.
 Where both saw the same event, it is listed once: the branch a step already accounts for is
@@ -109,24 +133,34 @@ rather than as lost signal.
 A report that says a run failed and stops has answered one question of six. The next action
 is derived from the record rather than composed as prose, and is one of:
 
-| Action            | Reached when                                        | The command it carries                       |
-| ----------------- | --------------------------------------------------- | -------------------------------------------- |
-| `decide`          | a step is blocked on a human decision               | none — a person decides, and no command does |
-| `settle_merge`    | a step or a census exclusion left work unlanded     | none                                         |
-| `rerun`           | the run failed                                      | `dagu retry --run-id=<run> <plan>`           |
-| `start_scheduler` | the run is queued and nothing is draining the queue | `cairn schedule start`                       |
-| `wait`            | the run is still in flight                          | none                                         |
-| `nothing`         | the run is green, or every step no-opped            | none                                         |
+| Action            | Reached when                                                                         | The command it carries                                                                                     |
+| ----------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `decide`          | a step is blocked on a human decision                                                | none — a person decides, and no command does                                                               |
+| `settle_merge`    | a step or a census exclusion left work unlanded, in a run whose topology has a merge | none                                                                                                       |
+| `rerun`           | the run failed, or a merge-less run left work unlanded                               | `python3 -m cairn run offer --plan <plan> --repository <repository> --trigger recovery --recovering <run>` |
+| `start_scheduler` | the run is queued and nothing is draining the queue                                  | `cairn schedule start`                                                                                     |
+| `wait`            | the run is still in flight                                                           | none                                                                                                       |
+| `nothing`         | the run is green, or every step no-opped                                             | none                                                                                                       |
 
 Never the engine's own scheduler command: starting one is where the retry hazard fires, and
 Cairn's own is the one that disables it first ([triggers.md](triggers.md)).
 
-**A command is carried only where it can be spelled completely.** Measured against Dagu
-2.11.0, the retry takes the run as a required `--run-id` flag and the plan as its operand, so
-a run whose plan is absent carries no command at all rather than one that exits
-`required flag(s) "run-id" not set` when it is pasted. A run whose orchestrator was killed
-carries none either: the engine still calls it running and refuses to retry it, and the
-reconciliation that would unblock it takes a path this derivation does not hold.
+**The subject is the step the fault is at.** After one gate closes in a chain, every step
+behind it is `not_reached`; the subject of "what to do next" is the first step in
+**dependency order** whose gate closed for a cause of its own, never one closed behind it.
+Dependency order is read off the record's own edges with the same levelling the derivation
+waves a plan by, so a chain reads front to back and a fan-out wave by wave — and a record
+whose edges will not level, a hand-edited or truncated one, falls back to id order rather
+than costing a person the record. `settle_merge` is prescribed only where the topology holds
+a merge: a merge node in the engine's record, or a wave's census, which only a join in an
+isolated wave takes. A chain has neither, and re-running is its whole remedy.
+
+**A command is carried only where it can be spelled completely.** The recovery offer names
+the plan, the repository and the run, so a record missing the plan or the repository carries
+no command at all rather than one that fails when it is pasted. It is never `dagu retry`,
+which the skill refuses outright: re-running a plan is the whole recovery story, a continued
+occasion is what makes it cheap, and the engine's own verb refuses a run it still believes
+is going — which is every run whose orchestrator was killed.
 
 ## The exit-code contract
 
@@ -202,9 +236,35 @@ becomes one a browser can actually reach.
 
 Each step carries `step_id`, `outcome`, `overlays`, `cause`, `position`, `asked`, `said`,
 `verified`, `divergence`, `freshness`, `completed_by_run`, `branch`, `commit`, `diffstat`,
-`cost_usd`, `cost_is_notional`, `turns`, `session_id`, `model`, `transcript`, `stderr_log`,
-`resume_command`, `follow_up_work`, `started_at`, `finished_at`, `exit_code`, `nodes` and
-`provenance`.
+`left_uncommitted`, `cost_usd`, `cost_is_notional`, `turns`, `session_id`, `model`,
+`transcript`, `stderr_log`,
+`resume_command`, `follow_up_work`, `started_at`, `finished_at`, `exit_code`,
+`assertion_exit`, `assertion_source`, `assertion_backed_by`, `timeout_seconds`,
+`elapsed_seconds`, `assertion_tail`, `nodes` and `provenance`.
+
+`assertion_exit` is what the step's assertion exited, and `assertion_source` says which
+execution backed it — `executed` by the step's own assertion node, or `shared` from the
+step `assertion_backed_by` names, whose proof of the same command against the same tree
+stood in for it ([verify-gate.md](verify-gate.md)). All three are recorded by the gates
+rather than derived, because the engine drops an exit status on the way to disk.
+
+`timeout_seconds` and `elapsed_seconds` are present only on a step the engine killed at its
+bound, and both are `derived`: the engine records the kill nowhere but in the node's own
+error sentence, so the bound that fired and how long the step had run are read back out of
+it. Such a step carries no `divergence` either — the gate that decides whether an assertion
+runs turns on the same absent report the kill caused, so nothing asserted over what the step
+left ([verify-gate.md](verify-gate.md)). A session its own wrapper stopped does leave a
+report, and carries the same two numbers in it.
+
+`left_uncommitted` names the paths the step's commit left alone because they were already
+dirty when its session started — somebody else's in-flight work in the same checkout — and
+together they raise one `follow_up` item naming them, so a commit can be read as scoped
+without diffing it against the step's transcript ([cli-contract.md](cli-contract.md)).
+
+`assertion_tail` is the end of what a failed assertion printed, read from the log the engine
+kept for that node — standard output first, standard error where that is empty — so the
+report can quote why a gate closed rather than name a log path. It is absent where the
+assertion passed, never ran, or its log is gone.
 
 `asked` is the command the engine recorded for the step, which for an agent step contains
 the prompt. The plan's own task text does not survive into a run — the generator consumes
@@ -323,6 +383,15 @@ process started, and **never from the status field**: a bare existence check wou
 recycled identifier alive. A run whose status is `running` and whose owner is provably gone
 reads as `failed`, with every step that was in flight carrying `orchestrator_died`.
 
+**A probe that could not look is not a probe that found nothing.** Liveness has three
+values: alive, gone, and unestablishable. Cairn is ordinarily driven from inside a
+coding-agent harness whose shell may not inspect processes at all — `ps` itself is refused
+— and a reader there cannot tell a live run from a dead one. It says so: `owner_alive` is
+absent, the run reads as running as far as the record shows, the report states in one line
+that the process could not be checked, and `orchestrator_died` is reserved for a probe that
+succeeded and found nothing. The engine's own record is the better witness then, and the
+reconciler leaves such a run alone rather than repairing one that may be working.
+
 What a crash costs is stated rather than discovered: the killed step's finish time, exit
 code, cost, turns and session identity are all absent, each carrying `absent` in its
 provenance map.
@@ -416,6 +485,7 @@ a run with exclusions exits 3, whatever either of them printed.
   offers/<offer-id>.json             one run offered, with the price it was offered at
   offers/<offer-id>.spent            that offer consumed, once
   runs/<run-id>/reports/<node>.json  every step's own account
+  runs/<run-id>/assertions/<sha>.json  one proof per assertion command, keyed on the tree it ran against
   runs/<run-id>/occasion             the occasion every scoped step in this run keys on
   runs/<run-id>/record.json          this model
   runs/<run-id>/engine.log           what the engine said while taking the run on
@@ -463,16 +533,17 @@ engine and the fixture the exit criteria name is a claim only the engine can mak
 shape but one is a command step and costs nothing to re-record; `agent` runs a real provider
 and spends real money, which is why it is one step and not a plan.
 
-| Shape                   | What it pins                                                                                                                                               |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `green`                 | every step verified; one compacted line                                                                                                                    |
-| `red`                   | a step fails and everything behind it is `not_reached` at status 3                                                                                         |
-| `blocked`               | a human decision is owed; the engine still reports a clean success                                                                                         |
-| `green-with-exclusions` | **the engine reports `Succeeded` with exit 0 over an excluded step, with no failed node anywhere.** I5's regression fixture                                |
-| `all-no-op`             | the real marker gate skipped every step; each no-op names the run that did the work                                                                        |
-| `mid-run`               | five snapshot lines, uncompacted; a step running and a sibling `pending`                                                                                   |
-| `crashed`               | the orchestrator was killed; the engine's record still says `running` with no finish time                                                                  |
-| `agent`                 | one real paid agent step, so a step's receipts — cost, turns, session identity, transcript, resume command — are carried populated rather than only absent |
+| Shape                   | What it pins                                                                                                                                                                                                                                |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `green`                 | every step verified; one compacted line                                                                                                                                                                                                     |
+| `red`                   | a step fails and everything behind it is `not_reached` at status 3                                                                                                                                                                          |
+| `blocked`               | a human decision is owed; the engine still reports a clean success                                                                                                                                                                          |
+| `green-with-exclusions` | **the engine reports `Succeeded` with exit 0 over an excluded step, with no failed node anywhere.** I5's regression fixture                                                                                                                 |
+| `all-no-op`             | the real marker gate skipped every step; each no-op names the run that did the work                                                                                                                                                         |
+| `mid-run`               | five snapshot lines, uncompacted; a step running and a sibling `pending`                                                                                                                                                                    |
+| `crashed`               | the orchestrator was killed; the engine's record still says `running` with no finish time                                                                                                                                                   |
+| `timed-out`             | the engine killed a step at its bound with no report written, its assertion passed over what it left, and the step behind it was skipped: the record reads the kill over the gate's `not_reached`, and the halt over the engine's `skipped` |
+| `agent`                 | one real paid agent step, so a step's receipts — cost, turns, session identity, transcript, resume command — are carried populated rather than only absent                                                                                  |
 
 `green`, `all-no-op` and `blocked` all carry engine run status `4`. That they extract to
 `green`, `all_no_op` and `blocked` is what proves the verdict is not read off the engine.

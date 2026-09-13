@@ -37,8 +37,9 @@ Two obligations fall on the steps around it, and neither is this document's to i
 The marker root is the writing process's own working directory, so the verify step must
 carry the same `working_dir` as the step it marks, or the marker lands outside the worktree
 whose commit is meant to carry it. And the marker reaches git only because the commit step
-stages it with the work — one commit carrying both is that step's obligation, and until it
-exists the same-commit property is a requirement rather than a fact.
+stages it by path with the work — one commit carrying both is that step's obligation, and
+the commit stages the marker and the paths the step's own session dirtied, never the
+working tree at large ([cli-contract.md](cli-contract.md)).
 
 **The marker is the completion authority.** With a fresh marker present, a step is a no-op
 and changes nothing, whatever the tree looks like. A mismatch between marker and tree can
@@ -228,9 +229,9 @@ env:
   - PYTHONPATH: /path/to/cairn
 steps:
   - name: config_schema
-    run: python3 -m cairn agent run --provider claude --prompt '…' --model sonnet --max-budget-usd 5.0
+    run: python3 -m cairn agent run --provider claude --prompt '…' --model sonnet --max-budget-usd 5.0 --timeout 3600
     working_dir: ${CAIRN_REPOSITORY}
-    timeout_sec: 3600
+    timeout_sec: 3780 # the step's own bound plus the report grace
     retry_policy: { limit: 0, interval_sec: 1 }
     preconditions:
       - condition: python3 -m cairn marker absent --step config_schema --scope once
@@ -305,7 +306,15 @@ So such a session is continued exactly once, with one message asking for the acc
 owes and telling it to do no further work. It runs under **what is left** of the step's own
 dollar ceiling, because the offer priced one ceiling for the step and a second pass carrying
 a fresh one would double what the person agreed to; both passes are summed into the record's
-cost and turn count. If it reports, the step is recorded as it should have been. If it does
+cost and turn count. It is bounded in time as well, by what is left of the report grace once
+stopping the provider and writing the report are paid for, so asking for a report can never
+itself outrun the bound and cost the step the report entirely.
+
+**A session stopped at its own bound is resumed the same way and is the one exception to
+the ceiling rule** ([22 B]). Its first pass was killed mid-stream and reported no cost, so
+there is no remainder to compute and the resume carries the step's whole ceiling again. That
+is a ceiling such a step can exceed, and the offer says so in the sentence it prices the run
+with, because a stated ceiling that is quietly wrong is worse than one that is honest. If it reports, the step is recorded as it should have been. If it does
 not, the outcome is exactly the `provider_protocol` failure it already was, with the attempt
 recorded beside it — the rescue can never make the outcome worse than not attempting it.
 

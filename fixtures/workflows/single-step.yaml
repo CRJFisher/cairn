@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "single-step",
-    "cairn_generator": "4",
+    "cairn_generator": "5",
     "cairn_engine": "2.11.0",
     "cairn_graph_sha256": "2de07876c148d4e7548342ce0306d3c9f2412d5f20ce131def8dcda8e9fd7cdb",
-    "cairn_body_sha256": "a74cd9554ceb45182ccda5ba464c2a1d07a37ac9848173e88b189220f21ea2d5"
+    "cairn_body_sha256": "177c92ec1b27d80949b8fd330878864099e04bedbe81d5dfd9e7bdd98469b95a"
   },
   "params": [
     {
@@ -54,17 +54,17 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn lock acquire --plan single-step --run-timeout 6600"
+      "run": "python3 -m cairn lock acquire --plan single-step --run-timeout 6780"
     },
     {
       "name": "work_manifest_writer",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 3600,
+      "timeout_sec": 3780,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/release/manifest.py` to a state where it writes `dist/manifest.json` holding every artefact'\"'\"'s name, size and sha256.' --model sonnet --max-budget-usd 5.0",
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/release/manifest.py` to a state where it writes `dist/manifest.json` holding every artefact'\"'\"'s name, size and sha256.' --model sonnet --max-budget-usd 5.0 --timeout 3600",
       "preconditions": [
         {
           "condition": "python3 -m cairn marker absent --step manifest_writer --scope once"
@@ -88,8 +88,14 @@
         "limit": 0,
         "interval_sec": 1
       },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify needed --step manifest_writer --command-digest d9a648049bb8864206510aeb29814968bafe91bafa866e62a6b6d1edd60dff28"
+        }
+      ],
       "continue_on": {
-        "failure": true
+        "failure": true,
+        "skipped": true
       },
       "depends": [
         "work_manifest_writer"
@@ -121,7 +127,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn commit --message 'cairn(manifest_writer): Manifest writer'",
+      "run": "python3 -m cairn commit --message 'cairn(manifest_writer): Manifest writer' --step manifest_writer",
       "depends": [
         "mark_manifest_writer"
       ]

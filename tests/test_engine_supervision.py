@@ -512,7 +512,10 @@ class FanOut(EngineCase):
                     },
                     {
                         "name": f"commit_s{index}",
-                        "run": f"{sys.executable} -m cairn commit --message 'cairn(s{index}): work'",
+                        "run": (
+                            f"{sys.executable} -m cairn commit "
+                            f"--message 'cairn(s{index}): work' --step s{index}"
+                        ),
                         "working_dir": str(worktree),
                         "depends": [f"work_s{index}"],
                     },

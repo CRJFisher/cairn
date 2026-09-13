@@ -1,0 +1,7 @@
+{
+  "shape": "timed-out",
+  "run_id": "fixture-timedout",
+  "engine": "2.11.0",
+  "why": "the engine killed a step at its bound before any report was written \u2014 its node is a plain `failed` with the kill spelled only in its error \u2014 so its assertion's own gate declined the assertion for want of that report, the mark gate closed over the same absence, and the step behind it was skipped with its own gates doing the same. The record reads the kill over the gate's word for the first, and the halt over the engine's `skipped` for the second",
+  "hand_set_fields": {}
+}

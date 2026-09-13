@@ -1,0 +1,17 @@
+{
+  "cause": "not_reached",
+  "detail": {
+    "position": "chain",
+    "reported": null,
+    "step": "beta",
+    "verify_exit": null
+  },
+  "duration": 0.001109088072553277,
+  "follow_up_work": [],
+  "needs_user_decision": false,
+  "run_id": "fixture-timedout",
+  "status": "failed",
+  "step_id": "mark_beta",
+  "summary": "step 'work_beta' left no report at /var/folders/tc/95b1f46j1g3cjktn__xcv6z80000gn/T/tmpjf9fc2s3/runs/fixture-timedout/reports/work_beta.json",
+  "working_directory": "/private/var/folders/tc/95b1f46j1g3cjktn__xcv6z80000gn/T/tmpjf9fc2s3/work"
+}

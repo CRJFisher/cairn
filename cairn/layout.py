@@ -30,6 +30,16 @@ RUNS_ROOT_ENV = "CAIRN_RUNS_DIR"
 
 RUNS_DIRECTORY = "runs"
 REPORTS_DIRECTORY = "reports"
+ASSERTIONS_DIRECTORY = "assertions"
+
+# Where a step's committed marker lives, inside the working tree it describes: one file per
+# step, so parallel steps in separate worktrees never contend ([step-protocol.md]). Stated
+# here, beside every other path Cairn derives, because two readers key on it — the marker
+# protocol, and the tree digest an assertion's proof is shared under, which leaves this
+# directory out because a marker is written under it on every step that is recorded
+# ([assertions.py]). `cairn marker write` remains its only writer.
+MARKER_DIRECTORY = ".steps"
+MARKER_SUFFIX = ".done"
 RECORD_FILE = "record.json"
 # What the engine itself said while it was taking a run on. Not the run's logs — those are
 # the engine's own, under its home, and the view reads them. This is the start command's
@@ -68,6 +78,22 @@ def run_directory(runs_root: Path, run_id: str) -> Path:
 
 def reports_directory(runs_root: Path, run_id: str) -> Path:
     return run_directory(runs_root, run_id) / REPORTS_DIRECTORY
+
+
+def assertions_directory(runs_root: Path, run_id: str) -> Path:
+    """Where one run keeps each assertion command's one proof against one tree state.
+
+    Beside the reports and keyed by run identity, so a recovery — a fresh run id — proves
+    everything again against the tree it finds, and nothing a previous run proved is
+    read by it ([verify-gate.md]). `dagu retry` reuses the run id and would therefore read
+    this run's proofs, a failing one included; that is one more reason Cairn refuses that
+    verb and offers a recovery instead.
+    """
+    return run_directory(runs_root, run_id) / ASSERTIONS_DIRECTORY
+
+
+def assertion_result_path(runs_root: Path, run_id: str, command_sha256: str) -> Path:
+    return assertions_directory(runs_root, run_id) / f"{command_sha256}.json"
 
 
 def record_path(runs_root: Path, run_id: str) -> Path:
@@ -147,9 +173,12 @@ def occasion_path(runs_root: Path, run_id: str) -> Path:
 
 
 __all__ = [
+    "ASSERTIONS_DIRECTORY",
     "ENGINE_HOST_ENV",
     "ENGINE_LOG_FILE",
     "ENGINE_PORT_ENV",
+    "MARKER_DIRECTORY",
+    "MARKER_SUFFIX",
     "OCCASION_FILE",
     "RECORD_FILE",
     "REPORTS_DIRECTORY",
@@ -158,6 +187,8 @@ __all__ = [
     "RUN_ID",
     "VIEW_BASE_DEFAULT",
     "VIEW_BASE_ENV",
+    "assertion_result_path",
+    "assertions_directory",
     "check_run_id",
     "engine_log_path",
     "occasion_path",

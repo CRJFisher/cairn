@@ -51,8 +51,9 @@
    `python3 -m cairn run start --repository <path> --offer <offer-id> --reply '<their words,
 verbatim>'`. The run id is minted for you; pass `--run-id` only to choose one. It refuses
    a bare acknowledgement, a reply that declines, an id that names no offer, an offer already
-   spent, and a definition that changed since it was priced — and every one of those refusals
-   happens before the offer is spent, so the acceptance still stands.
+   spent, a definition that changed since it was priced, and a working tree with uncommitted
+   work or an unresolved merge in it — and every one of those refusals happens before the
+   offer is spent, so the acceptance still stands.
 
 7. **Hand over the address.** The command prints four lines — the run id, the branch, where
    the run can be watched, and the command that reads its record — and it prints them
@@ -91,10 +92,11 @@ a run is an ordinary start carrying the occasion it continues. Never `dagu retry
 
 **Before the offer is spent**, and so leaving the yes standing: a malformed run id, an engine
 that is not the pinned version, **a shell the engine cannot start a run from**, an engine
-that cannot say where it keeps its run history, a reply that acknowledges or declines rather
-than accepts, an id naming no offer, an offer already spent, a damaged offer, and a
-definition that changed since it was priced. Clear the cause and answer once — the same
-acceptance is still good.
+that cannot say where it keeps its run history, **a working tree with uncommitted work in
+it, or a merge, rebase or cherry-pick left unresolved** — the refusal names the paths, and a
+person settles them — a reply that acknowledges or declines rather than accepts, an id
+naming no offer, an offer already spent, a damaged offer, and a definition that changed
+since it was priced. Clear the cause and answer once — the same acceptance is still good.
 
 ### The shell has to be allowed to bind a unix socket
 
@@ -117,7 +119,8 @@ sandbox lifted for that one command.
 
 - **the repository's run lock is held** — the refusal names the holder and its age. One
   repository, one run (I6). Wait for it or run against a different repository.
-- **the working tree is dirty, or a merge is unresolved** — a person settles it.
+- **the working tree dirtied itself between the start and the run's first act** — the
+  start read it clean; the run's own refusal is the backstop, not the interface.
 - **the repository parameter was varied away from the authored one** — re-author instead.
 
 Those three fail a run that really started, so they consume the offer and recovering needs a

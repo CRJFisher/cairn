@@ -1801,6 +1801,37 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
         self.assertIn(f"{PARENT_BRANCH_PARAM}=release", " ".join(self.launched[0]))
         self.assertIn("verified work lands on release", started)
 
+    def test_a_dirty_tree_refuses_before_the_offer_is_spent_and_the_same_yes_stands(
+        self,
+    ) -> None:
+        """[24 D]: the run's first act refused a dirty tree correctly, but inside the run,
+        so the refusal consumed the acceptance and continuing cost a fresh yes."""
+        _, spoken = self._offer()
+        offer_id = self._minted(spoken)
+        stray = self.repository / "notes.md"
+        stray.write_text("an edit made minutes earlier\n", encoding="utf-8")
+        code, said = self._start(offer_id, "yes, go ahead")
+        self.assertEqual(code, 1)
+        self.assertIn("repository_dirty", said)
+        self.assertIn("notes.md", said)
+        self.assertEqual(self.launched, [])
+        self.assertIsNone(consent.acceptance_of(self.repository, offer_id))
+        self.assertTrue(stray.exists(), "the preflight must never touch the tree")
+        stray.unlink()
+        code, _ = self._start(offer_id, "yes, go ahead")
+        self.assertEqual(code, 0)
+        self.assertEqual(len(self.launched), 1)
+
+    def test_an_unresolved_merge_refuses_before_the_offer_is_spent(self) -> None:
+        _, spoken = self._offer()
+        offer_id = self._minted(spoken)
+        (self.repository / ".git" / "MERGE_HEAD").write_text("0" * 40 + "\n", encoding="utf-8")
+        code, said = self._start(offer_id, "yes, go ahead")
+        self.assertEqual(code, 1)
+        self.assertIn("merge_in_progress", said)
+        self.assertEqual(self.launched, [])
+        self.assertIsNone(consent.acceptance_of(self.repository, offer_id))
+
     def test_an_engine_that_refuses_to_launch_is_not_reported_as_a_started_run(self) -> None:
         """A run the engine never took on leaves no record, so this is the one engine status
         the command cannot pass over."""

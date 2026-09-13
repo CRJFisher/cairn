@@ -118,6 +118,12 @@ def canonical_facts(record: RunRecord) -> list[tuple[str, str]]:
                 (f"{key}.started_at", _value(step["started_at"])),
                 (f"{key}.finished_at", _value(step["finished_at"])),
                 (f"{key}.exit_code", _value(step["exit_code"])),
+                (f"{key}.assertion_exit", _value(step["assertion_exit"])),
+                (f"{key}.assertion_source", _value(step["assertion_source"])),
+                (f"{key}.assertion_backed_by", _value(step["assertion_backed_by"])),
+                (f"{key}.timeout_seconds", _value(step["timeout_seconds"])),
+                (f"{key}.elapsed_seconds", _value(step["elapsed_seconds"])),
+                (f"{key}.assertion_tail", _value(step["assertion_tail"])),
                 (f"{key}.branch", _value(step["branch"])),
                 (f"{key}.commit", _value(step["commit"])),
                 (
@@ -135,6 +141,7 @@ def canonical_facts(record: RunRecord) -> list[tuple[str, str]]:
                 ),
                 (f"{key}.key", ABSENT if freshness is None else _value(freshness["recorded_key"])),
                 (f"{key}.completed_by", _value(step["completed_by_run"])),
+                (f"{key}.left_uncommitted", _list(step["left_uncommitted"])),
                 (f"{key}.follow_up_work", _list(step["follow_up_work"])),
             ]
         )

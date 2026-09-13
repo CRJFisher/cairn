@@ -222,7 +222,9 @@ COST_SENTENCES: dict[str, str] = {
     ),
     COST_CEILING: (
         "every one of those sessions is stopped at the dollar ceiling its step writes — "
-        "US$ {ceiling_usd} at most across all of them"
+        "US$ {ceiling_usd} at most across all of them, and up to that step's ceiling again "
+        "for any session stopped at its time bound, which is resumed once to write the "
+        "report its first pass was killed before giving"
     ),
     COST_MODEL: (
         "each session is pinned to the model its step names ({models}), which is the "

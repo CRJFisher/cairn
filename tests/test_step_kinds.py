@@ -28,7 +28,7 @@ from cairn.core import (
 )
 from cairn.emitters import KIND_EMITTERS, emit_step, emit_verify
 from cairn.layout import reports_directory
-from cairn.plan.schema import normalise
+from cairn.plan.schema import AGENT_REPORT_GRACE, normalise
 from cairn.protocol import RESUME_FOR_REPORT, compose_prompt
 from cairn.providers import (
     ENDED_WITHOUT_REPORTING,
@@ -42,6 +42,8 @@ from cairn.providers import (
     run_claude,
     run_provider,
 )
+from cairn.verify import REPORTED_KILLED, TIMED_OUT, judge
+from tests.test_step_protocol import plan_step
 
 
 def run_echo(
@@ -52,9 +54,10 @@ def run_echo(
     budget: float | None,
     tools: list[str],
     popen_factory: PopenFactory = subprocess.Popen,
+    deadline_seconds: float | None = None,
 ) -> CommandResult:
     """A whole second provider: doc 05's seam claim is that this is all one costs."""
-    del popen_factory
+    del popen_factory, deadline_seconds
     return CommandResult(
         EXIT_OK,
         "done",
@@ -597,6 +600,8 @@ class ExecAndWait(unittest.TestCase):
     def test_agent_handler_carries_the_plan_tool_policy_to_the_provider(self) -> None:
         seen: list[tuple[str, Path, str | None, float | None, list[str]]] = []
 
+        bounds: list[float | None] = []
+
         def record(
             provider: str,
             _prompt: str,
@@ -605,8 +610,11 @@ class ExecAndWait(unittest.TestCase):
             model: str | None,
             budget: float | None,
             tools: list[str],
+            *,
+            deadline_seconds: float | None = None,
         ) -> CommandResult:
             seen.append((provider, working_directory, model, budget, tools))
+            bounds.append(deadline_seconds)
             return CommandResult(0, "done", "", [], False, None, {})
 
         with tempfile.TemporaryDirectory() as temporary:
@@ -628,6 +636,8 @@ class ExecAndWait(unittest.TestCase):
                             "opus",
                             "--max-budget-usd",
                             "3",
+                            "--timeout",
+                            "600",
                             "--tool",
                             "Bash(rm:*)",
                             "--tool",
@@ -648,6 +658,7 @@ class ExecAndWait(unittest.TestCase):
                 )
             ],
         )
+        self.assertEqual(bounds, [600.0])
 
     def test_argument_skew_is_a_report_not_a_usage_message(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1191,6 +1202,8 @@ class ProviderBehavior(unittest.TestCase):
                             "echo",
                             "--prompt",
                             "hello",
+                            "--timeout",
+                            "600",
                             "--tool",
                             "Bash(rm:*)",
                         ]
@@ -1416,7 +1429,149 @@ class ASessionThatEndedWithoutReportingIsResumedOnce(unittest.TestCase):
         self.assertEqual(resumed.count("--disallowedTools"), opened.count("--disallowedTools"))
 
 
+class HangingOutput(FakeOutput):
+    """A provider stream that gives nothing until the process is stopped, then ends."""
+
+    def __init__(self, released: threading.Event) -> None:
+        super().__init__("")
+        self.released = released
+
+    def __next__(self) -> str:
+        self.consumed = True
+        self.released.wait(timeout=30)
+        raise StopIteration
+
+
+class HangingProcess(FakeProcess):
+    """A session that never gives its result, as a session past its bound does not."""
+
+    def __init__(self, command: list[str], **kwargs: object) -> None:
+        super().__init__(command, **kwargs)
+        self.released = threading.Event()
+        self.returncode = None
+        self.stdout = HangingOutput(self.released)
+
+    def terminate(self) -> None:
+        super().terminate()
+        self.returncode = -15
+        self.released.set()
+
+
+class LingeringProcess(FakeProcess):
+    """A session that gives its result and then takes its time leaving, as one that will
+    not exit after answering does."""
+
+    def wait(self, timeout: float | None = None) -> int:
+        time.sleep(0.4)
+        return super().wait(timeout)
+
+
+class ASessionIsStoppedAtItsOwnBound(unittest.TestCase):
+    """[22 B]: the engine's kill was the only bound on an agent step, and nothing survived
+    it — no report, no cost, no session id. The wrapper now stops the session itself, with
+    headroom to ask it what it did."""
+
+    def _run(self, factory: Callable[..., FakeProcess], deadline: float) -> CommandResult:
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            return run_claude("do work", Path("/tmp"), "auto", "sonnet", 5.0, [], factory, deadline)
+
+    def test_a_session_that_outruns_its_bound_is_stopped_and_resumed_for_its_report(self) -> None:
+        made: list[FakeProcess] = []
+
+        def factory(command: list[str], **kwargs: object) -> FakeProcess:
+            process = HangingProcess(command, **kwargs) if "--session-id" in command else FakeProcess(command, **kwargs)
+            made.append(process)
+            return process
+
+        result = self._run(factory, 0.2)
+        self.assertEqual(len(made), 2, "one resume, never a loop")
+        self.assertTrue(made[0].stopped, "the wrapper stopped the session")
+        self.assertIn("--resume", made[1].command)
+        self.assertEqual(made[1].prompt, RESUME_FOR_REPORT)
+        self.assertEqual(result.status, "done")
+        self.assertIs(result.detail["timed_out"], True)
+        self.assertEqual(result.detail["timeout_seconds"], 0.2)
+        self.assertGreaterEqual(result.detail["elapsed_seconds"], 0.2)
+        self.assertEqual(result.detail["resumed_for_report"], RESUME_ATTEMPTED)
+        self.assertEqual(result.detail["session_id"], made[0].session())
+
+    def test_a_resume_that_also_stays_silent_is_the_step_stopped_at_its_bound(self) -> None:
+        made: list[FakeProcess] = []
+
+        def factory(command: list[str], **kwargs: object) -> FakeProcess:
+            process = HangingProcess(command, **kwargs)
+            made.append(process)
+            return process
+
+        with (
+            patch("cairn.providers.AGENT_REPORT_GRACE", 0.6),
+            patch("cairn.providers.AGENT_RESUME_MARGIN", 0.2),
+            patch("cairn.providers.PROVIDER_EXIT_GRACE_SECONDS", 0.2),
+        ):
+            result = self._run(factory, 0.2)
+        self.assertEqual(len(made), 2)
+        self.assertTrue(all(process.stopped for process in made))
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.cause, TIMED_OUT)
+        self.assertEqual(result.detail["resumed_for_report"], RESUME_STILL_SILENT)
+        self.assertEqual(result.detail["session_id"], made[0].session())
+        self.assertIs(result.detail["timed_out"], True)
+
+    def test_a_session_that_answered_before_its_bound_is_never_read_as_a_failure(
+        self,
+    ) -> None:
+        """The bound stops a session that will not answer, not one that is merely slow to
+        leave after answering. Stopping it there would return a signal status the
+        translation reads as `provider_failed` — paid, proven work discarded."""
+        made: list[FakeProcess] = []
+
+        def factory(command: list[str], **kwargs: object) -> FakeProcess:
+            process = LingeringProcess(command, **kwargs)
+            made.append(process)
+            return process
+
+        with patch("cairn.providers.PROVIDER_EXIT_GRACE_SECONDS", 1.0):
+            result = self._run(factory, 0.2)
+        self.assertEqual(len(made), 1, "a session that answered is never resumed")
+        self.assertEqual(result.status, "done")
+        self.assertIsNone(result.cause)
+        self.assertNotIn("timed_out", result.detail)
+
+    def test_a_session_that_answers_in_time_is_never_stopped(self) -> None:
+        made: list[FakeProcess] = []
+
+        def factory(command: list[str], **kwargs: object) -> FakeProcess:
+            process = FakeProcess(command, **kwargs)
+            made.append(process)
+            return process
+
+        result = self._run(factory, 5.0)
+        self.assertEqual(len(made), 1)
+        self.assertFalse(made[0].stopped)
+        self.assertEqual(result.status, "done")
+        self.assertNotIn("timed_out", result.detail)
+
+    def test_the_gate_reads_a_stopped_session_as_stopped_and_never_as_a_veto(self) -> None:
+        stopped = {"status": "failed", "cause": TIMED_OUT, "needs_user_decision": False, "summary": "x"}
+        verdict = judge(0, stopped)
+        self.assertEqual(verdict["cause"], TIMED_OUT)
+        self.assertEqual(verdict["divergence"], {"reported": REPORTED_KILLED, "asserted": True})
+        self.assertFalse(verdict["record"])
+        self.assertIsNone(judge(1, stopped)["divergence"])
+        self.assertEqual(judge(None, stopped)["cause"], TIMED_OUT)
+
+
 class EmitterContract(unittest.TestCase):
+    def test_an_agent_body_carries_its_own_bound_and_the_engine_allows_the_grace(self) -> None:
+        """The priced bound is the bound: the wrapper stops the session at `--timeout`, and
+        the engine's kill lands the report grace later ([22 B])."""
+        step = plan_step()
+        emitted = emit_step(step, "/repo")
+        tokens = shlex.split(emitted["run"])
+        self.assertEqual(float(tokens[tokens.index("--timeout") + 1]), step["timeout"])
+        self.assertEqual(emitted["timeout_sec"], step["timeout"] + AGENT_REPORT_GRACE)
+
     def test_table_handles_mixed_plan_kinds(self) -> None:
         self.assertEqual(set(KIND_EMITTERS), {"command", "agent.*"})
         fixture = (
@@ -1526,7 +1681,7 @@ class EmitterContract(unittest.TestCase):
         self.assertIn("args.provider", source)
         seen: list[str] = []
 
-        def record(provider: str, *_rest: Any) -> CommandResult:
+        def record(provider: str, *_rest: Any, **_options: Any) -> CommandResult:
             seen.append(provider)
             return CommandResult(0, "done", "", [], False, None, {})
 
@@ -1535,7 +1690,7 @@ class EmitterContract(unittest.TestCase):
             engine_step(Path(temporary)),
             patch("cairn.__main__.run_provider", record),
         ):
-            main(["agent", "run", "--provider", "someone_else", "--prompt", "x"])
+            main(["agent", "run", "--provider", "someone_else", "--prompt", "x", "--timeout", "600"])
         self.assertEqual(seen, ["someone_else"])
 
 

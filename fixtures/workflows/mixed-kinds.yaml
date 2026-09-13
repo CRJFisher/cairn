@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "mixed-kinds",
-    "cairn_generator": "4",
+    "cairn_generator": "5",
     "cairn_engine": "2.11.0",
     "cairn_graph_sha256": "f86117b75b6850768a2ca72e2f8375b3a8d304ba21fdc11c3527783fcdf21be8",
-    "cairn_body_sha256": "bec6dc34a7dc66f54db86ec97371dfa57a86f7db6bf6a78a3f5945630109f599"
+    "cairn_body_sha256": "2bc7e6a7823bd1a2526ef0003f45335dd8be48c1f83839e756703ff494bcc8e4"
   },
   "params": [
     {
@@ -54,17 +54,17 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn lock acquire --plan mixed-kinds --run-timeout 15315"
+      "run": "python3 -m cairn lock acquire --plan mixed-kinds --run-timeout 15495"
     },
     {
       "name": "work_refresh_the_corpus",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 7200,
+      "timeout_sec": 7380,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `data/corpus/` to a state where it mirrors the current contents of the source bucket.' --model opus --max-budget-usd 8.0 --tool 'Bash(rm:*)'",
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `data/corpus/` to a state where it mirrors the current contents of the source bucket.' --model opus --max-budget-usd 8.0 --timeout 7200 --tool 'Bash(rm:*)'",
       "preconditions": [
         {
           "condition": "python3 -m cairn marker absent --step refresh_the_corpus --scope weekly"
@@ -88,8 +88,14 @@
         "limit": 0,
         "interval_sec": 1
       },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify needed --step refresh_the_corpus --command-digest a5532c5c828a8be61cd51484ea721b3e24fcc061053041fb311f7bc919d0777d"
+        }
+      ],
       "continue_on": {
-        "failure": true
+        "failure": true,
+        "skipped": true
       },
       "depends": [
         "work_refresh_the_corpus"
@@ -121,7 +127,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn commit --message 'cairn(refresh_the_corpus): Refresh the corpus'",
+      "run": "python3 -m cairn commit --message 'cairn(refresh_the_corpus): Refresh the corpus' --step refresh_the_corpus",
       "depends": [
         "mark_refresh_the_corpus"
       ]
@@ -158,8 +164,14 @@
         "limit": 0,
         "interval_sec": 1
       },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify needed --step rebuild_the_index --command-digest 022c1ed35777dbee39ad13ace8693496a9ac65341a4c52b22d723c33bbcd3d92"
+        }
+      ],
       "continue_on": {
-        "failure": true
+        "failure": true,
+        "skipped": true
       },
       "depends": [
         "work_rebuild_the_index"
@@ -191,7 +203,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn commit --message 'cairn(rebuild_the_index): Rebuild the index'",
+      "run": "python3 -m cairn commit --message 'cairn(rebuild_the_index): Rebuild the index' --step rebuild_the_index",
       "depends": [
         "mark_rebuild_the_index"
       ]
@@ -228,8 +240,14 @@
         "limit": 0,
         "interval_sec": 1
       },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify needed --step wait_for_the_index_to_settle --command-digest a1d256f2db4a930e25548d72890ba5b63d85e288b5cc0c1a40747f4310ce3927"
+        }
+      ],
       "continue_on": {
-        "failure": true
+        "failure": true,
+        "skipped": true
       },
       "depends": [
         "work_wait_for_the_index_to_settle"
@@ -261,7 +279,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn commit --message 'cairn(wait_for_the_index_to_settle): Wait for the index to settle'",
+      "run": "python3 -m cairn commit --message 'cairn(wait_for_the_index_to_settle): Wait for the index to settle' --step wait_for_the_index_to_settle",
       "depends": [
         "mark_wait_for_the_index_to_settle"
       ]

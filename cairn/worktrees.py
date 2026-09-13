@@ -21,8 +21,15 @@ import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, cast
 
-from cairn.core import EXIT_OK, CairnError, CommandResult
+from cairn.core import (
+    EXIT_OK,
+    CairnError,
+    CommandResult,
+    RuntimeContext,
+    read_step_report,
+)
 from cairn.gitio import (
     branch_exists,
     checked_out_branch,
@@ -36,7 +43,8 @@ from cairn.gitio import (
     worktree_entries,
 )
 from cairn.locks import git_write_mutex, refuse_unresolved_merge, unresolved_merge
-from cairn.topology import WORKTREES_SUFFIX
+from cairn.marker import marker_path
+from cairn.topology import WORKTREES_SUFFIX, node_name
 
 QUARANTINE_SUFFIX = ".broken"
 
@@ -557,14 +565,22 @@ def prune_worktrees(
     )
 
 
-def _staged_diffstat(working_directory: Path) -> dict[str, int]:
-    """What the index would commit, counted. A binary file counts as changed and nothing more.
+def _staged_diffstat(working_directory: Path, paths: list[str]) -> dict[str, int]:
+    """What this commit will record, counted over the step's own paths and no others.
 
-    git spells a binary file's line counts `-`, which is not "zero lines changed" but "the
-    question does not apply"; counting it as zero would be a plausible default in the one
-    record that refuses them.
+    Scoped to the same pathspec the commit carries, because the index can hold work a
+    concurrent session staged and a count taken over all of it would attribute that work to
+    this step in the one number a reader checks the commit by.
+
+    A binary file counts as changed and nothing more: git spells its line counts `-`, which
+    is not "zero lines changed" but "the question does not apply", and counting it as zero
+    would be a plausible default in the one record that refuses them.
     """
-    counted = git(working_directory, ("diff", "--cached", "--numstat"), check=False)
+    counted = git(
+        working_directory,
+        ("--literal-pathspecs", "diff", "--cached", "--numstat", "--", *paths),
+        check=False,
+    )
     if counted.exit_code != 0:
         return {"files": 0, "insertions": 0, "deletions": 0}
     files = insertions = deletions = 0
@@ -579,56 +595,151 @@ def _staged_diffstat(working_directory: Path) -> dict[str, int]:
     return {"files": files, "insertions": insertions, "deletions": deletions}
 
 
-def commit_all(working_directory: Path, message: str) -> CommandResult:
-    """Commit whatever the step left behind, distinguishing nothing-to-do from a failure.
+# The key under which a work step records the paths that were already dirty when its
+# session started. Named here because it crosses a seam: the work handlers write it and the
+# commit reads it, and a literal spelled twice would drift with nothing failing — the commit
+# would silently stage only the marker, for ever.
+DIRTY_BEFORE = "dirty_before"
+
+
+def commit_step(
+    working_directory: Path, message: str, *, step_id: str, context: RuntimeContext
+) -> CommandResult:
+    """Commit what the step's own session left behind, and nothing else in the tree.
+
+    A chain step runs in the repository itself, which is the one topology where "commit
+    whatever is dirty" is false by construction whenever a person is also working in the
+    checkout — the ordinary way this tool is driven. So the commit stages the paths that
+    are dirty now and were not dirty when the step's session started, plus the step's own
+    marker by path; a path dirty both before and after is somebody else's in-flight work
+    and is left alone and named ([21]). A step whose work node left no snapshot — a marker
+    no-op, or a report this run cannot read — stages the marker alone, because the
+    alternative is sweeping the whole tree on every no-op of every recovery.
 
     A no-op when there is nothing staged and a failure when staging itself fails: the two
     must never be confused, because one is a step that had nothing to say and the other is
-    a step whose output was lost.
+    a step whose output was lost. A worktree run starts clean, so nothing here changes what
+    it commits.
     """
     refuse_unresolved_merge(working_directory)
     root = working_tree_root(working_directory)
+    marker = marker_path(root, step_id).relative_to(root).as_posix()
+    before = _dirty_before(context, step_id)
     with git_write_mutex(working_directory):
-        git(working_directory, ("add", "--all", "--", str(root)))
-        # The question is what the commit would record, so it is asked of the index. A
-        # working tree can hold residue `add` cannot stage — dirty submodule content, for
-        # one — and reading the tree instead turns a step that had nothing to say into a
-        # step whose commit failed.
-        staged = git(working_directory, ("diff", "--cached", "--quiet"), check=False)
-        if staged.exit_code == 0:
-            return CommandResult(
-                EXIT_OK,
-                "noop",
-                "nothing to commit",
-                [],
-                False,
-                None,
-                {"working_directory": str(working_directory)},
+        now = tree_state(working_directory)
+        if now is None:
+            raise CairnError(
+                "git_failed",
+                f"git would not say what is dirty in {working_directory}, so what this "
+                "step may commit cannot be established",
+                detail={"working_directory": str(working_directory)},
             )
-        # Counted before the commit, while the index still holds exactly what is about to
-        # become it. The run record must be readable on a machine that no longer has the
-        # repository, so a step's diffstat is recorded at the one moment it is true rather
-        # than re-derived from git by a reader.
-        changed = _staged_diffstat(working_directory)
-        git(working_directory, ("commit", "--no-verify", "-m", message))
+        own = sorted(set(now) - set(before)) if before is not None else []
+        # The marker is staged by path whenever the tree has something to say about it,
+        # whoever else had it dirty; a pathspec naming a path git has nothing for fails
+        # the whole add, so an unchanged or absent marker is not named at all.
+        staged_paths: list[str] = sorted(set(own) | ({marker} if marker in now else set()))
+        # What the step found dirty and did not take. The marker is the one path it takes
+        # regardless, so naming it here would make the record contradict the commit.
+        left = (
+            sorted((set(now) & set(before)) - set(staged_paths)) if before is not None else []
+        )
+        if not staged_paths:
+            return CommandResult(
+                EXIT_OK, "noop", "nothing to commit", _follow_up(left), False, None,
+                {"working_directory": str(working_directory), "left_uncommitted": left},
+            )
+        git(working_directory, ("--literal-pathspecs", "add", "--", *staged_paths))
+        # The question is what the commit would record, so it is asked of the index, and of
+        # the step's own paths within it. A working tree can hold residue `add` cannot stage
+        # — dirty submodule content, for one — and reading the tree instead turns a step
+        # that had nothing to say into a step whose commit failed.
+        staged = git(
+            working_directory,
+            ("--literal-pathspecs", "diff", "--cached", "--quiet", "--", *staged_paths),
+            check=False,
+        )
+        detail: dict[str, Any] = {
+            "working_directory": str(working_directory),
+            "left_uncommitted": left,
+        }
+        follow_up = _follow_up(left)
+        if staged.exit_code == 0:
+            return CommandResult(EXIT_OK, "noop", "nothing to commit", follow_up, False, None, detail)
+        # Counted before the commit, over the paths the commit is about to carry. The run
+        # record must be readable on a machine that no longer has the repository, so a
+        # step's diffstat is recorded at the one moment it is true rather than re-derived
+        # from git by a reader.
+        changed = _staged_diffstat(working_directory, staged_paths)
+        # Named paths rather than the whole index: anything a concurrent session staged
+        # while the step ran is in the index too, and a commit that swept it in would be
+        # the very "somebody else's work landed as this step's" fault this scoping closes.
+        git(
+            working_directory,
+            ("--literal-pathspecs", "commit", "--no-verify", "-m", message, "--", *staged_paths),
+        )
         head = git(working_directory, ("rev-parse", "HEAD")).stdout
     return CommandResult(
         EXIT_OK,
         "done",
         f"committed {head[:12]}",
-        [],
+        follow_up,
         False,
         None,
-        {
-            "commit": head,
-            "working_directory": str(working_directory),
-            "diffstat": changed,
-        },
+        {**detail, "commit": head, "diffstat": changed},
     )
 
 
+def _follow_up(left: list[str]) -> list[str]:
+    """One line for every path the step found dirty and left alone, or none where it left none."""
+    if not left:
+        return []
+    return [
+        (
+            f"left {len(left)} path(s) uncommitted that were already dirty before "
+            f"the step started: {', '.join(left)}"
+        )
+    ]
+
+
+def _dirty_before(context: RuntimeContext, step_id: str) -> list[str] | None:
+    """The paths the work step saw dirty before its session, or None where it recorded none.
+
+    None means no work node of this run left a snapshot at all — a step its marker gate
+    skipped, which has nothing of its own to stage. A snapshot the work node recorded as
+    absent is a different answer: git would not say what was dirty, so what this step may
+    take cannot be established, and that is a refusal rather than a commit of the marker
+    over work nobody can scope ([21]).
+    """
+    try:
+        report = read_step_report(
+            context.report_path.parent, node_name("work", step_id), context.run_id
+        )
+    except CairnError:
+        return None
+    detail = report.get("detail")
+    if not isinstance(detail, dict):
+        return None
+    found = cast(dict[str, Any], detail).get(DIRTY_BEFORE, _NO_SNAPSHOT)
+    if found is None:
+        raise CairnError(
+            "git_failed",
+            f"the work node of step {step_id!r} could not read what was already dirty when "
+            "it started, so what this commit may take cannot be established",
+            detail={"step": step_id},
+        )
+    if not isinstance(found, list):
+        return None
+    return [path for path in cast(list[Any], found) if isinstance(path, str)]
+
+
+# Distinguishes a report with no snapshot key from one whose snapshot is `null`.
+_NO_SNAPSHOT = object()
+
+
 __all__ = [
-    "commit_all",
+    "DIRTY_BEFORE",
+    "commit_step",
     "prune_worktrees",
     "setup_worktree",
 ]

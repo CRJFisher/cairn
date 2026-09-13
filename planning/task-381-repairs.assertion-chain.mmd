@@ -1,0 +1,62 @@
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'"Trebuchet MS", Verdana, Arial, sans-serif','fontSize':'14px','background':'#f7f3ec','primaryColor':'#ece4d6','primaryBorderColor':'#c06d4f','primaryTextColor':'#1d2024','secondaryColor':'#f7f3ec','secondaryBorderColor':'#9a9b97','secondaryTextColor':'#2f3338','tertiaryColor':'#fffdf8','tertiaryBorderColor':'#d8cfbe','tertiaryTextColor':'#2f3338','lineColor':'#2f3338','textColor':'#2f3338','mainBkg':'#ece4d6','nodeBorder':'#c06d4f','clusterBkg':'#fffdf8','clusterBorder':'#d8cfbe','edgeLabelBackground':'#f7f3ec','titleColor':'#1d2024'},'flowchart':{'htmlLabels':true,'curve':'basis','nodeSpacing':36,'rankSpacing':44,'padding':8,'wrappingWidth':420,'useMaxWidth':true}}}%%
+flowchart TB
+
+  subgraph NEEDED["cairn verify needed — writes reports/verify_&lt;id&gt;.json on every decision"]
+    Q1{"work report<br/>of this run?"}
+    Q2{"shared proof for<br/>command and tree?"}
+    DUP["skipped_upstream<br/>nonzero, the node skips<br/>report: this step's work<br/>node left no report"]
+    DSH["shared<br/>nonzero, the node skips<br/>report: the recorded exit<br/>and the step behind it"]
+    DRN["run<br/>exit 0, the assertion runs<br/>report: command digest<br/>and the tree before it"]
+    FLT["the gate itself faults<br/>argument skew, or a<br/>from_env that raises<br/>today: it closes, no report"]
+    Q1 -- "absent" --> DUP
+    Q1 -- "present" --> Q2
+    Q2 -- "hit" --> DSH
+    Q2 -- "miss" --> DRN
+    FIX["24 B repairs it: exit 0<br/>on every fault, so the<br/>assertion runs instead<br/>of being skipped"]
+    Q1 -. "the gate itself faults" .-> FLT
+    FLT -. "the repair" .-> FIX
+  end
+
+  HAZ["Dagu 2.11.0, measured<br/>a precondition-skipped<br/>node's ${id.exit_code}<br/>resolves to 0, and its<br/>dependents still run"]
+
+  DUP -- "Path 1 · cascade skip" --> HAZ
+  DSH -- "Path 2 · a shared failure" --> HAZ
+  FLT -- "Path 3 · no report at all" --> HAZ
+  DRN -- "the assertion ran" --> G1
+
+  HAZ -- "the mark gate is<br/>handed a 0" --> G1
+
+  subgraph GATE["mark_&lt;id&gt; runs cairn verify gate, and judge reads in this order"]
+    G1{"work report<br/>of this run?"}
+    G2["read the step's own<br/>assertion report first,<br/>and treat it as<br/>authoritative"]
+    T1["not_reached<br/>decided before any<br/>exit status is read<br/>Path 1 stops here"]
+    T2["trust<br/>${verify_x.exit_code}<br/>0 records; nonzero is<br/>verify_failed, no marker"]
+    T3["use the recorded exit<br/>a shared failure closes<br/>every gate quoting it<br/>Path 2 stops here"]
+    T4["gate_indeterminate<br/>the reference is<br/>never read at all<br/>Path 3 stops here"]
+    G1 -- "absent" --> T1
+    G1 -- "present" --> G2
+    G2 -- "says run" --> T2
+    G2 -- "says shared" --> T3
+    G2 -- "says skipped_upstream,<br/>or is absent" --> T4
+  end
+
+  OKM(["marker written"])
+  NOM(["gate closed,<br/>nothing recorded"])
+  T2 --> OKM
+  T2 --> NOM
+  T3 --> OKM
+  T3 --> NOM
+  T1 --> NOM
+  T4 --> NOM
+
+  style NEEDED fill:#fffdf8,stroke:#d8cfbe,color:#1d2024
+  style GATE fill:#fffdf8,stroke:#d8cfbe,color:#1d2024
+
+  classDef moved fill:#f4e2d8,stroke:#c06d4f,stroke-width:2px,color:#1d2024;
+  classDef added fill:#e6ead6,stroke:#6f7a4f,stroke-width:2px,color:#1d2024;
+  classDef hazard fill:#f6d3c9,stroke:#a8412a,stroke-width:3px,color:#1d2024;
+  classDef plain fill:#efece6,stroke:#9a9b97,stroke-width:1.5px,color:#2f3338;
+  class Q1,Q2,DUP,DSH,DRN,G1,G2,T1,T2,T3,T4 moved;
+  class HAZ,FLT hazard;
+  class FIX added;
+  class OKM,NOM plain;

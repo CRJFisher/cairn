@@ -15,9 +15,13 @@ posture is here because it is measured and load-bearing.
 ## The claims
 
 **Every path is resolved at install or invocation.** No hardcoded home directory, no assumed
-repository location, no dependency on a configuration layout only one person has. This includes
-paths that reach the artifact indirectly — a generated workflow encoding the generating machine's
-absolute paths is author-shaped even when the source is not.
+repository location, no dependency on a configuration layout only one person has. A generated
+workflow is the one deliberate exception: it is a **per-machine build product**, not a portable
+artifact. It encodes the package root, the repository and the runs root of the machine it was
+authored on, by design ([workflow.md](../docs/workflow.md)), and it is authored on the machine
+that runs it — re-authoring there is the whole of moving one. That stands until binary
+resolution (item 15) replaces the interpreter resolution baked into every file; until then a
+definition that names another machine's paths is a definition to re-author, never one to edit.
 
 **The engine is obtained, not operated.** Installing Dagu is one documented command. It is not a
 multi-service bootstrap, and it does not need a database or a daemon for the default one-shot run.
@@ -136,22 +140,23 @@ contributor does not casually cross it.
 12. **Verify on a clean machine**: a fresh VM with a different username, no pre-existing
     directories, and nothing of the author's. Install, author a plan, run it, and land a verified
     step. Time it, and publish the number.
-13. **Verify the generated artifacts are portable too**: a workflow generated on one machine is
-    inspected for absolute paths that only exist on it.
+13. **Verify a generated artifact is honest about the machine it names**: a workflow generated on
+    one machine is a per-machine build product by design, and the check is that re-authoring on
+    the target machine produces one that runs there — not that the file carries no absolute path.
 14. **Extract to a public repository** — a directory move plus a manifest, which is the whole of
     packaging. The rule that makes it cheap has held since the first commit: the skill directory is
     self-contained, nothing inside it path-references the rest of this repository, and nothing here
     reaches into it. Assert that with a test rather than trusting it.
 15. **Replace the interpreter resolution [11](11-emitter-and-preflight.md) bakes into every
-   generated file.** The emitted `env:` carries an absolute `PYTHONPATH` resolved on the authoring
-   machine, and every body invokes the bare name `python3`, resolved from the step's `PATH`. So a
-   generated workflow is bound to the machine that wrote it, and a `python3` older than the
-   package needs fails to import Cairn — which the engine reads as a skipped precondition, so
-   every step skips and the run reports a clean success. The preflight's rehearsal catches this at
-   authoring time by running the invocation under the environment the file declares, but it
-   borrows `PATH` from the authoring process, so it cannot see a run launched with a different
-   one. This document owns the resolution that makes the file portable, and the minimum
-   interpreter version, which nothing currently states.
+    generated file.** The emitted `env:` carries an absolute `PYTHONPATH` resolved on the authoring
+    machine, and every body invokes the bare name `python3`, resolved from the step's `PATH`. So a
+    generated workflow is bound to the machine that wrote it, and a `python3` older than the
+    package needs fails to import Cairn — which the engine reads as a skipped precondition, so
+    every step skips and the run reports a clean success. The preflight's rehearsal catches this at
+    authoring time by running the invocation under the environment the file declares, but it
+    borrows `PATH` from the authoring process, so it cannot see a run launched with a different
+    one. This document owns the resolution that makes the file portable, and the minimum
+    interpreter version, which nothing currently states.
 
 ## Exit criteria
 

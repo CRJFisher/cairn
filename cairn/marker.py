@@ -26,7 +26,8 @@ from cairn.core import (
     read_step_report,
     write_json,
 )
-from cairn.layout import occasion_path
+from cairn.gitio import digest_states
+from cairn.layout import MARKER_DIRECTORY, MARKER_SUFFIX, occasion_path
 from cairn.plan.schema import (
     INPUTS_SCOPE,
     ONCE_SCOPE,
@@ -37,8 +38,6 @@ from cairn.plan.schema import (
 )
 from cairn.topology import node_name
 
-MARKER_DIRECTORY = ".steps"
-MARKER_SUFFIX = ".done"
 # The marker records one line, and the step it quotes is free to answer at any length.
 MARKER_SUMMARY_LIMIT = 200
 
@@ -295,10 +294,7 @@ def _inputs_key(root: Path, reads: Sequence[str]) -> str:
     states: dict[str, str] = {}
     for declared in reads:
         states.update(_file_states(root, _read_path(root, declared), declared))
-    digest = hashlib.sha256()
-    for name in sorted(states):
-        digest.update(f"{name}\0{states[name]}\n".encode())
-    return digest.hexdigest()
+    return digest_states(states)
 
 
 def current_key(

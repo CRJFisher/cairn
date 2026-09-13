@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "multi-wave",
-    "cairn_generator": "4",
+    "cairn_generator": "5",
     "cairn_engine": "2.11.0",
     "cairn_graph_sha256": "221a5b31f57a7f14a327b478a0b3912ef489418538aea036fc338a63fadb65d3",
-    "cairn_body_sha256": "6feb824e388b94457fe116678736814439b04dc828cd42f30746467695653397"
+    "cairn_body_sha256": "6cb9dee2e9c67c89a915dbe93f38a84613725f73a5aa5a11a884052854790ba2"
   },
   "params": [
     {
@@ -54,17 +54,17 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn lock acquire --plan multi-wave --run-timeout 40200"
+      "run": "python3 -m cairn lock acquire --plan multi-wave --run-timeout 41100"
     },
     {
       "name": "work_export_schema",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 3600,
+      "timeout_sec": 3780,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `schema/export.json` to a state where it pins the export envelope: workspace id, revision, and an ordered item list.' --model sonnet --max-budget-usd 5.0",
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `schema/export.json` to a state where it pins the export envelope: workspace id, revision, and an ordered item list.' --model sonnet --max-budget-usd 5.0 --timeout 3600",
       "preconditions": [
         {
           "condition": "python3 -m cairn marker absent --step export_schema --scope once"
@@ -88,8 +88,14 @@
         "limit": 0,
         "interval_sec": 1
       },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify needed --step export_schema --command-digest 79a7eaf6d793c2be238cca078a58881b3f0b0e070bac0b9929c8135ee76d80ee"
+        }
+      ],
       "continue_on": {
-        "failure": true
+        "failure": true,
+        "skipped": true
       },
       "depends": [
         "work_export_schema"
@@ -121,7 +127,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn commit --message 'cairn(export_schema): Export schema'",
+      "run": "python3 -m cairn commit --message 'cairn(export_schema): Export schema' --step export_schema",
       "depends": [
         "mark_export_schema"
       ]
@@ -129,12 +135,12 @@
     {
       "name": "work_writer",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 3600,
+      "timeout_sec": 3780,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/export/writer.py` to a state where it emits an envelope conforming to the schema for any workspace on disk.' --model sonnet --max-budget-usd 5.0",
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/export/writer.py` to a state where it emits an envelope conforming to the schema for any workspace on disk.' --model sonnet --max-budget-usd 5.0 --timeout 3600",
       "preconditions": [
         {
           "condition": "python3 -m cairn marker absent --step writer --scope once"
@@ -158,8 +164,14 @@
         "limit": 0,
         "interval_sec": 1
       },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify needed --step writer --command-digest d8064acc1f30b5edcbd7fd0d256311a57a0e84a1213892b4d24bdb1436996863"
+        }
+      ],
       "continue_on": {
-        "failure": true
+        "failure": true,
+        "skipped": true
       },
       "depends": [
         "work_writer"
@@ -191,7 +203,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn commit --message 'cairn(writer): Writer'",
+      "run": "python3 -m cairn commit --message 'cairn(writer): Writer' --step writer",
       "depends": [
         "mark_writer"
       ]
@@ -212,12 +224,12 @@
     {
       "name": "work_reader",
       "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/multi-wave/reader",
-      "timeout_sec": 3600,
+      "timeout_sec": 3780,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/export/reader.py` to a state where it parses an envelope back into a workspace.' --model sonnet --max-budget-usd 5.0",
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/export/reader.py` to a state where it parses an envelope back into a workspace.' --model sonnet --max-budget-usd 5.0 --timeout 3600",
       "preconditions": [
         {
           "condition": "python3 -m cairn marker absent --step reader --scope once"
@@ -241,8 +253,14 @@
         "limit": 0,
         "interval_sec": 1
       },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify needed --step reader --command-digest 207475cb799b8cef228158d2ff8ebad9e5cc7f9d55d02446c792c1652dc9fa6d"
+        }
+      ],
       "continue_on": {
-        "failure": true
+        "failure": true,
+        "skipped": true
       },
       "depends": [
         "work_reader"
@@ -274,7 +292,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn commit --message 'cairn(reader): Reader'",
+      "run": "python3 -m cairn commit --message 'cairn(reader): Reader' --step reader",
       "continue_on": {
         "skipped": true
       },
@@ -298,12 +316,12 @@
     {
       "name": "work_zip_packer",
       "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/multi-wave/zip_packer",
-      "timeout_sec": 3600,
+      "timeout_sec": 3780,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/export/pack.py` to a state where an export directory becomes one `.wsx` archive with a manifest at its root.' --model sonnet --max-budget-usd 5.0",
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/export/pack.py` to a state where an export directory becomes one `.wsx` archive with a manifest at its root.' --model sonnet --max-budget-usd 5.0 --timeout 3600",
       "preconditions": [
         {
           "condition": "python3 -m cairn marker absent --step zip_packer --scope once"
@@ -327,8 +345,14 @@
         "limit": 0,
         "interval_sec": 1
       },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify needed --step zip_packer --command-digest 80bbc782d7b09902e0b2cbb4f5ea82dc2de1a1b62c5e05b51ab7b04d1141297b"
+        }
+      ],
       "continue_on": {
-        "failure": true
+        "failure": true,
+        "skipped": true
       },
       "depends": [
         "work_zip_packer"
@@ -360,7 +384,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn commit --message 'cairn(zip_packer): Zip packer'",
+      "run": "python3 -m cairn commit --message 'cairn(zip_packer): Zip packer' --step zip_packer",
       "continue_on": {
         "skipped": true
       },
@@ -450,12 +474,12 @@
     {
       "name": "work_reconcile",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 3600,
+      "timeout_sec": 3780,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/sync/reconcile.py` to a state where an imported archive merges into the live workspace, newest revision winning per item.' --model sonnet --max-budget-usd 5.0",
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/sync/reconcile.py` to a state where an imported archive merges into the live workspace, newest revision winning per item.' --model sonnet --max-budget-usd 5.0 --timeout 3600",
       "preconditions": [
         {
           "condition": "python3 -m cairn marker absent --step reconcile --scope once"
@@ -479,8 +503,14 @@
         "limit": 0,
         "interval_sec": 1
       },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify needed --step reconcile --command-digest 540adb221457bd24c06b1ae11be068f92e22891337a9ef5719ec8ed98c3f6880"
+        }
+      ],
       "continue_on": {
-        "failure": true
+        "failure": true,
+        "skipped": true
       },
       "depends": [
         "work_reconcile"
@@ -512,7 +542,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn commit --message 'cairn(reconcile): Reconcile'",
+      "run": "python3 -m cairn commit --message 'cairn(reconcile): Reconcile' --step reconcile",
       "depends": [
         "mark_reconcile"
       ]

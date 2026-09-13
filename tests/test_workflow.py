@@ -46,7 +46,7 @@ from cairn.workflow.gate import (
     gate,
     rehearse_start,
 )
-from cairn.workflow.preflight import RULES, Fault, check, rehearse_gate
+from cairn.workflow.preflight import RULES, Fault, check, gate_kind, rehearse_gate
 from cairn.workflow.schema import (
     ENGINE_VERSION,
     GENERATOR_VERSION,
@@ -306,6 +306,25 @@ class ThePreflightRefusesWhatTheEngineWouldRun(unittest.TestCase):
                     return
 
         self.assertIn("marker_with_skipped", self.mutated(add))
+
+    def test_an_assertion_that_cannot_survive_being_declined_is_refused(self) -> None:
+        """A declined assertion's skip would cascade into its marker and commit, and the
+        halt would go unrecorded ([24 B])."""
+        def drop(d: Any) -> None:
+            for step in d["steps"]:
+                if any("verify needed" in c["condition"] for c in step.get("preconditions", [])):
+                    step["continue_on"] = {"failure": True}
+                    return
+
+        self.assertIn("assertion_without_skipped", self.mutated(drop))
+
+    def test_the_three_gates_are_three_exact_prefixes(self) -> None:
+        """A widened `cairn verify` would route the assertion's gate to the marker's rule,
+        and the two want opposite answers to `skipped`."""
+        self.assertEqual(gate_kind("python3 -m cairn marker absent --step a --scope once"), "marker")
+        self.assertEqual(gate_kind("python3 -m cairn verify gate --step a --position chain"), "verify")
+        self.assertEqual(gate_kind("python3 -m cairn verify needed --step a --command-digest x"), "assertion")
+        self.assertIsNone(gate_kind("python3 -m cairn verify --step a"))
 
     def test_a_missing_timeout_is_refused(self) -> None:
         self.assertIn("missing_timeout", self.mutated(lambda d: d["steps"][0].pop("timeout_sec")))

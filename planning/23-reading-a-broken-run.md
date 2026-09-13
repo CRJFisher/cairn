@@ -30,11 +30,11 @@ Found live on the task-381 dogfood runs [21](21-commit-scope.md) and [22](22-tim
 
 ## The bucket
 
-| #   | Symptom                                                                                                                                                  | Where it lives      | State |
-| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- | ----- |
-| A   | A sandboxed reader turns a live run into `orchestrator_died`                                                                                             | `cairn/liveness.py` | open  |
-| B   | The cascade's headline names a bystander, prescribes `settle_merge` on a merge-less chain                                                                | `cairn/record/`     | open  |
-| C   | The emitted definition bakes `PYTHONPATH` as this machine's absolute path, so it runs nowhere else — re-authoring on the target machine is the only path | `cairn/workflow/`   | open  |
+| #   | Symptom                                                                                                                                                  | Where it lives      | State                                                                                              |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- | -------------------------------------------------------------------------------------------------- |
+| A   | A sandboxed reader turns a live run into `orchestrator_died`                                                                                             | `cairn/liveness.py` | open                                                                                               |
+| B   | The cascade's headline names a bystander, prescribes `settle_merge` on a merge-less chain                                                                | `cairn/record/`     | open                                                                                               |
+| C   | The emitted definition bakes `PYTHONPATH` as this machine's absolute path, so it runs nowhere else — re-authoring on the target machine is the only path | `cairn/workflow/`   | decided: a definition is a per-machine build product, authored where it runs ([16](16-release.md)) |
 
 ## Acceptance
 

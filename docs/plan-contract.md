@@ -62,12 +62,23 @@ rejected rather than ignored.
   attempt plus every wait between them — which is how the run's maximum duration and the
   run lock's reclaim window are both derived. The plan document sets a step's own ("give
   it two hours", "at most fifteen minutes"); a plan that says nothing gets the kind's
-  default.
+  default. An agent step is stopped at its bound by the wrapper, with a report grace
+  after it that the engine's own bound allows for, so the priced bound is the bound and a
+  stopped session still leaves its account ([step-kinds.md](step-kinds.md)). A timeout
+  that differs from the kind's default is a warning on the parse report, because nothing
+  quotes the document's words for it the way an edge's evidence does.
 - `retries` is `0` for every kind. Arbitrary shell is not assumed idempotent, and an agent
   failure is either a wrong task or a paid session that already changed the repository —
   neither is worth paying for twice. A rate limit is reported with the moment it clears
   rather than waited out ([supervision.md](supervision.md)). A plan may set its own value;
-  the wait between attempts is 1s.
+  the wait between attempts is 1s. A step's **assertion never retries**, whatever the
+  step's own value. The engine records no per-node retry count, so a retried pass would
+  read exactly like a first-try pass in the run record, and an assertion that passes on
+  its second asking has asserted less while looking like more. The remedy for an assertion
+  that flakes is the plan stating one that does not — an explicit test timeout, a narrower
+  command — and the price of leaving one in is stated plainly: one proof is shared by
+  every gate quoting a command ([verify-gate.md](verify-gate.md)), so one flaky execution
+  closes every one of them.
 - `max_budget_usd` is the dollar ceiling of the one session an agent step opens, written
   into the emitted body as `--max-budget-usd`. It is always present on an agent step and
   always `null` on a command step, which opens no session: a session with no ceiling is
@@ -202,32 +213,32 @@ traceback — because a caller cannot tell a crash from a rejection.
 
 **Errors** (a graph carrying one never reaches generation):
 
-| Code                    | Meaning                                                  |
-| ----------------------- | -------------------------------------------------------- |
-| `schema`                | a missing, unknown, mistyped, or out-of-vocabulary field |
-| `graph_version`         | a graph from a version this validator does not speak     |
+| Code                    | Meaning                                                                           |
+| ----------------------- | --------------------------------------------------------------------------------- |
+| `schema`                | a missing, unknown, mistyped, or out-of-vocabulary field                          |
+| `graph_version`         | a graph from a version this validator does not speak                              |
 | `plan_slug`             | a plan slug outside the grammar, or past the engine's 40-byte bound on a DAG name |
-| `no_sources`            | a graph pinning no document, so nothing can be rechecked |
-| `source_not_pinned`     | an index document absent from `sources`                  |
-| `duplicate_source`      | the same document pinned twice                           |
-| `step_id`               | an id the engine would reject                            |
-| `duplicate_id`          | two steps sharing an id                                  |
-| `duplicate_slug`        | two steps the plan names identically                     |
-| `unresolved_dependency` | a dependency naming no step in the graph                 |
-| `self_dependency`       | a step depending on itself                               |
-| `duplicate_dependency`  | the same edge declared twice                             |
-| `unjustified_edge`      | an edge with no evidence                                 |
-| `cycle`                 | a cycle, named step by step — a cycle is not a topology  |
-| `empty_graph`           | no steps                                                 |
-| `empty_task`            | a step carrying no task                                  |
-| `timeout` / `retries`   | a non-positive timeout or a negative retry count         |
-| `budget`                | an agent step with no positive dollar ceiling            |
-| `model`                 | an agent step naming no model                            |
-| `scope_inputs`          | `scope: inputs` with nothing in `reads`                  |
-| `omitted_and_included`  | one name appearing as both a step and an omission        |
-| `unknown_question_step` | a question naming a step that is not in the graph        |
-| `unquoted_reading`      | a declared reading that quotes no words                  |
-| `unassertable_proposal` | a proposed command that cannot fail, so asserts nothing  |
+| `no_sources`            | a graph pinning no document, so nothing can be rechecked                          |
+| `source_not_pinned`     | an index document absent from `sources`                                           |
+| `duplicate_source`      | the same document pinned twice                                                    |
+| `step_id`               | an id the engine would reject                                                     |
+| `duplicate_id`          | two steps sharing an id                                                           |
+| `duplicate_slug`        | two steps the plan names identically                                              |
+| `unresolved_dependency` | a dependency naming no step in the graph                                          |
+| `self_dependency`       | a step depending on itself                                                        |
+| `duplicate_dependency`  | the same edge declared twice                                                      |
+| `unjustified_edge`      | an edge with no evidence                                                          |
+| `cycle`                 | a cycle, named step by step — a cycle is not a topology                           |
+| `empty_graph`           | no steps                                                                          |
+| `empty_task`            | a step carrying no task                                                           |
+| `timeout` / `retries`   | a non-positive timeout or a negative retry count                                  |
+| `budget`                | an agent step with no positive dollar ceiling                                     |
+| `model`                 | an agent step naming no model                                                     |
+| `scope_inputs`          | `scope: inputs` with nothing in `reads`                                           |
+| `omitted_and_included`  | one name appearing as both a step and an omission                                 |
+| `unknown_question_step` | a question naming a step that is not in the graph                                 |
+| `unquoted_reading`      | a declared reading that quotes no words                                           |
+| `unassertable_proposal` | a proposed command that cannot fail, so asserts nothing                           |
 
 With `--source-root`, five more:
 
@@ -241,13 +252,14 @@ With `--source-root`, five more:
 
 **Warnings** (recorded, reported, never blocking):
 
-| Code              | Meaning                                               |
-| ----------------- | ----------------------------------------------------- |
-| `missing_verify`  | a step nobody has been asked about                    |
-| `unverified_step` | a step whose author declined an assertion for it      |
-| `redundant_edge`  | an edge already implied transitively                  |
-| `unused_reads`    | `reads` declared under a scope that never hashes them |
-| `open_questions`  | questions the author has not answered                 |
+| Code              | Meaning                                                                            |
+| ----------------- | ---------------------------------------------------------------------------------- |
+| `missing_verify`  | a step nobody has been asked about                                                 |
+| `unverified_step` | a step whose author declined an assertion for it                                   |
+| `redundant_edge`  | an edge already implied transitively                                               |
+| `unused_reads`    | `reads` declared under a scope that never hashes them                              |
+| `derived_timeout` | a timeout differing from the kind's default, which nothing quotes the document for |
+| `open_questions`  | questions the author has not answered                                              |
 
 Reachability is not among them. In an acyclic graph every step is reachable from some
 dep-free root by construction, so a reachability check can only ever restate acyclicity.

@@ -37,9 +37,15 @@ plan step's marker gate and `continue_on: {failure: true, skipped: true}` togeth
 ([step-protocol.md](step-protocol.md), [verify-gate.md](verify-gate.md)).
 
 An agent body carries the step's own bounds — `--model` and `--max-budget-usd`, from the
-step record's `model` and `max_budget_usd` ([plan-contract.md](plan-contract.md)) — and
-the emitter refuses an agent step without them: the definition is what an offer prices,
-so a session bounded by the environment would be one nobody could price or attribute.
+step record's `model` and `max_budget_usd` ([plan-contract.md](plan-contract.md)), and
+`--timeout` from its `timeout` — and the emitter refuses an agent step without a model or
+a ceiling: the definition is what an offer prices, so a session bounded by the environment
+would be one nobody could price or attribute. The timeout is enforced inside the wrapper,
+the way a wait's is: the session is stopped at the step's own bound, resumed once under
+the report grace to say what it did, and its report reaches the run directory before the
+engine's own `timeout_sec`, which is the bound plus that grace and stops only a wrapper
+that never reported. The grace and the arithmetic are stated with every other bound in
+[supervision.md](supervision.md).
 
 The plan author owns an agent step's `tools` deny list as its blast-radius declaration — and
 it **adds** to a floor Cairn denies in every session, which the plan cannot take back

@@ -7,6 +7,7 @@ from typing import Any, cast
 
 from cairn.emitters import emit_node, emit_step, emit_verify, retry_policy
 from cairn.plan.schema import (
+    AGENT_REPORT_GRACE,
     ENGINE_NAME_MAX_BYTES,
     SUPPORT_TIMEOUT,
     WAIT_REPORT_GRACE,
@@ -339,8 +340,17 @@ class Duration(unittest.TestCase):
             repository_root=REPOSITORY,
             parent_branch=PARENT,
         )
-        self.assertEqual(by_name(solo, "work_only")["max_seconds"], 100)
-        self.assertEqual(by_name(retried, "work_only")["max_seconds"], 100 * 2 + 1)
+        # An agent step's bound carries its report grace, exactly as the emitted node does
+        # ([22 B]): the number stated and the number the engine enforces are one number.
+        bound = 100 + AGENT_REPORT_GRACE
+        self.assertEqual(by_name(solo, "work_only")["max_seconds"], bound)
+        self.assertEqual(by_name(retried, "work_only")["max_seconds"], bound * 2 + 1)
+        command = derive(
+            one_step_graph(timeout=100, retries=0, kind="command", command="true", command_type="exec"),
+            repository_root=REPOSITORY,
+            parent_branch=PARENT,
+        )
+        self.assertEqual(by_name(command, "work_only")["max_seconds"], 100)
 
     def test_the_run_maximum_holds_whatever_the_engines_concurrency_cap_is(self) -> None:
         # The slowest path would be tighter and wrong: the engine caps concurrent steps,

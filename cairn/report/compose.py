@@ -27,6 +27,7 @@ from cairn.record.vocabulary import (
 )
 from cairn.report import graph
 from cairn.report.phrases import (
+    CAUSE_TIMED_OUT,
     HEADLINE_BY_VERDICT,
     LABEL_BY_ATTENTION,
     SENTENCE_BY_ACTION,
@@ -166,6 +167,25 @@ def _verdict(record: RunRecord) -> list[Block]:
                 ),
             )
         )
+    # The engine says running and the reader could not look — a sandboxed shell that may
+    # not inspect processes is the ordinary case when Cairn is driven through a harness.
+    # Said in one line, because the alternative is the crash sentence above over a run
+    # that is mid-step and about to verify and commit ([23 A]).
+    if record["engine_run_status_name"] == RUN_RUNNING and record["owner_alive"] is None:
+        blocks.append(
+            Statement(
+                "statement",
+                (
+                    Chrome(
+                        "Whether the process running this run is still alive could not be "
+                        "checked from this shell, so the run reads as running as far as the "
+                        "record shows. The engine's own record says"
+                    ),
+                    Fact(("run.engine_status",)),
+                    Chrome(", and it is the better witness."),
+                ),
+            )
+        )
     blocks.append(
         Fields(
             "fields",
@@ -197,6 +217,38 @@ def _next_action(record: RunRecord) -> list[Block]:
                 (Chrome("It concerns"), Fact(("run.next_subject",)), Chrome(".")),
             )
         )
+    subject = next(
+        (step for step in record["steps"] if step["step_id"] == action["subject"]), None
+    )
+    if subject is not None:
+        divergence = subject["divergence"]
+        if (
+            subject["cause"] == CAUSE_TIMED_OUT
+            and divergence is not None
+            and divergence["asserted"]
+        ):
+            # Said before the command, because it is what a person weighs before deciding
+            # to re-run: a step stopped at its bound whose assertion passed left its work
+            # in the tree, and a re-run is a session that finds it there ([22 A]).
+            blocks.append(
+                Statement(
+                    "statement",
+                    (
+                        Chrome(
+                            "Its assertion passed over the work it left, so that work is "
+                            "in the tree; the two accounts stand side by side below."
+                        ),
+                    ),
+                )
+            )
+        if subject["assertion_tail"] is not None:
+            blocks.append(
+                Verbatim(
+                    "verbatim",
+                    "what its assertion said",
+                    Fact((f"step.{subject['step_id']}.assertion_tail",)),
+                )
+            )
     if action["command"] is not None:
         blocks.append(Verbatim("verbatim", None, Fact(("run.next_command",))))
     # The action's own frozen word, beside the sentence that phrases it. Automation reads
@@ -345,6 +397,14 @@ def _steps(record: RunRecord) -> list[Block]:
         blocks.append(
             Verbatim("verbatim", f"{step['step_id']} was asked", Fact((f"{key}.asked",)))
         )
+        if step["assertion_tail"] is not None:
+            blocks.append(
+                Verbatim(
+                    "verbatim",
+                    f"what {step['step_id']}'s assertion said",
+                    Fact((f"{key}.assertion_tail",)),
+                )
+            )
     return blocks
 
 
@@ -501,6 +561,11 @@ def _receipts(record: RunRecord) -> list[Block]:
                     ("commit", Fact((f"{key}.commit",))),
                     ("changed", Fact((f"{key}.diffstat",))),
                     ("exit code", Fact((f"{key}.exit_code",))),
+                    ("assertion exit", Fact((f"{key}.assertion_exit",))),
+                    ("assertion proven by", Fact((f"{key}.assertion_source",))),
+                    ("the step that proved it", Fact((f"{key}.assertion_backed_by",))),
+                    ("stopped at its bound of", Fact((f"{key}.timeout_seconds",))),
+                    ("after running for", Fact((f"{key}.elapsed_seconds",))),
                     ("where a failure routes", Fact((f"{key}.position",))),
                     ("started", Fact((f"{key}.started_at",))),
                     ("finished", Fact((f"{key}.finished_at",))),

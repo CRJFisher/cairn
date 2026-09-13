@@ -12,7 +12,7 @@ Two structures — an enumeration and a separate ranking — drift.
 
 from __future__ import annotations
 
-RECORD_VERSION = 2
+RECORD_VERSION = 3
 
 # --- the run verdict -----------------------------------------------------------------
 #

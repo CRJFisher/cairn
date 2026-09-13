@@ -55,7 +55,7 @@ done/no-op except when `needs_user_decision` deliberately blocks routing with
 `user_decision_required`; a terminal failure is nonzero, and `cause` explains it.
 
 The cause vocabulary is closed. Doc 05 issues `command_failed`, `wait_timeout`,
-`cancelled`, `provider_failed`, `provider_protocol`, `provider_unavailable`,
+`timed_out`, `cancelled`, `provider_failed`, `provider_protocol`, `provider_unavailable`,
 `reported_failure`, `user_decision_required`, `rate_limited`, `budget_exhausted`,
 `turn_limit`, `process_launch_failed`, `invalid_command`, `invalid_wait`,
 `invalid_arguments`, `invalid_report`, `missing_runtime_identity`, and `internal_error`.
@@ -141,6 +141,7 @@ provider added later inherits it without knowing it exists.
 python3 -m cairn occasion new
 python3 -m cairn marker absent --step <id> --scope <scope> [--reads <path>]…
 python3 -m cairn marker write  --step <id> --scope <scope> [--reads <path>]…
+python3 -m cairn verify needed --step <id> --command-digest <sha256>
 python3 -m cairn verify gate   --step <id> --position <chain|branch> [--verify-exit <status>]
 python3 -m cairn plan propose  <graph> [--json]
 python3 -m cairn plan answer   <graph> --step <id> (--command <text> | --decline --reason <text>)
@@ -156,11 +157,19 @@ python3 -m cairn report         --run <id> [--repository <path>]
 
 `marker absent` exits 0 when the step's work still has to happen, including on every error
 it meets, and exits nonzero only when it has positively established a fresh marker.
-`verify gate` is its inverse: it exits 0 only when it has positively established that the
-step's end state was asserted and the step did not veto itself, and every fault closes it.
-Both are preconditions rather than steps, so each writes a report only on the path where no
-step will run to write one. Their opposite fail directions are argued in
-[step-protocol.md](step-protocol.md) and [verify-gate.md](verify-gate.md).
+`verify needed` sits on the assertion node and exits 0 when the assertion has anything to
+assert, including on every error it meets; it exits nonzero only when the step's work node
+left no report of this run — a step an upstream halt skipped — or when the same command
+has already been proven in this run against exactly this tree, in which case it records
+the proof it shares and the step whose execution backed it. `verify gate` is the inverse
+of both: it exits 0 only when it has positively established that the step's end state was
+asserted and the step did not veto itself, and every fault closes it. All three are
+preconditions rather than steps. The marker gate and the verify gate write a report only on
+the path where no step will run to write one; the assertion's gate writes its decision on
+every path, under the assertion node's own name, because the verify gate trusts the
+engine's exit-status reference only where that decision says the assertion ran. Their fail
+directions are argued in [step-protocol.md](step-protocol.md) and
+[verify-gate.md](verify-gate.md).
 
 `marker write` is a step and leaves a report like any other. It takes the marker's summary
 from the verified step's own report rather than an argument, because only the step that did
@@ -195,9 +204,16 @@ report rather than in its status.
 `worktree setup` converges every worktree state it can and halts on the rest, `worktree
 prune` removes a wave's worktrees and its merged branches only — both taking `--plan` and
 `--step` and deriving the worktree path from the repository they stand in, so no body names
-one target — and `commit` distinguishes
-nothing-to-commit from a staging failure by reading the index. Each holds the git write
-mutex inside itself.
+one target — and `commit`, taking `--message` and `--step`, stages what the step's own
+session dirtied and the step's marker by path, never the working tree at large, and
+distinguishes nothing-to-commit from a staging failure by reading the index. Every work
+step records in its report's `detail`, as `dirty_before`, the paths that were already
+dirty when its session started; the commit stages the paths dirty now and not then, leaves
+the rest alone, and names them as `left_uncommitted` and in its follow-up work. A work
+report that carries no snapshot at all — a marker no-op's — stages the marker alone; one
+whose snapshot is absent because git would not answer is a `git_failed` refusal, because a
+commit that cannot be scoped is the loss this scoping exists to prevent. Each holds
+the git write mutex inside itself.
 
 `wave join` records which of a wave's branches carry work to land, before any slot moves a
 tip and makes an excluded branch indistinguishable from a landed one. `merge land` chooses

@@ -62,7 +62,10 @@ For each unit of work the plan names:
   of 8.0, "pin it to the opus model" is a model of `opus` — and leave it out everywhere
   else, so the kind's default applies. Raising a workflow's timeouts, ceilings or models
   is therefore an edit to the plan document followed by re-authoring, not an edit to the
-  generated file.
+  generated file. A timeout that differs from the kind's default is a warning on the parse
+  report, naming the step and the bound: unlike an edge, a bound carries no quotation of
+  the words that justify it, so the report says the derivation supplied it and the person
+  confirming the parse checks the document holds the sentence.
 
 ### State every task as an end state
 

@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "fan-out",
-    "cairn_generator": "4",
+    "cairn_generator": "5",
     "cairn_engine": "2.11.0",
     "cairn_graph_sha256": "22d2007fa505c72c4c0234315a0fa7dd1f76cb9c161aadbf9631f8e1a98a9ecc",
-    "cairn_body_sha256": "a053abf7eaa6bad3f452bcd838bf3068f2ba95842b079552a94019c6ca667049"
+    "cairn_body_sha256": "beb48c9744eef3028554116c2df877eb56f37679e1978cadeee8dd3da00c0c4d"
   },
   "params": [
     {
@@ -54,17 +54,17 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn lock acquire --plan fan-out --run-timeout 29400"
+      "run": "python3 -m cairn lock acquire --plan fan-out --run-timeout 29940"
     },
     {
       "name": "work_extract_the_loader_interface",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 3600,
+      "timeout_sec": 3780,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/config/loader.py` to a state where it exposes a `load(path) -> dict` helper that every reader below uses.' --model sonnet --max-budget-usd 5.0",
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/config/loader.py` to a state where it exposes a `load(path) -> dict` helper that every reader below uses.' --model sonnet --max-budget-usd 5.0 --timeout 3600",
       "preconditions": [
         {
           "condition": "python3 -m cairn marker absent --step extract_the_loader_interface --scope once"
@@ -88,8 +88,14 @@
         "limit": 0,
         "interval_sec": 1
       },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify needed --step extract_the_loader_interface --command-digest 414c11b90a2810ec7b749860abeff993afb2cb776efdb0abd71e31dd43971929"
+        }
+      ],
       "continue_on": {
-        "failure": true
+        "failure": true,
+        "skipped": true
       },
       "depends": [
         "work_extract_the_loader_interface"
@@ -121,7 +127,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn commit --message 'cairn(extract_the_loader_interface): Extract the loader interface'",
+      "run": "python3 -m cairn commit --message 'cairn(extract_the_loader_interface): Extract the loader interface' --step extract_the_loader_interface",
       "depends": [
         "mark_extract_the_loader_interface"
       ]
@@ -142,12 +148,12 @@
     {
       "name": "work_keymap_reader",
       "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/fan-out/keymap_reader",
-      "timeout_sec": 3600,
+      "timeout_sec": 3780,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/config/keymap.py` to a state where it reads `keys.toml` through the loader and rejects a duplicate binding.' --model sonnet --max-budget-usd 5.0",
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/config/keymap.py` to a state where it reads `keys.toml` through the loader and rejects a duplicate binding.' --model sonnet --max-budget-usd 5.0 --timeout 3600",
       "preconditions": [
         {
           "condition": "python3 -m cairn marker absent --step keymap_reader --scope once"
@@ -171,8 +177,14 @@
         "limit": 0,
         "interval_sec": 1
       },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify needed --step keymap_reader --command-digest 0b5de4f27676bdfd7a539eb9543d5630303dd9e01ffa7cee187c9fc68037bc9c"
+        }
+      ],
       "continue_on": {
-        "failure": true
+        "failure": true,
+        "skipped": true
       },
       "depends": [
         "work_keymap_reader"
@@ -204,7 +216,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn commit --message 'cairn(keymap_reader): Keymap reader'",
+      "run": "python3 -m cairn commit --message 'cairn(keymap_reader): Keymap reader' --step keymap_reader",
       "continue_on": {
         "skipped": true
       },
@@ -228,12 +240,12 @@
     {
       "name": "work_theme_reader",
       "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/fan-out/theme_reader",
-      "timeout_sec": 3600,
+      "timeout_sec": 3780,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/config/theme.py` to a state where it reads `theme.toml` through the loader and validates the palette keys.' --model sonnet --max-budget-usd 5.0",
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/config/theme.py` to a state where it reads `theme.toml` through the loader and validates the palette keys.' --model sonnet --max-budget-usd 5.0 --timeout 3600",
       "preconditions": [
         {
           "condition": "python3 -m cairn marker absent --step theme_reader --scope once"
@@ -257,8 +269,14 @@
         "limit": 0,
         "interval_sec": 1
       },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify needed --step theme_reader --command-digest 221d56afc03c2e795f740a87e377f6a4a580f96650fbff72c450023d98492c79"
+        }
+      ],
       "continue_on": {
-        "failure": true
+        "failure": true,
+        "skipped": true
       },
       "depends": [
         "work_theme_reader"
@@ -290,7 +308,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn commit --message 'cairn(theme_reader): Theme reader'",
+      "run": "python3 -m cairn commit --message 'cairn(theme_reader): Theme reader' --step theme_reader",
       "continue_on": {
         "skipped": true
       },

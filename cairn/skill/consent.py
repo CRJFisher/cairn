@@ -256,17 +256,36 @@ def node_roles(document: Any) -> tuple[frozenset[str], bool]:
 
 
 def longest_timeout(document: Any) -> int:
-    """The largest per-attempt bound any step in this definition runs under."""
+    """The largest bound any step in this definition is stopped at.
+
+    An agent step's own bound is the `--timeout` its body carries, which is where the
+    wrapper stops the session; the engine's `timeout_sec` on that node lands a report
+    grace later and stops only a wrapper that never reported ([22 B]). Every other node's
+    bound is the engine's.
+    """
     steps = _step_list(document)
     if steps is None:
         return 0
-    timeouts = [
-        timeout
-        for step in steps
-        if isinstance(step, dict)
-        and isinstance(timeout := cast(dict[str, Any], step).get("timeout_sec"), int)
-        and not isinstance(timeout, bool)
-    ]
+    timeouts: list[int] = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        entry = cast(dict[str, Any], step)
+        body = entry.get("run")
+        own = (
+            _flag_value(split_argv(body), "--timeout")
+            if isinstance(body, str) and is_agent_body(body)
+            else None
+        )
+        if own is not None:
+            try:
+                timeouts.append(int(float(own)))
+                continue
+            except ValueError:
+                pass
+        timeout = entry.get("timeout_sec")
+        if isinstance(timeout, int) and not isinstance(timeout, bool):
+            timeouts.append(timeout)
     return max(timeouts, default=0)
 
 

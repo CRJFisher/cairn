@@ -17,8 +17,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from cairn.assertions import NEEDED_VERB, command_digest
 from cairn.plan.schema import (
     AGENT_FAMILY,
+    AGENT_REPORT_GRACE,
     INPUTS_SCOPE,
     MERGE_RETRIES,
     MERGE_TIMEOUT,
@@ -120,10 +122,16 @@ def emit_agent(step: Step, working_directory: str) -> EngineStep:
         model,
         "--max-budget-usd",
         str(budget),
+        # The step's own bound, enforced inside the wrapper, so the session is stopped
+        # with headroom to say what it did. The engine's kill lands the grace later, and
+        # erases nothing a report could have said ([22 B]).
+        "--timeout",
+        str(step["timeout"]),
     ]
     for deny_pattern in step["tools"] or []:
         arguments.extend(("--tool", deny_pattern))
     emitted = _base(step, working_directory)
+    emitted["timeout_sec"] = step["timeout"] + AGENT_REPORT_GRACE
     emitted["run"] = shlex.join(arguments)
     return emitted
 
@@ -231,16 +239,42 @@ def emit_step(step: Step, working_directory: str) -> EngineStep:
     return emitted
 
 
+def assertion_gate(step: Step) -> str:
+    """The command whose exit status decides whether this step's assertion runs at all.
+
+    The command's bytes never reach argv; their digest does, computed here so the key
+    sharing is looked up under is the command the offer priced ([assertions.py]).
+    """
+    command = step["verify"]
+    if command is None:
+        raise ValueError(f"step {step['id']!r} declares no assertion to gate")
+    return shlex.join(
+        [
+            *CAIRN_INVOCATION,
+            "verify",
+            NEEDED_VERB,
+            "--step",
+            step["id"],
+            "--command-digest",
+            command_digest(command),
+        ]
+    )
+
+
 def emit_verify(step: Step, working_directory: str) -> EngineStep:
     """The plan's assertion, run verbatim, with nothing of Cairn's between it and the engine.
 
     It carries an explicit `id` because that is the only name the gate's exit-status
     reference can reach it by, and it never retries: an assertion is a fact check, and
-    asking it twice asks a different question.
+    asking it twice asks a different question. Its precondition is Cairn's, and decides
+    only whether there is anything to assert: a step an upstream halt skipped left no
+    report, and its assertion would prove nothing a gate could read ([24 B]).
     """
     command = step["verify"]
     if command is None:
         raise ValueError(f"step {step['id']!r} declares no assertion to emit")
+    gate = assertion_gate(step)
+    _refuse_unquoted(step["id"], gate)
     return {
         "name": verify_name(step["id"]),
         "id": verify_handle(step["id"]),
@@ -249,10 +283,13 @@ def emit_verify(step: Step, working_directory: str) -> EngineStep:
         "working_dir": working_directory,
         "timeout_sec": SUPPORT_TIMEOUT,
         "retry_policy": retry_policy(0, RETRY_INTERVAL),
-        # Stay recorded as failed while the run survives to reach the join. Without this
-        # the failure aborts everything downstream, and in a fan-out that is the merge —
-        # so one branch's failed assertion would land nothing at all.
-        "continue_on": {"failure": True},
+        "preconditions": [{"condition": gate}],
+        # `failure`: stay recorded as failed while the run survives to reach the join.
+        # Without it the failure aborts everything downstream, and in a fan-out that is
+        # the merge — so one branch's failed assertion would land nothing at all.
+        # `skipped`: an assertion its gate declined still lets the marker's gate run and
+        # record `not_reached`; measured, a precondition skip cascades otherwise.
+        "continue_on": {"failure": True, "skipped": True},
     }
 
 
@@ -437,8 +474,13 @@ def emit_commit(node: Node, message: str) -> EngineStep:
     cascade at this branch so the join still runs and the merge sees no new work, and in a
     chain its absence lets the cascade carry on into everything that depended on the work.
     """
+    step_id = node["step"]
+    if step_id is None:
+        raise ValueError(f"commit node {node['name']!r} names no step")
     emitted = _support_step(
-        node["name"], node["working_directory"], ["commit", "--message", message]
+        node["name"],
+        node["working_directory"],
+        ["commit", "--message", message, "--step", step_id],
     )
     position = str(node["detail"]["position"])
     if position not in POSITIONS:
@@ -511,6 +553,7 @@ def _step_of(node: Node, steps: dict[str, Step]) -> Step:
 
 __all__ = [
     "EngineStep",
+    "assertion_gate",
     "emit_agent",
     "emit_command",
     "emit_commit",

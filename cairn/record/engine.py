@@ -105,6 +105,44 @@ TRIGGER_TYPE: dict[int, str] = {
 # the live-to-persisted transform drops it, so nothing reaches disk or the REST API.
 EXIT_STATUS = re.compile(r"exit status (\d+)")
 
+# A step the engine killed at its bound is spelled in prose too, and only there: the node is
+# a plain `failed`, and the kill, the bound and the elapsed time survive in this sentence
+# alone. Measured against Dagu 2.11.0: `step timed out after 2.002s (timeout: 2s): context
+# deadline exceeded`, the durations in Go's own spelling ([22 A]).
+STEP_TIMEOUT = re.compile(r"step timed out after (\S+) \(timeout: ([^)]+)\)")
+_GO_DURATION = re.compile(r"(\d+(?:\.\d+)?)(h|ms|m|s)")
+_GO_UNIT_SECONDS = {"h": 3600.0, "m": 60.0, "s": 1.0, "ms": 0.001}
+
+
+class Timeout(NamedTuple):
+    """The bound the engine enforced and how long the step had run when it fired."""
+
+    bound_seconds: int
+    elapsed_seconds: float
+
+
+def _go_duration(text: str) -> float | None:
+    """Seconds from a Go `Duration`, which prints `2h30m0.041s`, `2.002s`, `500ms`."""
+    if not text or _GO_DURATION.sub("", text):
+        return None
+    return sum(
+        float(amount) * _GO_UNIT_SECONDS[unit] for amount, unit in _GO_DURATION.findall(text)
+    )
+
+
+def parse_timeout(error: object) -> Timeout | None:
+    """The kill the engine recorded on a node, dug back out of the sentence holding it."""
+    if not isinstance(error, str):
+        return None
+    found = STEP_TIMEOUT.search(error)
+    if found is None:
+        return None
+    elapsed = _go_duration(found.group(1))
+    bound = _go_duration(found.group(2))
+    if elapsed is None or bound is None:
+        return None
+    return Timeout(bound_seconds=int(bound), elapsed_seconds=elapsed)
+
 
 class Attempt(NamedTuple):
     """One attempt's record, and the moment it says it began."""
@@ -306,6 +344,7 @@ __all__ = [
     "RUN_STATUS",
     "RUN_SUCCEEDED",
     "RUN_VOCABULARY",
+    "STEP_TIMEOUT",
     "TRIGGER_CATCHUP",
     "TRIGGER_MANUAL",
     "TRIGGER_RETRY",
@@ -317,6 +356,7 @@ __all__ = [
     "TRIGGER_WEBHOOK",
     "Attempt",
     "Naming",
+    "Timeout",
     "classify",
     "find_attempts",
     "moment",
@@ -326,6 +366,7 @@ __all__ = [
     "node_status_name",
     "nodes_of",
     "parse_exit_code",
+    "parse_timeout",
     "run_status_name",
     "text",
     "trigger_name",

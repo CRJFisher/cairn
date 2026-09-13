@@ -37,7 +37,7 @@ from cairn.layout import (
 from cairn.liveness import self_start_time
 from cairn.record import engine
 from cairn.record.engine import Attempt, began
-from cairn.record.extract import extract, read_reports
+from cairn.record.extract import classify_step, extract, read_reports, step_order
 from cairn.record.facts import ABSENT, as_mapping, canonical_facts
 from cairn.record.model import RunRecord
 from cairn.record.store import read_record, write_record
@@ -49,7 +49,9 @@ from cairn.record.vocabulary import (
     NEXT_ACTIONS,
     NEXT_RERUN,
     NEXT_SETTLE_MERGE,
+    NEXT_WAIT,
     OUTCOME_EXCLUDED,
+    OUTCOME_FAILED,
     OUTCOME_NO_OP,
     OUTCOME_NOT_REACHED,
     OUTCOME_PENDING,
@@ -80,7 +82,15 @@ from cairn.text import (
     normalise,
     normalise_all,
 )
-from cairn.verify import EXCLUSION_CAUSES, ORCHESTRATOR_DIED
+from cairn.verify import (
+    EXCLUSION_CAUSES,
+    NOT_REACHED,
+    ORCHESTRATOR_DIED,
+    REPORTED_FAILURE,
+    REPORTED_KILLED,
+    TIMED_OUT,
+    VERIFY_FAILED,
+)
 from cairn.workflow.schema import ENGINE_VERSION
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -95,6 +105,7 @@ SHAPES = (
     "all-no-op",
     "mid-run",
     "crashed",
+    "timed-out",
     "agent",
 )
 
@@ -284,6 +295,24 @@ class TheEngineStatusMappingIsPinned(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(CairnError):
                 engine.node_status_name(value)
 
+    def test_the_kill_survives_only_inside_the_error_sentence(self) -> None:
+        """Measured against Dagu 2.11.0: the node is a plain `failed`; the bound and the
+        elapsed time are in the prose, in Go's own duration spelling ([22 A])."""
+        found = engine.parse_timeout(
+            "step timed out after 2h30m0.041s (timeout: 2h30m0s): context deadline exceeded"
+        )
+        self.assertIsNotNone(found)
+        assert found is not None
+        self.assertEqual(found.bound_seconds, 9000)
+        self.assertAlmostEqual(found.elapsed_seconds, 9000.041)
+        short = engine.parse_timeout(
+            "step timed out after 2.002s (timeout: 2s): context deadline exceeded"
+        )
+        self.assertEqual(short, engine.Timeout(bound_seconds=2, elapsed_seconds=2.002))
+        for other in ("exit status 3", "step timed out", "", None, 7):
+            with self.subTest(error=other):
+                self.assertIsNone(engine.parse_timeout(other))
+
     def test_the_exit_code_survives_only_inside_the_error_string(self) -> None:
         self.assertEqual(engine.parse_exit_code("exit status 7"), 7)
         self.assertIsNone(engine.parse_exit_code("upstream failed"))
@@ -298,7 +327,7 @@ class TheEngineStatusMappingIsPinned(unittest.TestCase):
 class TheCorpusCoversTheStateSpace(unittest.TestCase):
     """Exit criterion: the fixture corpus covers every verdict and every step outcome."""
 
-    def test_the_corpus_is_the_seven_runs_the_document_names(self) -> None:
+    def test_the_corpus_is_exactly_the_runs_the_document_names(self) -> None:
         recorded = {path.name for path in CORPUS.iterdir() if path.is_dir()}
         self.assertEqual(recorded, set(SHAPES))
         document = DOCUMENT.read_text(encoding="utf-8")
@@ -504,6 +533,19 @@ class ARunIsReadableWithNothingRunning(unittest.TestCase):
         self.assertEqual(dead["verdict"], VERDICT_FAILED)
         self.assertEqual(live["verdict"], VERDICT_RUNNING)
 
+    def test_a_reader_that_cannot_look_reports_a_live_run_as_running(self) -> None:
+        """The dogfood fault ([23 A]): a sandboxed shell answered failed, orchestrator_died,
+        rerun — over a run that was mid-step and went on to verify and commit."""
+        state, reports, run_id = load("mid-run")
+        with patch("cairn.liveness.process_start_time", return_value=None):
+            record = extract(alive_copy(state), reports, run_id=run_id)
+        self.assertIsNone(record["owner_alive"])
+        self.assertEqual(record["provenance"]["owner_alive"], PROVENANCE_ABSENT)
+        self.assertEqual(record["verdict"], VERDICT_RUNNING)
+        self.assertEqual(record["next_action"]["action"], NEXT_WAIT)
+        self.assertNotIn(ORCHESTRATOR_DIED, {step["cause"] for step in record["steps"]})
+        self.assertNotIn(OUTCOME_FAILED, {step["outcome"] for step in record["steps"]})
+
     def test_a_sibling_not_yet_started_is_pending_and_a_step_behind_a_halt_is_not_reached(
         self,
     ) -> None:
@@ -518,6 +560,237 @@ class ARunIsReadableWithNothingRunning(unittest.TestCase):
             step["step_id"]: step["outcome"] for step in record_of("red")["steps"]
         }
         self.assertEqual(halted["beta"], OUTCOME_NOT_REACHED)
+
+
+TIMEOUT_SENTENCE = (
+    "step timed out after 2h30m0.041s (timeout: 2h30m0s): context deadline exceeded"
+)
+
+
+def killed_chain(
+    *, mark_cause: str | None = NOT_REACHED, assertion_status: int = 4
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    """The measured shape ([22]): a work node the engine killed, its assertion run after it,
+    and the gate closing over the absent report."""
+    state: dict[str, Any] = {
+        "dagRunId": "run-killed",
+        "name": "plan",
+        "status": 6,
+        "startedAt": "2026-08-28T15:24:43+01:00",
+        "finishedAt": "2026-08-29T06:05:00+01:00",
+        "paramsList": ["CAIRN_REPOSITORY=/srv/work/product"],
+        "nodes": [
+            {
+                "step": {"name": "work_alpha"},
+                "status": 2,
+                "error": TIMEOUT_SENTENCE,
+                "startedAt": "2026-08-29T03:31:14+01:00",
+                "finishedAt": "2026-08-29T06:01:14+01:00",
+            },
+            {"step": {"name": "verify_alpha", "depends": ["work_alpha"]}, "status": assertion_status},
+            {"step": {"name": "mark_alpha", "depends": ["verify_alpha"]}, "status": 5},
+            {"step": {"name": "commit_alpha", "depends": ["mark_alpha"]}, "status": 5},
+        ],
+    }
+    reports: dict[str, dict[str, Any]] = {}
+    if mark_cause is not None:
+        reports["mark_alpha"] = {
+            "step_id": "mark_alpha",
+            "run_id": "run-killed",
+            "status": "failed",
+            "cause": mark_cause,
+            "summary": "the gate closed",
+            "needs_user_decision": False,
+            "detail": {"position": "chain", "verify_exit": 0, "reported": None},
+        }
+    return state, reports
+
+
+class AStepTheEngineKilledIsTimedOut(unittest.TestCase):
+    """[22 A]: a step that landed four commits and passed its assertion was recorded as one
+    that never ran, beside an engine node saying it timed out after 2h30m."""
+
+    def test_the_engines_kill_outranks_the_gates_absent_report_reading(self) -> None:
+        outcome, overlays, cause = classify_step(
+            work_status=engine.NODE_STATUS_FAILED,
+            mark_status=engine.NODE_STATUS_SKIPPED,
+            work_report=None,
+            mark_report={"cause": NOT_REACHED},
+            has_assertion=True,
+            run_settled=True,
+            orchestrator_gone=False,
+            engine_killed=True,
+        )
+        self.assertEqual((outcome, cause), (OUTCOME_FAILED, TIMED_OUT))
+        self.assertNotIn(OVERLAY_DIVERGENCE, overlays)
+
+    def test_a_cause_the_gate_established_on_its_own_evidence_is_never_overridden(self) -> None:
+        for own_cause in (VERIFY_FAILED, REPORTED_FAILURE):
+            with self.subTest(cause=own_cause):
+                _, _, cause = classify_step(
+                    work_status=engine.NODE_STATUS_FAILED,
+                    mark_status=engine.NODE_STATUS_SKIPPED,
+                    work_report=None,
+                    mark_report={"cause": own_cause},
+                    has_assertion=True,
+                    run_settled=True,
+                    orchestrator_gone=False,
+                    engine_killed=True,
+                )
+                self.assertEqual(cause, own_cause)
+
+    def test_a_step_that_reported_is_read_from_its_report_however_the_engine_ended_it(
+        self,
+    ) -> None:
+        _, _, cause = classify_step(
+            work_status=engine.NODE_STATUS_FAILED,
+            mark_status=engine.NODE_STATUS_SKIPPED,
+            work_report={"status": "failed", "needs_user_decision": False},
+            mark_report={"cause": REPORTED_FAILURE},
+            has_assertion=True,
+            run_settled=True,
+            orchestrator_gone=False,
+            engine_killed=True,
+        )
+        self.assertEqual(cause, REPORTED_FAILURE)
+
+    def test_the_record_carries_the_bound_the_elapsed_time_and_the_assertions_verdict(
+        self,
+    ) -> None:
+        """The assertion of a killed step runs only where its own gate faulted open, which
+        is the one way an emitted workflow produces this. Where it did, its verdict is
+        weighed against the session nobody heard from."""
+        state, reports = killed_chain()
+        record = extract(state, reports, run_id="run-killed")
+        step = record["steps"][0]
+        self.assertEqual(step["outcome"], OUTCOME_FAILED)
+        self.assertEqual(step["cause"], TIMED_OUT)
+        self.assertEqual(step["timeout_seconds"], 9000)
+        self.assertAlmostEqual(cast(float, step["elapsed_seconds"]), 9000.041)
+        self.assertEqual(step["provenance"]["timeout_seconds"], "derived")
+        self.assertEqual(step["divergence"], {"reported": REPORTED_KILLED, "asserted": True})
+        self.assertIn(OVERLAY_DIVERGENCE, step["overlays"])
+        self.assertEqual(step["provenance"]["divergence"], "derived")
+        self.assertEqual(record["verdict"], VERDICT_FAILED)
+        summaries = {item["kind"]: item["summary"] for item in record["attention"]}
+        self.assertIn("9000 s bound", summaries["failure"])
+        self.assertIn("stopped at its bound", summaries["divergence"])
+        self.assertIn("passed over the work it left", summaries["divergence"])
+
+    def test_an_assertion_that_never_ran_leaves_nothing_to_weigh(self) -> None:
+        """The ordinary shape of a killed step: its assertion's gate declined for want of
+        the report the kill prevented, so there is no second account to weigh."""
+        state, reports = killed_chain(assertion_status=5)
+        step = extract(state, reports, run_id="run-killed")["steps"][0]
+        self.assertEqual(step["cause"], TIMED_OUT)
+        self.assertIsNone(step["divergence"])
+        self.assertNotIn(OVERLAY_DIVERGENCE, step["overlays"])
+
+    def test_a_gate_that_never_ran_still_reads_the_kill(self) -> None:
+        state, reports = killed_chain(mark_cause=None)
+        step = extract(state, reports, run_id="run-killed")["steps"][0]
+        self.assertEqual((step["outcome"], step["cause"]), (OUTCOME_FAILED, TIMED_OUT))
+
+    def test_the_recorded_kill_reads_as_the_measured_fault_repaired(self) -> None:
+        """The `timed-out` corpus shape, recorded from the engine with the gates the
+        emitter writes: the killed step is `timed_out` carrying the bound that fired and
+        how long it ran, the step behind it is `not_reached`, and the subject of what to do
+        next is the killed step. It carries no assertion verdict, because the gate that
+        decides whether an assertion runs turns on the same absent report the kill caused
+        ([24 B]) — a shape, not a gap."""
+        record = record_of("timed-out")
+        by_id = {step["step_id"]: step for step in record["steps"]}
+        alpha, beta = by_id["alpha"], by_id["beta"]
+        self.assertEqual((alpha["outcome"], alpha["cause"]), (OUTCOME_FAILED, TIMED_OUT))
+        self.assertEqual(alpha["timeout_seconds"], 2)
+        self.assertGreaterEqual(cast(float, alpha["elapsed_seconds"]), 2.0)
+        self.assertIsNone(alpha["divergence"])
+        self.assertIsNone(alpha["assertion_exit"])
+        self.assertEqual((beta["outcome"], beta["cause"]), (OUTCOME_NOT_REACHED, NOT_REACHED))
+        self.assertEqual(record["verdict"], VERDICT_FAILED)
+        self.assertEqual(record["next_action"]["action"], NEXT_RERUN)
+        self.assertEqual(record["next_action"]["subject"], "alpha")
+        self.assertIsNotNone(record["next_action"]["command"])
+        failures = [item for item in record["attention"] if item["kind"] == "failure"]
+        self.assertEqual([item["subject"] for item in failures], ["alpha", "beta"])
+        self.assertIn("2 s bound", failures[0]["summary"])
+        self.assertEqual(failures[1]["summary"], "never reached behind alpha")
+
+    def test_a_run_that_halted_in_two_places_names_neither_as_the_others_cause(self) -> None:
+        """One collapsed line for the steps a halt left behind is the right shape for one
+        halt. Two independent halts leave two sets behind, and a line naming the first
+        would tell a person the other branch stopped for a reason it did not."""
+        state, reports = halted_chain(("alpha", "beta"), fails_at="alpha")
+        other, more = halted_chain(("mike", "zulu"), fails_at="mike")
+        state["nodes"].extend(other["nodes"])
+        reports.update(more)
+        record = extract(state, reports, run_id="run-halt")
+        unreached = [
+            item
+            for item in record["attention"]
+            if item["kind"] == "failure" and item["cause"] == NOT_REACHED
+        ]
+        self.assertEqual(len(unreached), 1)
+        self.assertNotIn("behind", unreached[0]["summary"])
+        self.assertIn("never reached", unreached[0]["summary"])
+
+    def test_a_step_left_uncommitted_work_is_named_in_its_own_record(self) -> None:
+        """[21]'s second half: the excluded path is in the step's record and raises a
+        follow-up, so a commit reads as scoped without diffing it against a transcript."""
+        state, reports = halted_chain(("alpha",), fails_at="alpha")
+        reports["commit_alpha"] = {
+            "step_id": "commit_alpha", "run_id": "run-halt", "status": "done",
+            "summary": "committed abc", "needs_user_decision": False,
+            "follow_up_work": ["left 1 path(s) uncommitted: eslint.config.js"],
+            "detail": {"left_uncommitted": ["eslint.config.js"], "commit": "abc"},
+        }
+        step = extract(state, reports, run_id="run-halt")["steps"][0]
+        self.assertEqual(step["left_uncommitted"], ["eslint.config.js"])
+        self.assertIn(
+            "left 1 path(s) uncommitted: eslint.config.js", step["follow_up_work"]
+        )
+
+    def test_a_waves_steps_are_ordered_by_id_and_never_by_the_node_that_named_them(
+        self,
+    ) -> None:
+        """One level of the node graph holds several steps' nodes, and those nodes sort by
+        role before subject: `commit_zulu` precedes `work_alpha`. The order a reader is
+        given is the steps', so it is taken after the collapse, not before."""
+        nodes = {
+            "work_alpha": {"step": {"name": "work_alpha", "depends": []}},
+            "work_zulu": {"step": {"name": "work_zulu", "depends": []}},
+            "commit_zulu": {"step": {"name": "commit_zulu", "depends": ["work_zulu"]}},
+            "work_mike": {"step": {"name": "work_mike", "depends": ["work_alpha"]}},
+        }
+        self.assertEqual(
+            step_order(cast(Any, nodes), ["zulu", "alpha", "mike"]),
+            ["alpha", "zulu", "mike"],
+        )
+
+    def test_the_record_and_the_engine_node_never_disagree_about_whether_a_step_ran(
+        self,
+    ) -> None:
+        """I-B over the whole corpus: `not_reached` only over a node the engine never
+        started or skipped, never over one it recorded as having run and failed."""
+        for shape in SHAPES:
+            record = record_of(shape)
+            statuses = {node["name"]: node["status"] for node in record["nodes"]}
+            for step in record["steps"]:
+                work = statuses.get(f"work_{step['step_id']}")
+                with self.subTest(shape=shape, step=step["step_id"]):
+                    if step["outcome"] == OUTCOME_NOT_REACHED:
+                        # The node has to be there to be judged: a step read as never
+                        # reached over a node the record cannot find is the same claim
+                        # made without evidence.
+                        self.assertIsNotNone(work)
+                        self.assertIn(
+                            work,
+                            (
+                                engine.NODE_STATUS_NOT_STARTED,
+                                engine.NODE_STATUS_ABORTED,
+                                engine.NODE_STATUS_SKIPPED,
+                            ),
+                        )
 
 
 class EveryAbsentFieldCarriesProvenance(unittest.TestCase):
@@ -632,16 +905,34 @@ class TheExitCodeIsItsOwnContract(unittest.TestCase):
 
 
 class TheNextCommandWorksWhenItIsPasted(unittest.TestCase):
-    """A command that fails when pasted is worse than a report that carries none."""
+    """A command that fails when pasted is worse than a report that carries none.
 
-    def test_the_retry_names_the_run_as_a_flag_and_the_plan_as_its_operand(self) -> None:
-        """Measured: `dagu retry <run>` exits `required flag(s) "run-id" not set`."""
+    The command is the skill's own recovery offer and never `dagu retry`, which SKILL.md
+    refuses outright: re-running a plan is the whole recovery story, and a continued
+    occasion is what makes it cheap.
+    """
+
+    def test_the_rerun_carries_the_recovery_offer_for_this_run(self) -> None:
         record = record_of("red")
         command = record["next_action"]["command"]
         assert command is not None
         self.assertEqual(
             shlex.split(command),
-            ["dagu", "retry", f"--run-id={record['run_id']}", record["plan"]],
+            [
+                "python3",
+                "-m",
+                "cairn",
+                "run",
+                "offer",
+                "--plan",
+                record["plan"],
+                "--repository",
+                record["git"]["repository"],
+                "--trigger",
+                "recovery",
+                "--recovering",
+                record["run_id"],
+            ],
         )
 
     def test_a_run_that_does_not_name_its_plan_carries_no_command_at_all(self) -> None:
@@ -650,6 +941,19 @@ class TheNextCommandWorksWhenItIsPasted(unittest.TestCase):
         self.assertEqual(record["next_action"]["action"], NEXT_RERUN)
         self.assertIsNone(record["next_action"]["command"])
 
+    def test_a_run_that_does_not_name_its_repository_carries_no_command_at_all(self) -> None:
+        state, reports, run_id = load("red")
+        record = extract({**state, "paramsList": []}, reports, run_id=run_id)
+        self.assertEqual(record["next_action"]["action"], NEXT_RERUN)
+        self.assertIsNone(record["next_action"]["command"])
+
+    def test_a_killed_run_still_carries_its_recovery_offer(self) -> None:
+        """`dagu retry` refused a run the engine still called running; the recovery offer
+        is a fresh start that reclaims the dead run's lock, so it is carried."""
+        record = record_of("crashed")
+        self.assertEqual(record["next_action"]["action"], NEXT_RERUN)
+        self.assertIsNotNone(record["next_action"]["command"])
+
     def test_a_run_and_plan_carrying_shell_metacharacters_stay_one_argument_each(
         self,
     ) -> None:
@@ -657,9 +961,190 @@ class TheNextCommandWorksWhenItIsPasted(unittest.TestCase):
         record = extract({**state, "name": "a b; rm -rf /"}, reports, run_id="r;m")
         command = record["next_action"]["command"]
         assert command is not None
+        words = shlex.split(command)
+        self.assertEqual(words[words.index("--plan") + 1], "a b; rm -rf /")
+        self.assertEqual(words[words.index("--recovering") + 1], "r;m")
+
+    def test_no_record_ever_carries_the_engines_own_retry(self) -> None:
+        for shape in SHAPES:
+            with self.subTest(shape=shape):
+                command = record_of(shape)["next_action"]["command"]
+                self.assertNotIn("dagu retry", command or "")
+
+
+def halted_chain(
+    step_ids: tuple[str, ...], *, fails_at: str, assertion_log: str | None = None
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    """A chain the emitter's own pattern leaves behind a failed assertion: the halted step
+    is excluded `verify_failed`, and every step behind it has its work node skipped with
+    its gate closed `not_reached` ([23 B]'s reproduction)."""
+    nodes: list[dict[str, Any]] = []
+    reports: dict[str, dict[str, Any]] = {}
+    previous = None
+    halted = False
+    for step_id in step_ids:
+        after = [] if previous is None else [previous]
+        if not halted and step_id != fails_at:
+            statuses = {"work": 4, "verify": 4, "mark": 4, "commit": 4}
+        elif not halted:
+            statuses = {"work": 4, "verify": 2, "mark": 5, "commit": 5}
+            reports[f"mark_{step_id}"] = {
+                "step_id": f"mark_{step_id}", "run_id": "run-halt", "status": "failed",
+                "cause": VERIFY_FAILED, "summary": "the assertion exited 1",
+                "needs_user_decision": False,
+                "detail": {"position": "chain", "verify_exit": 1, "reported": "done",
+                           "divergence": {"reported": "done", "asserted": False}},
+            }
+            halted = True
+        else:
+            statuses = {"work": 5, "verify": 5, "mark": 5, "commit": 5}
+            reports[f"mark_{step_id}"] = {
+                "step_id": f"mark_{step_id}", "run_id": "run-halt", "status": "failed",
+                "cause": NOT_REACHED, "summary": "the step left no report of this run",
+                "needs_user_decision": False,
+                "detail": {"position": "chain", "verify_exit": None, "reported": None},
+            }
+        if statuses["work"] == 4:
+            reports[f"work_{step_id}"] = {
+                "step_id": f"work_{step_id}", "run_id": "run-halt", "status": "done",
+                "summary": f"did {step_id}", "needs_user_decision": False, "detail": {},
+            }
+        for role in ("work", "verify", "mark", "commit"):
+            node: dict[str, Any] = {
+                "step": {"name": f"{role}_{step_id}", "depends": after},
+                "status": statuses[role],
+            }
+            if role == "verify" and statuses[role] == 2:
+                node["error"] = "exit status 1"
+                if assertion_log is not None:
+                    node["stdout"] = assertion_log
+            nodes.append(node)
+            after = [f"{role}_{step_id}"]
+        previous = f"commit_{step_id}"
+    state: dict[str, Any] = {
+        "dagRunId": "run-halt",
+        "name": "plan",
+        "status": 6,
+        "paramsList": ["CAIRN_REPOSITORY=/srv/work/product"],
+        "nodes": [{"step": {"name": "lock_acquire"}, "status": 4}, *nodes],
+    }
+    state["nodes"][1]["step"]["depends"] = ["lock_acquire"]
+    return state, reports
+
+
+class TheHeadlineNamesTheFault(unittest.TestCase):
+    """[23 B]: after one gate closed, the record named a bystander eleven steps downstream,
+    prescribed settling a merge the chain does not have, and buried the one line that
+    differed under fourteen identical ones."""
+
+    def test_a_chain_of_three_whose_middle_assertion_fails_names_the_middle_step(self) -> None:
+        state, reports = halted_chain(("a", "b", "c"), fails_at="b")
+        record = extract(state, reports, run_id="run-halt")
+        outcomes = {step["step_id"]: step["outcome"] for step in record["steps"]}
+        self.assertEqual(outcomes, {"a": OUTCOME_VERIFIED, "b": OUTCOME_EXCLUDED, "c": OUTCOME_NOT_REACHED})
+        self.assertEqual(record["verdict"], VERDICT_FAILED)
+        self.assertEqual(record["exit_code"], VERDICT_EXIT_CODES[VERDICT_FAILED])
+        self.assertEqual(record["next_action"]["action"], NEXT_RERUN)
+        self.assertEqual(record["next_action"]["subject"], "b")
+        self.assertIsNotNone(record["next_action"]["command"])
+
+    def test_the_subject_is_first_in_dependency_order_and_never_first_by_name(self) -> None:
+        state, reports = halted_chain(("zulu", "alpha", "mike"), fails_at="zulu")
+        record = extract(state, reports, run_id="run-halt")
+        self.assertEqual(record["next_action"]["subject"], "zulu")
+        self.assertEqual([step["step_id"] for step in record["steps"]], ["alpha", "mike", "zulu"])
+
+    def test_the_steps_a_halt_left_behind_are_one_attention_item_naming_the_halt(self) -> None:
+        state, reports = halted_chain(tuple(f"s{n:02d}" for n in range(1, 16)), fails_at="s02")
+        record = extract(state, reports, run_id="run-halt")
+        failures = [item for item in record["attention"] if item["kind"] == "failure"]
+        self.assertEqual(len(failures), 1)
+        self.assertEqual(failures[0]["subject"], "s03")
+        self.assertEqual(failures[0]["cause"], NOT_REACHED)
+        self.assertIn("behind s02", failures[0]["summary"])
+        self.assertIn("with 12 more", failures[0]["summary"])
+        excluded = [item for item in record["attention"] if item["kind"] == "excluded"]
+        self.assertEqual([item["subject"] for item in excluded], ["s02"])
         self.assertEqual(
-            shlex.split(command), ["dagu", "retry", "--run-id=r;m", "a b; rm -rf /"]
+            sum(1 for step in record["steps"] if step["outcome"] == OUTCOME_NOT_REACHED), 13
         )
+
+    def test_a_merge_less_run_with_an_excluded_last_step_is_rerun_not_settled(self) -> None:
+        state, reports = halted_chain(("a", "b"), fails_at="b")
+        record = extract(state, reports, run_id="run-halt")
+        self.assertEqual(record["verdict"], VERDICT_GREEN_WITH_EXCLUSIONS)
+        self.assertEqual(record["next_action"]["action"], NEXT_RERUN)
+        self.assertEqual(record["next_action"]["subject"], "b")
+
+    def test_a_run_whose_topology_holds_a_merge_still_settles_it(self) -> None:
+        state, reports = halted_chain(("a", "b"), fails_at="b")
+        state["nodes"].append({"step": {"name": "merge_w1_1", "depends": ["commit_b"]}, "status": 4})
+        record = extract(state, reports, run_id="run-halt")
+        self.assertEqual(record["next_action"]["action"], NEXT_SETTLE_MERGE)
+
+    def test_a_record_with_a_cycle_in_its_edges_still_builds_in_a_stable_order(self) -> None:
+        state, reports = halted_chain(("a", "b", "c"), fails_at="b")
+        state["nodes"][1]["step"]["depends"] = ["commit_c"]
+        first = extract(state, reports, run_id="run-halt")
+        second = extract(state, reports, run_id="run-halt")
+        self.assertEqual(first["next_action"], second["next_action"])
+        self.assertEqual(first["next_action"]["subject"], "b")
+
+    def test_a_failed_assertions_last_lines_are_carried_for_the_report_to_quote(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            log = Path(temporary) / "verify_b.out"
+            log.write_text("x" * 5000 + "\nFAIL  src/thing.test.ts > renders\n", encoding="utf-8")
+            state, reports = halted_chain(("a", "b", "c"), fails_at="b", assertion_log=str(log))
+            record = extract(state, reports, run_id="run-halt")
+        step = next(step for step in record["steps"] if step["step_id"] == "b")
+        assert step["assertion_tail"] is not None
+        self.assertTrue(step["assertion_tail"].endswith("FAIL  src/thing.test.ts > renders"))
+        self.assertLessEqual(len(step["assertion_tail"]), TEXT_LIMIT)
+        self.assertNotIn("assertion_tail", step["provenance"])
+        untouched = next(step for step in record["steps"] if step["step_id"] == "a")
+        self.assertIsNone(untouched["assertion_tail"])
+        self.assertEqual(untouched["provenance"]["assertion_tail"], PROVENANCE_ABSENT)
+
+    def test_the_record_names_which_execution_backed_each_gate(self) -> None:
+        """[24 A]: provenance says which execution backed a step's assertion."""
+        state, reports = halted_chain(("a", "b"), fails_at="c")
+        reports["verify_a"] = {
+            "step_id": "verify_a", "run_id": "run-halt", "status": "done", "summary": "exited 0",
+            "needs_user_decision": False, "cause": None,
+            "detail": {"decision": "run", "exit": 0, "source": "executed", "backed_by": "a"},
+        }
+        reports["verify_b"] = {
+            "step_id": "verify_b", "run_id": "run-halt", "status": "noop", "summary": "shared",
+            "needs_user_decision": False, "cause": None,
+            "detail": {"decision": "shared", "exit": 0, "source": "shared", "backed_by": "a"},
+        }
+        record = extract(state, reports, run_id="run-halt")
+        by_id = {step["step_id"]: step for step in record["steps"]}
+        self.assertEqual((by_id["a"]["assertion_exit"], by_id["a"]["assertion_source"]), (0, "executed"))
+        self.assertEqual((by_id["b"]["assertion_source"], by_id["b"]["assertion_backed_by"]), ("shared", "a"))
+        facts = as_mapping(record)
+        self.assertEqual(facts["step.b.assertion_backed_by"], "a")
+        self.assertEqual(facts["step.b.assertion_exit"], "0")
+        for name in ("assertion_exit", "assertion_source", "assertion_backed_by"):
+            self.assertNotIn(name, by_id["a"]["provenance"])
+
+    def test_an_assertion_account_outside_the_vocabulary_is_read_as_absent(self) -> None:
+        state, reports = halted_chain(("a",), fails_at="c")
+        reports["verify_a"] = {
+            "step_id": "verify_a", "run_id": "run-halt", "status": "done", "summary": "x",
+            "needs_user_decision": False, "cause": None,
+            "detail": {"decision": "run", "exit": True, "source": "guessed", "backed_by": 7},
+        }
+        step = extract(state, reports, run_id="run-halt")["steps"][0]
+        self.assertIsNone(step["assertion_exit"])
+        self.assertIsNone(step["assertion_source"])
+        self.assertIsNone(step["assertion_backed_by"])
+        self.assertEqual(step["provenance"]["assertion_source"], PROVENANCE_ABSENT)
+
+    def test_a_log_that_is_gone_leaves_the_tail_absent_rather_than_failing_the_record(self) -> None:
+        state, reports = halted_chain(("a", "b"), fails_at="b", assertion_log="/nowhere/verify_b.out")
+        record = extract(state, reports, run_id="run-halt")
+        self.assertIsNone(next(step for step in record["steps"] if step["step_id"] == "b")["assertion_tail"])
 
 
 class TheViewBaseIsSomewhereAReaderCanGo(unittest.TestCase):
@@ -1161,6 +1646,20 @@ class TheRecordLivesInCairnsOwnState(unittest.TestCase):
 
     def test_a_missing_record_is_absence_rather_than_an_error(self) -> None:
         self.assertIsNone(read_record(self.root, "never-ran"))
+
+    def test_a_record_an_older_extraction_wrote_is_rebuilt_rather_than_read_through(
+        self,
+    ) -> None:
+        """A shape missing the fields this model requires is a lie about what was measured."""
+        record = record_of("green")
+        write_record(self.root, record)
+        path = record_path(self.root, record["run_id"])
+        older = {**json.loads(path.read_text(encoding="utf-8")), "record_version": 2}
+        path.write_text(json.dumps(older), encoding="utf-8")
+        with self.assertRaises(CairnError) as caught:
+            read_record(self.root, record["run_id"])
+        self.assertEqual(caught.exception.cause, "run_record_unreadable")
+        self.assertIn("record build", str(caught.exception))
 
     def test_a_fragment_a_killed_writer_left_is_swept_before_the_next_write(self) -> None:
         record = record_of("green")

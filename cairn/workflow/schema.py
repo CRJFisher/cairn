@@ -82,7 +82,15 @@ ENGINE_VERSION = "2.11.0"
 # workflow written by 3 opens sessions bounded only by their timeout, with the model left
 # to the environment — which is why the preflight refuses its agent bodies as unbounded
 # rather than running them ([17.3]).
-GENERATOR_VERSION = 4
+# 5: every assertion node is gated on `cairn verify needed` and carries `continue_on:
+# {skipped: true}`, so an assertion behind a halt is declined and one already proven
+# against this tree is shared ([24 A], [24 B]); every agent body carries `--timeout` and
+# its engine bound allows the report grace beyond it ([22 B]); every commit body names its
+# `--step` ([21]). A workflow written by 4 runs every assertion whether or not there is
+# anything to assert, and its agent and commit bodies are missing arguments this binary
+# requires — so those steps report `invalid_arguments` rather than opening a session or
+# staging anything. Re-author rather than re-run.
+GENERATOR_VERSION = 5
 
 # The one execution type. The alternative reading serialises the graph, which is the defect
 # Cairn exists to avoid — and `type: chain` without `depends` validates clean and silently

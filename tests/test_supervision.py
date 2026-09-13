@@ -8,6 +8,7 @@ import tempfile
 import threading
 import time
 import unittest
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
@@ -20,7 +21,7 @@ from cairn.baseconfig import (
     ensure_dag_retry_disabled,
     read_base_retry_policy,
 )
-from cairn.core import CairnError
+from cairn.core import CairnError, CommandResult, RuntimeContext
 from cairn.gitio import (
     REDIRECTING_VARIABLES,
     REF_LOCK_TIMEOUT_MILLISECONDS,
@@ -31,6 +32,8 @@ from cairn.gitio import (
     hash_object,
     refuse_unusable_repository,
     resolve_ref,
+    tree_entries,
+    tree_state,
     update_ref,
 )
 from cairn.layout import reports_directory
@@ -77,6 +80,7 @@ from cairn.topology import worktrees_root_for
 from cairn.worktrees import (
     ABSENT,
     ANCESTOR_OF_PARENT,
+    DIRTY_BEFORE,
     ELSEWHERE,
     FOREIGN,
     HEALTHY,
@@ -94,7 +98,7 @@ from cairn.worktrees import (
     WRONG_BRANCH,
     Facts,
     classify,
-    commit_all,
+    commit_step,
     prune_worktrees,
     setup_worktree,
 )
@@ -175,7 +179,32 @@ class Liveness(RepositoryCase):
 
     def test_an_identifier_naming_nothing_is_not_alive(self) -> None:
         self.assertIsNone(process_start_time(IMPOSSIBLE_PID))
-        self.assertFalse(process_is_alive(IMPOSSIBLE_PID, None))
+        self.assertIs(process_is_alive(IMPOSSIBLE_PID, None), False)
+
+    def test_a_probe_that_cannot_look_is_not_a_probe_that_found_nothing(self) -> None:
+        """A sandboxed harness shell is refused `ps`; the old answer was "dead" ([23 A])."""
+        denied = subprocess.CompletedProcess(
+            args=["ps"], returncode=1, stdout="", stderr="ps: operation not permitted"
+        )
+        with patch("cairn.liveness.subprocess.run", return_value=denied):
+            self.assertIsNone(process_is_alive(os.getpid(), self_start_time() or 1.0))
+
+    def test_a_refused_existence_probe_is_unestablishable_rather_than_a_crash(self) -> None:
+        with patch("cairn.liveness.os.kill", side_effect=OSError(22, "sandbox")):
+            self.assertIsNone(process_is_alive(os.getpid(), self_start_time()))
+
+    def test_a_process_owned_by_someone_else_is_alive_and_still_identified(self) -> None:
+        # `PermissionError` is the kernel saying the process exists; `ps` then reads it.
+        with patch("cairn.liveness.os.kill", side_effect=PermissionError()):
+            self.assertIs(process_is_alive(os.getpid(), None), True)
+            self.assertIs(process_is_alive(os.getpid(), self_start_time()), True)
+
+    def test_a_dead_identifier_stays_dead_however_ps_is_refused(self) -> None:
+        # The one decisive death: a lookup that found nothing outranks a `ps` that would
+        # not answer, so a genuinely dead run still reads as dead and its lock reclaims.
+        denied = subprocess.CompletedProcess(args=["ps"], returncode=1, stdout="", stderr="no")
+        with patch("cairn.liveness.subprocess.run", return_value=denied):
+            self.assertIs(process_is_alive(IMPOSSIBLE_PID, 1.0), False)
 
     def test_elapsed_time_is_parsed_in_every_form_ps_prints_it(self) -> None:
         # Read as elapsed rather than as a civil start date: `ps -o lstart=` shifts by an
@@ -202,7 +231,7 @@ class GitInvocation(RepositoryCase):
                 "GIT_WORK_TREE": str(elsewhere),
             },
         ):
-            commit_all(self.repository, "cairn(a): work")
+            commit_as_step(self.root, self.repository, "cairn(a): work")
         self.assertIn("work.txt", git(self.repository, ("show", "--name-only", "HEAD")).stdout)
         self.assertEqual(git(elsewhere, ("rev-list", "--count", "HEAD")).stdout, "1")
 
@@ -408,7 +437,7 @@ class RepositoryState(RepositoryCase):
     def test_a_commit_refuses_to_write_over_an_unresolved_merge(self) -> None:
         self.conflict()
         with self.assertRaises(CairnError) as caught:
-            commit_all(self.repository, "should not land")
+            commit_as_step(self.root, self.repository, "should not land")
         self.assertEqual(caught.exception.cause, "merge_in_progress")
 
     def test_a_run_refuses_to_start_over_the_users_own_uncommitted_work(self) -> None:
@@ -491,10 +520,11 @@ class SubcommandsTakeTheMutex(RepositoryCase):
 
     def test_commit_is_held_out_while_the_mutex_is_taken(self) -> None:
         head = git(self.repository, ("rev-parse", "HEAD")).stdout
+        write_work_report(self.root, self.repository, "a", run_id="run_probe", dirty_before=[])
         (self.repository / "new.txt").write_text("content\n", encoding="utf-8")
         with git_write_mutex(self.repository):
             child = self.start_subcommand(
-                self.repository, "commit", "--message", "cairn(a): waits its turn"
+                self.repository, "commit", "--message", "cairn(a): waits its turn", "--step", "a"
             )
             self.assert_held_out(child)
             self.assertEqual(
@@ -527,6 +557,8 @@ class SubcommandsTakeTheMutex(RepositoryCase):
                 "nonesuch",
                 "--prompt",
                 "make it so",
+                "--timeout",
+                "600",
             )
             try:
                 child.wait(timeout=30)
@@ -1725,9 +1757,81 @@ class WorktreeConvergence(RepositoryCase):
         self.assertTrue((self.worktree / "README.md").exists())
 
 
+def write_work_report(
+    root: Path,
+    repository: Path,
+    step_id: str,
+    *,
+    run_id: str,
+    dirty_before: list[str] | None,
+    snapshot_failed: bool = False,
+) -> Path:
+    """The account a work step leaves, carrying what was dirty before its session —
+    or, for `None`, carrying no snapshot at all, which is a marker no-op's report.
+
+    `snapshot_failed` is the third answer: the key is there and its value is absent, which
+    is what a work step records when git would not say what was dirty.
+    """
+    directory = reports_of(root, run_id)
+    directory.mkdir(parents=True, exist_ok=True)
+    detail: dict[str, Any] = {DIRTY_BEFORE: None} if snapshot_failed else (
+        {} if dirty_before is None else {DIRTY_BEFORE: list(dirty_before)}
+    )
+    path = directory / f"work_{step_id}.json"
+    path.write_text(
+        json.dumps(
+            {
+                "step_id": f"work_{step_id}",
+                "run_id": run_id,
+                "status": "noop" if dirty_before is None else "done",
+                "duration": 0.1,
+                "working_directory": str(repository),
+                "summary": "did the work",
+                "follow_up_work": [],
+                "needs_user_decision": False,
+                "cause": None,
+                "detail": detail,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def commit_as_step(
+    root: Path,
+    repository: Path,
+    message: str,
+    *,
+    step_id: str = "a",
+    dirty_before: Sequence[str] | None = (),
+    snapshot_failed: bool = False,
+) -> CommandResult:
+    """Commit the way the emitted commit node does: after a work step that recorded what
+    was dirty before its session."""
+    report = write_work_report(
+        root, repository, step_id, run_id="run-1",
+        dirty_before=None if dirty_before is None else list(dirty_before),
+        snapshot_failed=snapshot_failed,
+    )
+    context = RuntimeContext(
+        run_id="run-1",
+        step_id=f"commit_{step_id}",
+        working_directory=repository,
+        report_path=report.parent / f"commit_{step_id}.json",
+        runs_root=root / "runs",
+    )
+    return commit_step(repository, message, step_id=step_id, context=context)
+
+
+def committed_paths_of_head(repository: Path) -> list[str]:
+    shown = git(repository, ("show", "--name-only", "--pretty=format:", "HEAD")).stdout
+    return sorted(line for line in shown.splitlines() if line.strip())
+
+
 class CommitAndPrune(RepositoryCase):
     def test_nothing_staged_is_a_no_op_and_not_a_failure(self) -> None:
-        result = commit_all(self.repository, "empty")
+        result = commit_as_step(self.root, self.repository, "empty")
         self.assertEqual(result.status, "noop")
         self.assertEqual(result.exit_code, 0)
 
@@ -1741,16 +1845,147 @@ class CommitAndPrune(RepositoryCase):
         )
         git(self.repository, ("commit", "--quiet", "-m", "add submodule"))
         (self.repository / "sub" / "scratch.txt").write_text("x\n", encoding="utf-8")
-        result = commit_all(self.repository, "nothing of ours")
+        result = commit_as_step(self.root, self.repository, "nothing of ours")
         self.assertEqual(result.status, "noop")
 
     def test_a_change_is_committed_and_the_commit_is_named(self) -> None:
         (self.repository / "new.txt").write_text("content\n", encoding="utf-8")
-        result = commit_all(self.repository, "cairn(a): add new")
+        result = commit_as_step(self.root, self.repository, "cairn(a): add new")
         self.assertEqual(result.status, "done")
         self.assertEqual(
             git(self.repository, ("log", "-1", "--pretty=%s")).stdout, "cairn(a): add new"
         )
+
+
+class TheCommitCarriesOnlyTheStepsOwnWork(RepositoryCase):
+    """[21]: a second session's three-file edit landed byte-identical inside
+    `cairn(task_381_10): …`, under a message that described none of it."""
+
+    def test_a_path_dirty_before_the_step_started_is_left_alone_and_named(self) -> None:
+        (self.repository / "eslint.config.js").write_text("someone else's\n", encoding="utf-8")
+        (self.repository / "own.txt").write_text("the step's\n", encoding="utf-8")
+        result = commit_as_step(
+            self.root, self.repository, "cairn(a): work", dirty_before=["eslint.config.js"]
+        )
+        self.assertEqual(result.status, "done")
+        self.assertEqual(committed_paths_of_head(self.repository), ["own.txt"])
+        self.assertEqual(result.detail["left_uncommitted"], ["eslint.config.js"])
+        self.assertEqual(len(result.follow_up_work), 1)
+        self.assertIn("eslint.config.js", result.follow_up_work[0])
+        self.assertIn("eslint.config.js", tree_state(self.repository) or ())
+
+    def test_a_step_that_recorded_no_snapshot_commits_its_marker_and_nothing_else(self) -> None:
+        """A marker no-op's report carries no snapshot, and a recovery has one per step:
+        reading that as "nothing was dirty" would sweep the tree fourteen times over."""
+        (self.repository / "eslint.config.js").write_text("someone else's\n", encoding="utf-8")
+        marker = self.repository / ".steps" / "a.done"
+        marker.parent.mkdir()
+        marker.write_text("{}\n", encoding="utf-8")
+        result = commit_as_step(self.root, self.repository, "cairn(a): no-op", dirty_before=None)
+        self.assertEqual(result.status, "done")
+        self.assertEqual(committed_paths_of_head(self.repository), [".steps/a.done"])
+        self.assertIn("eslint.config.js", tree_state(self.repository) or ())
+
+    def test_a_step_whose_snapshot_failed_refuses_rather_than_committing_its_marker_alone(
+        self,
+    ) -> None:
+        """A work step whose `git status` would not answer records an absent snapshot. Read
+        as a marker no-op's, its commit would stage the marker over the step's own work and
+        the next run would skip a step whose output never reached history — green, and
+        false. A refusal is loud and leaves the work in the tree."""
+        (self.repository / "own.txt").write_text("the step's\n", encoding="utf-8")
+        marker = self.repository / ".steps" / "a.done"
+        marker.parent.mkdir()
+        marker.write_text("{}\n", encoding="utf-8")
+        with self.assertRaises(CairnError) as caught:
+            commit_as_step(self.root, self.repository, "cairn(a): work", snapshot_failed=True)
+        self.assertEqual(caught.exception.cause, "git_failed")
+        self.assertIn("own.txt", tree_state(self.repository) or ())
+
+    def test_a_tree_git_will_not_answer_about_is_never_read_as_clean(self) -> None:
+        """Absent is not clean: a refusal that passed here would spend the offer against a
+        repository whose uncommitted work nobody could establish."""
+        with (
+            patch("cairn.locks.tree_state", return_value=None),
+            self.assertRaises(CairnError) as caught,
+        ):
+            refuse_dirty_repository(self.repository)
+        self.assertEqual(caught.exception.cause, "git_failed")
+
+    def test_a_path_git_would_read_as_a_pattern_is_committed_literally(self) -> None:
+        """git resolves a pathspec as a glob by default, so `data[1].json` names
+        `data1.json` — a file that does not exist, which fails the whole commit."""
+        (self.repository / "data[1].json").write_text("{}\n", encoding="utf-8")
+        result = commit_as_step(self.root, self.repository, "cairn(a): work")
+        self.assertEqual(result.status, "done")
+        self.assertEqual(committed_paths_of_head(self.repository), ["data[1].json"])
+
+    def test_a_path_another_session_staged_mid_step_does_not_ride_along(self) -> None:
+        """The index is shared. A commit that took all of it would land somebody else's
+        staged work under a message describing the step's, which is [21]'s own fault."""
+        (self.repository / "own.txt").write_text("the step's\n", encoding="utf-8")
+        (self.repository / "theirs.txt").write_text("someone else's\n", encoding="utf-8")
+        git(self.repository, ("add", "--", "theirs.txt"))
+        result = commit_as_step(
+            self.root, self.repository, "cairn(a): work", dirty_before=["theirs.txt"]
+        )
+        self.assertEqual(result.status, "done")
+        self.assertEqual(committed_paths_of_head(self.repository), ["own.txt"])
+        self.assertEqual(result.detail["left_uncommitted"], ["theirs.txt"])
+        self.assertEqual(result.detail["diffstat"]["files"], 1)
+
+    def test_the_marker_is_staged_by_path_beside_the_steps_own_work(self) -> None:
+        (self.repository / "own.txt").write_text("the step's\n", encoding="utf-8")
+        marker = self.repository / ".steps" / "a.done"
+        marker.parent.mkdir()
+        marker.write_text("{}\n", encoding="utf-8")
+        result = commit_as_step(self.root, self.repository, "cairn(a): work")
+        self.assertEqual(result.status, "done")
+        self.assertEqual(committed_paths_of_head(self.repository), [".steps/a.done", "own.txt"])
+        self.assertEqual(result.detail["left_uncommitted"], [])
+        self.assertEqual(result.follow_up_work, [])
+
+    def test_a_path_with_a_space_or_a_byte_outside_ascii_is_one_path(self) -> None:
+        (self.repository / "a file.txt").write_text("x\n", encoding="utf-8")
+        (self.repository / "café.txt").write_text("y\n", encoding="utf-8")
+        commit_as_step(self.root, self.repository, "cairn(a): work")
+        self.assertEqual(committed_paths_of_head(self.repository), ["a file.txt", "café.txt"])
+
+    def test_an_untracked_directory_is_named_file_by_file(self) -> None:
+        before = self.repository / "newdir" / "theirs.txt"
+        before.parent.mkdir()
+        before.write_text("theirs\n", encoding="utf-8")
+        snapshot = list(tree_state(self.repository) or ())
+        self.assertEqual(snapshot, ["newdir/theirs.txt"])
+        (self.repository / "newdir" / "ours.txt").write_text("ours\n", encoding="utf-8")
+        result = commit_as_step(self.root, self.repository, "cairn(a): work", dirty_before=snapshot)
+        self.assertEqual(committed_paths_of_head(self.repository), ["newdir/ours.txt"])
+        self.assertEqual(result.detail["left_uncommitted"], ["newdir/theirs.txt"])
+
+    def test_a_worktree_that_started_clean_commits_everything_its_step_left(self) -> None:
+        worktree = self.root / "trees" / "alpha"
+        setup_worktree(self.repository, worktree, "step/alpha", "main")
+        self.assertEqual(tree_state(worktree), ())
+        (worktree / "one.txt").write_text("1\n", encoding="utf-8")
+        (worktree / "two.txt").write_text("2\n", encoding="utf-8")
+        result = commit_as_step(self.root, worktree, "cairn(alpha): work", step_id="alpha")
+        self.assertEqual(result.status, "done")
+        self.assertEqual(committed_paths_of_head(worktree), ["one.txt", "two.txt"])
+
+    def test_the_tree_is_read_with_its_status_letters_and_never_cut_at_a_space(self) -> None:
+        (self.repository / "README.md").write_text("changed\n", encoding="utf-8")
+        (self.repository / "x y.txt").write_text("x\n", encoding="utf-8")
+        self.assertEqual(
+            tree_entries(self.repository), ((" M", "README.md"), ("??", "x y.txt"))
+        )
+
+    def test_the_preflight_and_the_lock_name_an_untracked_directory_once(self) -> None:
+        (self.repository / "newdir").mkdir()
+        (self.repository / "newdir" / "one.txt").write_text("1\n", encoding="utf-8")
+        (self.repository / "newdir" / "two.txt").write_text("2\n", encoding="utf-8")
+        with self.assertRaises(CairnError) as caught:
+            refuse_dirty_repository(self.repository)
+        self.assertEqual(caught.exception.detail["paths"], ["newdir/"])
 
     def test_a_prune_removes_merged_worktrees_and_branches(self) -> None:
         worktree = self.root / "trees" / "alpha"

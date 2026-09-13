@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "all-roots",
-    "cairn_generator": "4",
+    "cairn_generator": "5",
     "cairn_engine": "2.11.0",
     "cairn_graph_sha256": "cc6372f3b498c2ddcfba74e8669868fa4af2f475528d58748a3eb5a9056f632b",
-    "cairn_body_sha256": "6d45fefd96a9e88cc7c65f4431b0d6a9bad031157aea7124a5ed4b7756c30aeb"
+    "cairn_body_sha256": "6993cb990ebf2261fd0fe70c3ec246553ce14279dc96b75b28e126c5a845fcd2"
   },
   "params": [
     {
@@ -54,7 +54,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn lock acquire --plan all-roots --run-timeout 24000"
+      "run": "python3 -m cairn lock acquire --plan all-roots --run-timeout 24360"
     },
     {
       "name": "setup_drop_the_legacy_exporter",
@@ -72,12 +72,12 @@
     {
       "name": "work_drop_the_legacy_exporter",
       "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/all-roots/drop_the_legacy_exporter",
-      "timeout_sec": 3600,
+      "timeout_sec": 3780,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/export/` to a state where `legacy.py` is gone and nothing imports it.' --model sonnet --max-budget-usd 5.0",
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/export/` to a state where `legacy.py` is gone and nothing imports it.' --model sonnet --max-budget-usd 5.0 --timeout 3600",
       "preconditions": [
         {
           "condition": "python3 -m cairn marker absent --step drop_the_legacy_exporter --scope once"
@@ -101,8 +101,14 @@
         "limit": 0,
         "interval_sec": 1
       },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify needed --step drop_the_legacy_exporter --command-digest 791464c891bff9471cb20e269dac809b4a76cfb86b6e03819517737d2e95fc86"
+        }
+      ],
       "continue_on": {
-        "failure": true
+        "failure": true,
+        "skipped": true
       },
       "depends": [
         "work_drop_the_legacy_exporter"
@@ -134,7 +140,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn commit --message 'cairn(drop_the_legacy_exporter): Drop the legacy exporter'",
+      "run": "python3 -m cairn commit --message 'cairn(drop_the_legacy_exporter): Drop the legacy exporter' --step drop_the_legacy_exporter",
       "continue_on": {
         "skipped": true
       },
@@ -158,12 +164,12 @@
     {
       "name": "work_tighten_the_log_format",
       "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/all-roots/tighten_the_log_format",
-      "timeout_sec": 3600,
+      "timeout_sec": 3780,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/logging/format.py` to a state where every record carries a request id.' --model sonnet --max-budget-usd 5.0",
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/logging/format.py` to a state where every record carries a request id.' --model sonnet --max-budget-usd 5.0 --timeout 3600",
       "preconditions": [
         {
           "condition": "python3 -m cairn marker absent --step tighten_the_log_format --scope once"
@@ -187,8 +193,14 @@
         "limit": 0,
         "interval_sec": 1
       },
+      "preconditions": [
+        {
+          "condition": "python3 -m cairn verify needed --step tighten_the_log_format --command-digest 9f1916e04586ab6c359976d344f075027db24f5c0c2388530e91fa7b1c1312ea"
+        }
+      ],
       "continue_on": {
-        "failure": true
+        "failure": true,
+        "skipped": true
       },
       "depends": [
         "work_tighten_the_log_format"
@@ -220,7 +232,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn commit --message 'cairn(tighten_the_log_format): Tighten the log format'",
+      "run": "python3 -m cairn commit --message 'cairn(tighten_the_log_format): Tighten the log format' --step tighten_the_log_format",
       "continue_on": {
         "skipped": true
       },

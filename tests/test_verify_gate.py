@@ -11,16 +11,34 @@ from io import StringIO
 from itertools import pairwise
 from pathlib import Path
 from typing import Any, ClassVar, cast
+from unittest.mock import patch
 
-from cairn.core import ENDED_WITHOUT_REPORTING
+from cairn.assertions import (
+    ASSERTION_EXECUTED,
+    BACKED_BY_KEY,
+    DECISION_KEY,
+    DECISION_RUN,
+    DECISION_SHARED,
+    DECISION_SKIPPED_UPSTREAM,
+    EXIT_KEY,
+    NEEDED_RUN_IT,
+    NEEDED_SKIP_IT,
+    SOURCE_KEY,
+    assertion_report,
+    command_digest,
+    decision_of,
+    tree_digest,
+)
+from cairn.core import ENDED_WITHOUT_REPORTING, RuntimeContext, write_json
 from cairn.emitters import (
+    assertion_gate,
     emit_commit,
     emit_marker,
     emit_step,
     emit_verify,
     verify_gate,
 )
-from cairn.layout import reports_directory
+from cairn.layout import assertion_result_path, reports_directory
 from cairn.plan.assertions import AnswerError, answer, propose, render, tally
 from cairn.plan.cli import main as plan_main
 from cairn.plan.report import render as render_report
@@ -48,6 +66,7 @@ from cairn.verify import (
     exit_status_reference,
     judge,
     mark_name,
+    run_verify_gate,
     verify_handle,
     verify_name,
     work_name,
@@ -178,12 +197,28 @@ class TheAssertionRunsBare(unittest.TestCase):
         emitted = emit_verify(one_step(), "/worktrees/a")
         self.assertEqual(emitted["working_dir"], "/worktrees/a")
 
-    def test_the_assertion_survives_its_own_failure_so_the_run_reaches_the_join(self) -> None:
-        self.assertEqual(emit_verify(one_step(), "/repo")["continue_on"], {"failure": True})
+    def test_the_assertion_survives_its_own_failure_and_its_own_skip(self) -> None:
+        """`failure` so the run reaches the join; `skipped` so a declined assertion still
+        lets the marker's gate run and record the halt — measured, a precondition skip
+        cascades otherwise."""
+        self.assertEqual(
+            emit_verify(one_step(), "/repo")["continue_on"], {"failure": True, "skipped": True}
+        )
 
-    def test_the_assertion_carries_no_marker_gate(self) -> None:
-        """A no-op run still asserts: the gate belongs to the work, not to the check."""
-        self.assertNotIn("preconditions", emit_verify(one_step(), "/repo"))
+    def test_the_assertion_carries_its_own_gate_and_never_the_marker_gate(self) -> None:
+        """A no-op run still asserts: the marker gate belongs to the work, not to the check.
+        The check's own gate asks only whether there is anything to assert ([24 B])."""
+        step = one_step()
+        emitted = emit_verify(step, "/repo")
+        conditions = [entry["condition"] for entry in emitted["preconditions"]]
+        self.assertEqual(conditions, [assertion_gate(step)])
+        words = shlex.split(conditions[0])
+        self.assertEqual(words[:5], ["python3", "-m", "cairn", "verify", "needed"])
+        self.assertNotIn("marker", conditions[0])
+        self.assertEqual(
+            words[words.index("--command-digest") + 1], command_digest(str(step["verify"]))
+        )
+        self.assertNotIn(str(step["verify"]), conditions[0])
 
     def test_an_assertion_that_cannot_fail_is_refused(self) -> None:
         for command in ("true", ":", "exit 0", "  "):
@@ -366,6 +401,245 @@ class TheGateJudges(unittest.TestCase):
         self.assertIn(judge(0, None)["cause"], EXCLUSION_CAUSES)
 
 
+class TheAssertionsOwnGateFailsOpen(unittest.TestCase):
+    """[24 B]: after one gate closes, no assertion runs for nothing — and the gate that
+    decides it fails open, because a skipped assertion reads as a `0` downstream."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+
+    def _needed(self, *extra: str, step_id: str = "a") -> tuple[int, str, str]:
+        arguments = ["verify", "needed", "--step", step_id, "--command-digest", "0" * 64, *extra]
+        return run_cli(arguments, runtime_env(self.root, step_id=verify_name(step_id)), self.root)
+
+    def _decision(self, step_id: str = "a") -> dict[str, Any] | None:
+        return assertion_report(reports_of(self.root), step_id, "run-1")
+
+    def test_a_step_that_left_no_report_has_nothing_to_assert(self) -> None:
+        code, _, err = self._needed()
+        self.assertEqual(code, NEEDED_SKIP_IT)
+        self.assertEqual(decision_of(self._decision()), DECISION_SKIPPED_UPSTREAM)
+        self.assertIn("skipped_upstream", err)
+
+    def test_a_marker_no_ops_assertion_still_runs(self) -> None:
+        """The recovery guarantee: a step already done still has its end state asserted."""
+        work_report(self.root, "a", status="noop")
+        code, _, _ = self._needed()
+        self.assertEqual(code, NEEDED_RUN_IT)
+        self.assertEqual(decision_of(self._decision()), DECISION_RUN)
+
+    def test_a_step_that_reported_has_its_assertion_run(self) -> None:
+        for status in ("done", "failed"):
+            with self.subTest(status=status):
+                work_report(self.root, "a", status=status)
+                self.assertEqual(self._needed()[0], NEEDED_RUN_IT)
+
+    def test_argument_skew_runs_the_assertion_rather_than_skipping_it(self) -> None:
+        """Routed into the closing gate's parser, the same skew would skip the assertion
+        and hand the mark gate a `0` for it."""
+        code, _, _ = run_cli(
+            ["verify", "needed", "--nonsense"], runtime_env(self.root, step_id="verify_a"), self.root
+        )
+        self.assertEqual(code, NEEDED_RUN_IT)
+
+    def test_a_missing_identity_runs_the_assertion(self) -> None:
+        code, _, _ = run_cli(["verify", "needed", "--step", "a", "--command-digest", "x"], {}, self.root)
+        self.assertEqual(code, NEEDED_RUN_IT)
+
+    def test_the_mark_gate_never_trusts_the_exit_of_an_assertion_that_did_not_run(self) -> None:
+        """Measured: `${<id>.exit_code}` resolves to `0` for a skipped node. The gate reads
+        the assertion's own account first, and an assertion nobody ran closes it."""
+        work_report(self.root, "a", status="done")
+        self._needed()
+        report = self._decision()
+        assert report is not None
+        report["detail"][DECISION_KEY] = DECISION_SKIPPED_UPSTREAM
+        (reports_of(self.root) / f"{verify_name('a')}.json").write_text(json.dumps(report))
+        context = RuntimeContext(
+            run_id="run-1", step_id=mark_name("a"), working_directory=self.root,
+            report_path=reports_of(self.root) / f"{mark_name('a')}.json", runs_root=self.root / "runs",
+        )
+        verdict, detail = run_verify_gate("a", CHAIN, "0", context)
+        self.assertFalse(verdict["record"])
+        self.assertEqual(verdict["cause"], "gate_indeterminate")
+        self.assertIsNone(detail["verify_exit"])
+
+    def test_an_assertion_with_no_account_of_itself_closes_the_gate_too(self) -> None:
+        work_report(self.root, "a", status="done")
+        context = RuntimeContext(
+            run_id="run-1", step_id=mark_name("a"), working_directory=self.root,
+            report_path=reports_of(self.root) / f"{mark_name('a')}.json", runs_root=self.root / "runs",
+        )
+        verdict, _ = run_verify_gate("a", CHAIN, "0", context)
+        self.assertFalse(verdict["record"])
+        self.assertEqual(verdict["cause"], "gate_indeterminate")
+
+    def test_an_assertion_its_gate_ran_is_read_by_its_exit(self) -> None:
+        work_report(self.root, "a", status="done")
+        self._needed()
+        context = RuntimeContext(
+            run_id="run-1", step_id=mark_name("a"), working_directory=self.root,
+            report_path=reports_of(self.root) / f"{mark_name('a')}.json", runs_root=self.root / "runs",
+        )
+        self.assertTrue(run_verify_gate("a", CHAIN, "0", context)[0]["record"])
+        verdict, _ = run_verify_gate("a", CHAIN, "3", context)
+        self.assertEqual(verdict["cause"], "verify_failed")
+
+    def test_a_missing_work_report_is_a_halt_whatever_the_reference_reads(self) -> None:
+        context = RuntimeContext(
+            run_id="run-1", step_id=mark_name("a"), working_directory=self.root,
+            report_path=reports_of(self.root) / f"{mark_name('a')}.json", runs_root=self.root / "runs",
+        )
+        verdict, _ = run_verify_gate("a", CHAIN, "0", context)
+        self.assertEqual(verdict["cause"], "not_reached")
+
+    def test_an_unverified_step_needs_no_account_of_an_assertion(self) -> None:
+        work_report(self.root, "a", status="done")
+        context = RuntimeContext(
+            run_id="run-1", step_id=mark_name("a"), working_directory=self.root,
+            report_path=reports_of(self.root) / f"{mark_name('a')}.json", runs_root=self.root / "runs",
+        )
+        self.assertTrue(run_verify_gate("a", CHAIN, None, context)[0]["record"])
+
+
+class OneProofPerCommandPerTree(unittest.TestCase):
+    """[24 A]: a recovery proved one command against one unchanged tree fourteen times."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        for arguments in (
+            ("init", "-b", "main"),
+            ("config", "user.email", "cairn@example.invalid"),
+            ("config", "user.name", "cairn"),
+            ("commit", "--allow-empty", "-m", "root"),
+        ):
+            subprocess.run(("git", *arguments), cwd=self.root, check=True, capture_output=True)
+        self.digest = command_digest("cd packages/core && npx vitest run")
+
+    def _needed(self, step_id: str, digest: str | None = None) -> int:
+        return run_cli(
+            ["verify", "needed", "--step", step_id, "--command-digest", digest or self.digest],
+            runtime_env(self.root, step_id=verify_name(step_id)),
+            self.root,
+        )[0]
+
+    def _account(self, step_id: str) -> dict[str, Any]:
+        found = assertion_report(reports_of(self.root), step_id, "run-1")
+        assert found is not None
+        return found
+
+    def _gate(self, step_id: str, exit_text: str) -> tuple[Any, dict[str, Any]]:
+        context = RuntimeContext(
+            run_id="run-1", step_id=mark_name(step_id), working_directory=self.root,
+            report_path=reports_of(self.root) / f"{mark_name(step_id)}.json",
+            runs_root=self.root / "runs",
+        )
+        return run_verify_gate(step_id, CHAIN, exit_text, context)
+
+    def _prove(self, step_id: str, exit_text: str) -> None:
+        work_report(self.root, step_id, status="noop")
+        self.assertEqual(self._needed(step_id), NEEDED_RUN_IT)
+        self._gate(step_id, exit_text)
+
+    def test_a_second_step_quoting_the_same_command_reads_the_first_steps_proof(self) -> None:
+        self._prove("a", "0")
+        first = self._account("a")["detail"]
+        self.assertEqual(first[SOURCE_KEY], ASSERTION_EXECUTED)
+        self.assertEqual(first[EXIT_KEY], 0)
+        work_report(self.root, "b", status="noop")
+        self.assertEqual(self._needed("b"), NEEDED_SKIP_IT)
+        second = self._account("b")["detail"]
+        self.assertEqual(second[DECISION_KEY], DECISION_SHARED)
+        self.assertEqual(second[BACKED_BY_KEY], "a")
+        self.assertEqual(second[EXIT_KEY], 0)
+        verdict, detail = self._gate("b", "0")
+        self.assertTrue(verdict["record"])
+        self.assertEqual(detail["verify_exit"], 0)
+
+    def test_a_shared_failure_closes_every_gate_quoting_it(self) -> None:
+        """Sharing never widens what passes — and the engine hands the second gate a `0`
+        for the assertion it skipped, which the gate must never read."""
+        self._prove("a", "1")
+        work_report(self.root, "b", status="noop")
+        self.assertEqual(self._needed("b"), NEEDED_SKIP_IT)
+        verdict, detail = self._gate("b", "0")
+        self.assertFalse(verdict["record"])
+        self.assertEqual(verdict["cause"], "verify_failed")
+        self.assertEqual(detail["verify_exit"], 1)
+
+    def test_a_tree_that_moved_is_proven_again(self) -> None:
+        self._prove("a", "0")
+        (self.root / "changed.txt").write_text("new work\n", encoding="utf-8")
+        work_report(self.root, "b", status="done")
+        self.assertEqual(self._needed("b"), NEEDED_RUN_IT)
+        self.assertEqual(self._account("b")["detail"][DECISION_KEY], DECISION_RUN)
+
+    def test_a_proof_never_outlives_the_commit_the_work_landed_in(self) -> None:
+        """The commit the tree stands on is half the key. A step doing new work commits,
+        and a proof taken before that commit asserted a tree the work was not in."""
+        self._prove("a", "0")
+        subprocess.run(
+            ("git", "commit", "--allow-empty", "-q", "-m", "work landed"),
+            cwd=self.root, check=True, capture_output=True,
+        )
+        work_report(self.root, "b", status="done")
+        self.assertEqual(self._needed("b"), NEEDED_RUN_IT)
+        self.assertEqual(self._account("b")["detail"][DECISION_KEY], DECISION_RUN)
+
+    def test_a_passing_proof_never_replaces_a_failing_one(self) -> None:
+        """Two steps quoting one command can execute it concurrently, each having asked
+        before either filed. A pass written over the failure would reopen every gate the
+        failure closed, which is sharing widening what passes."""
+        work_report(self.root, "a", status="noop")
+        work_report(self.root, "b", status="noop")
+        self.assertEqual(self._needed("a"), NEEDED_RUN_IT)
+        self.assertEqual(self._needed("b"), NEEDED_RUN_IT)
+        self._gate("a", "1")
+        self._gate("b", "0")
+        filed = assertion_result_path(self.root / "runs", "run-1", self.digest)
+        self.assertEqual(json.loads(filed.read_text(encoding="utf-8"))[EXIT_KEY], 1)
+        work_report(self.root, "c", status="noop")
+        self.assertEqual(self._needed("c"), NEEDED_SKIP_IT)
+        self.assertEqual(self._account("c")["detail"][EXIT_KEY], 1)
+        verdict, _ = self._gate("c", "0")
+        self.assertFalse(verdict["record"])
+
+    def test_a_different_command_shares_nothing(self) -> None:
+        self._prove("a", "0")
+        work_report(self.root, "b", status="noop")
+        self.assertEqual(self._needed("b", command_digest("grep -q x y")), NEEDED_RUN_IT)
+
+    def test_a_proof_from_another_run_is_never_read(self) -> None:
+        self._prove("a", "0")
+        proof = assertion_result_path(self.root / "runs", "run-1", self.digest)
+        proof.write_text(
+            json.dumps({**json.loads(proof.read_text()), "run_id": "yesterday"}), encoding="utf-8"
+        )
+        work_report(self.root, "b", status="noop")
+        self.assertEqual(self._needed("b"), NEEDED_RUN_IT)
+
+    def test_the_tree_digest_is_stable_and_ignores_the_markers(self) -> None:
+        first = tree_digest(self.root)
+        self.assertEqual(first, tree_digest(self.root))
+        marker = self.root / ".steps" / "a.done"
+        marker.parent.mkdir()
+        marker.write_text("{}\n", encoding="utf-8")
+        self.assertEqual(first, tree_digest(self.root))
+        (self.root / "x y.txt").write_text("x\n", encoding="utf-8")
+        moved = tree_digest(self.root)
+        self.assertNotEqual(first, moved)
+        (self.root / "x y.txt").write_text("y\n", encoding="utf-8")
+        self.assertNotEqual(moved, tree_digest(self.root))
+
+    def test_a_tree_git_will_not_digest_shares_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as bare:
+            self.assertIsNone(tree_digest(Path(bare)))
+
+
 class TheGateFailsClosed(unittest.TestCase):
     """The exact inverse of the marker gate, and the asymmetry is the design."""
 
@@ -377,19 +651,31 @@ class TheGateFailsClosed(unittest.TestCase):
     def gate(self, *arguments: str) -> tuple[int, str, str]:
         return run_cli(["verify", *arguments], runtime_env(self.root), self.root)
 
+    def asserted(self, step_id: str = "a") -> None:
+        """The assertion's own gate, run as the emitted pattern runs it before the assertion:
+        the mark gate reads its decision before it trusts any exit status ([24 B])."""
+        run_cli(
+            ["verify", "needed", "--step", step_id, "--command-digest", "0" * 64],
+            runtime_env(self.root, step_id=verify_name(step_id)),
+            self.root,
+        )
+
     def test_a_verified_step_opens_the_gate(self) -> None:
         work_report(self.root, "a")
+        self.asserted()
         code, _, _ = self.gate("gate", "--step", "a", "--position", BRANCH, "--verify-exit", "0")
         self.assertEqual(code, GATE_RECORD_IT)
 
     def test_the_gate_writes_nothing_on_the_path_where_a_step_will_run(self) -> None:
         """A report there would outlive a step that was then killed."""
         work_report(self.root, "a")
+        self.asserted()
         self.gate("gate", "--step", "a", "--position", BRANCH, "--verify-exit", "0")
         self.assertFalse((reports_of(self.root) / "step_a.json").exists())
 
     def test_a_closed_gate_records_where_no_step_will_run_to_record(self) -> None:
         work_report(self.root, "a")
+        self.asserted()
         code, _, _ = self.gate("gate", "--step", "a", "--position", CHAIN, "--verify-exit", "1")
         self.assertEqual(code, GATE_EXCLUDE_IT)
         written: Any = json.loads((reports_of(self.root) / "step_a.json").read_text())
@@ -1140,8 +1426,10 @@ class TheEngineRoutesFailureByPosition(unittest.TestCase):
         self.assertEqual(recorded["detail"]["divergence"], {"reported": "done", "asserted": False})
 
     def test_a_failed_assertion_mid_chain_leaves_the_rest_not_reached(self) -> None:
-        """`b`'s own assertion passes over a tree `b` never touched, and it is still
-        not recorded — which is what tells a halt from an exclusion."""
+        """`b` never ran, so its assertion has nothing to assert and is declined ([24 B]);
+        its gate still runs, and records the halt — which is what tells a halt from an
+        exclusion. Before the assertion had its own gate it ran anyway, and could pass
+        over a tree `b` never touched; the absent report was all that kept it unrecorded."""
         steps = [
             one_step(step_id="a", command="true", verify="test -f a.txt"),
             one_step(
@@ -1162,7 +1450,8 @@ class TheEngineRoutesFailureByPosition(unittest.TestCase):
         self.assertEqual(statuses[verify_name("a")], "failed")
         self.assertEqual(statuses[mark_name("a")], "skipped")
         self.assertEqual(statuses[work_name("b")], "skipped", "the chain halted")
-        self.assertEqual(statuses[verify_name("b")], "succeeded", "the assertion still ran")
+        self.assertEqual(statuses[verify_name("b")], "skipped", "nothing to assert")
+        self.assertEqual(statuses[mark_name("b")], "skipped", "the gate still ran, and closed")
 
         self.assertFalse((self.root / "b.txt").exists(), "the halted step never ran")
         self.assertFalse((reports_of(self.root, ENGINE_RUN_ID) / "b.json").exists())
@@ -1172,6 +1461,122 @@ class TheEngineRoutesFailureByPosition(unittest.TestCase):
         self.assertEqual(self.gate_report("a")["cause"], "verify_failed")
         self.assertEqual(self.gate_report("a")["detail"]["position"], CHAIN)
         self.assertEqual(self.gate_report("b")["cause"], "not_reached")
+        declined = assertion_report(reports_of(self.root, ENGINE_RUN_ID), "b", ENGINE_RUN_ID)
+        self.assertEqual(decision_of(declined), DECISION_SKIPPED_UPSTREAM)
+        ran = assertion_report(reports_of(self.root, ENGINE_RUN_ID), "a", ENGINE_RUN_ID)
+        self.assertEqual(decision_of(ran), DECISION_RUN)
+
+    def test_a_recovery_proves_one_command_once_and_every_gate_reads_it(self) -> None:
+        """[24 A] against the engine: two finished steps quoting one assertion command over
+        one unchanged tree execute it once, and the second gate records off the first's
+        proof — with the engine's fabricated `0` for the skipped node never read."""
+        for step_id in ("a", "b"):
+            # Written the way Cairn writes one, so the no-op's rewrite is byte-identical and
+            # the tree stands still between the two steps — as it does on a real recovery.
+            write_json(
+                self.marker(step_id),
+                {"step_id": step_id, "run_id": "earlier", "scope": "once", "key": "once",
+                 "summary": "done before"},
+            )
+        subprocess.run(("git", "add", ".steps"), cwd=self.root, check=True, capture_output=True)
+        subprocess.run(
+            ("git", "commit", "-q", "-m", "markers"), cwd=self.root, check=True, capture_output=True
+        )
+        proved = self.engine / "proved.txt"
+        assertion = f"sh -c 'echo ran >> {proved}'"
+        steps = [
+            one_step(step_id="a", command="printf a > a.txt", verify=assertion),
+            one_step(step_id="b", command="printf b > b.txt", verify=assertion, deps=["a"]),
+        ]
+        nodes = self.lower(steps, CHAIN)
+        for node in nodes:
+            if node["name"] == work_name("b"):
+                node["depends"] = ["commit_a"]
+        completed = self.run_dag(nodes)
+        statuses = self.statuses(completed)
+        self.assertEqual(completed.returncode, 0, completed.stdout)
+        self.assertEqual(proved.read_text().splitlines(), ["ran"], "the command ran twice")
+        self.assertEqual(statuses[verify_name("a")], "succeeded")
+        self.assertEqual(statuses[verify_name("b")], "skipped", "the proof was shared")
+        self.assertEqual(statuses[mark_name("a")], "succeeded")
+        self.assertEqual(statuses[mark_name("b")], "succeeded", "the gate read the shared proof")
+        reports = reports_of(self.root, ENGINE_RUN_ID)
+        first = assertion_report(reports, "a", ENGINE_RUN_ID)
+        second = assertion_report(reports, "b", ENGINE_RUN_ID)
+        assert first is not None and second is not None
+        self.assertEqual(first["detail"][SOURCE_KEY], ASSERTION_EXECUTED)
+        self.assertEqual(second["detail"][DECISION_KEY], DECISION_SHARED)
+        self.assertEqual(second["detail"][BACKED_BY_KEY], "a")
+
+    def test_the_wrapper_stops_a_session_at_its_own_bound_and_its_report_survives(self) -> None:
+        """[22 B] against the engine: a provider that never reports is stopped by the
+        wrapper at the step's own bound, resumed once for its account, and its report
+        reaches the run directory — before the engine's bound, which lands the grace later."""
+        binaries = self.engine / "bin"
+        binaries.mkdir()
+        provider = binaries / "claude"
+        provider.write_text(
+            "#!/bin/sh\n"
+            "session=''\n"
+            "resumed=no\n"
+            "while [ $# -gt 0 ]; do\n"
+            "  case \"$1\" in\n"
+            "    --session-id) session=\"$2\"; shift;;\n"
+            "    --resume) session=\"$2\"; resumed=yes; shift;;\n"
+            "  esac\n"
+            "  shift\n"
+            "done\n"
+            "cat > /dev/null\n"
+            "if [ \"$resumed\" = yes ]; then\n"
+            "  printf '%s\\n' \"{\\\"type\\\":\\\"result\\\",\\\"subtype\\\":\\\"success\\\","
+            "\\\"session_id\\\":\\\"$session\\\",\\\"total_cost_usd\\\":0.01,\\\"num_turns\\\":1,"
+            "\\\"permission_denials\\\":[],\\\"structured_output\\\":{\\\"status\\\":\\\"done\\\","
+            "\\\"summary\\\":\\\"reported after the bound\\\",\\\"follow_up_work\\\":[],"
+            "\\\"needs_user_decision\\\":false}}\"\n"
+            "else\n"
+            "  sleep 120\n"
+            "fi\n",
+            encoding="utf-8",
+        )
+        provider.chmod(0o755)
+        step = one_step(step_id="a", kind="agent.claude", verify="test -d .")
+        step["timeout"] = 3
+        nodes = self.lower([step], CHAIN)
+        with patch.dict(os.environ, {"PATH": f"{binaries}{os.pathsep}{os.environ.get('PATH', '')}"}):
+            completed = self.run_dag(nodes)
+        statuses = self.statuses(completed)
+        self.assertEqual(statuses[work_name("a")], "succeeded", completed.stdout)
+        self.assertNotIn("Step execution timed out", completed.stdout + completed.stderr)
+        written: Any = json.loads(
+            (reports_of(self.root, ENGINE_RUN_ID) / f"{work_name('a')}.json").read_text()
+        )
+        self.assertEqual(written["status"], "done")
+        self.assertIs(written["detail"]["timed_out"], True)
+        self.assertEqual(written["detail"]["timeout_seconds"], 3)
+        self.assertTrue(written["detail"]["session_id"])
+        self.assertEqual(statuses[mark_name("a")], "succeeded", "the gate opened on the resumed account")
+
+    def test_a_marker_no_ops_assertion_still_runs(self) -> None:
+        """The recovery guarantee, against the engine: a step already done is skipped by
+        its marker gate, leaves its no-op report, and its end state is still asserted."""
+        marker = self.marker("a")
+        marker.parent.mkdir()
+        marker.write_text(
+            json.dumps(
+                {"step_id": "a", "run_id": "earlier", "scope": "once", "key": "once",
+                 "summary": "done before"}
+            ),
+            encoding="utf-8",
+        )
+        steps = [one_step(step_id="a", command="printf a > a.txt", verify="test -d .")]
+        completed = self.run_dag(self.lower(steps, CHAIN))
+        statuses = self.statuses(completed)
+        self.assertEqual(statuses[work_name("a")], "skipped", "the marker was fresh")
+        self.assertEqual(statuses[verify_name("a")], "succeeded", "the assertion still ran")
+        self.assertEqual(statuses[mark_name("a")], "succeeded", "and the gate opened on it")
+        self.assertFalse((self.root / "a.txt").exists(), "the no-op did no work")
+        ran = assertion_report(reports_of(self.root, ENGINE_RUN_ID), "a", ENGINE_RUN_ID)
+        self.assertEqual(decision_of(ran), DECISION_RUN)
 
     def test_a_step_that_reports_failure_over_work_that_is_there_diverges(self) -> None:
         steps = [

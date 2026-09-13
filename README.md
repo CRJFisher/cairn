@@ -98,7 +98,8 @@ the skill that drives all of it.
 - `cairn/plan/` — the schema, the validator, the parse report, the id rules, and the
   authoring conversation.
 - `cairn/` — runtime identity and reports, command and wait execution, the marker protocol
-  and its freshness keys, the verify gate, the agent preamble and report schema, the
+  and its freshness keys, the assertion's own gate and the one-proof-per-command store,
+  the verify gate, the agent preamble and report schema, the
   provider dictionary, the emitter table, the topology, the merge step, the locks, the
   supervisor, where the engine keeps its own files, the parameters a caller may vary, and
   the scheduler with its command line.
@@ -115,8 +116,9 @@ the skill that drives all of it.
   them carrying the answers their authoring conversation received.
 - `fixtures/workflows/` — the whole emitted file for six of those plans, one per topology
   shape, compared byte for byte by the suite.
-- `fixtures/runs/` — eight runs recorded from a real engine: green, red, blocked,
-  green-with-exclusions, all-no-op, mid-run, crashed, and one real paid agent step. Three of
+- `fixtures/runs/` — nine runs recorded from a real engine: green, red, blocked,
+  green-with-exclusions, all-no-op, mid-run, crashed, timed-out, and one real paid agent
+  step. Three of
   them are the same clean success as far as the engine is concerned and none of them extracts
   the same way.
 - `scripts/record_runs.py` — re-records that corpus against the installed engine.
@@ -214,7 +216,7 @@ Measured by `python3 -m scripts.measure_surface`. Tokens are an estimate at 4 ch
 | ----------------------------- | -------------------------------------- | ---------: | ----: | ------------: |
 | when Cairn is named           | the skill's description                |      `211` |   `1` |          `53` |
 | when Cairn is named           | `SKILL.md`                             |    `13641` | `193` |        `3411` |
-| when a capability is selected | `capabilities/running.md`, the largest |    `10046` | `151` |        `2512` |
+| when a capability is selected | `capabilities/running.md`, the largest |    `10359` | `154` |        `2590` |
 
 **None of it is unavoidable.** Cairn declares `disable-model-invocation: true`, so its
 description stays out of a session's context until someone types `/cairn` — a session that

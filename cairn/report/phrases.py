@@ -116,7 +116,10 @@ TONE_BY_VERDICT: dict[str, str] = {
 SENTENCE_BY_ACTION: dict[str, str] = {
     NEXT_DECIDE: "Decide the question this run is blocked on, then run it again.",
     NEXT_SETTLE_MERGE: "Settle the work that did not land, then run the plan again.",
-    NEXT_RERUN: "Run it again once the failure is understood.",
+    NEXT_RERUN: (
+        "Run it again as a recovery once the failure is understood: every step already "
+        "done no-ops, and the step it halted at is attempted again."
+    ),
     NEXT_START_SCHEDULER: "Start a scheduler: this run is queued and nothing is draining the queue.",
     NEXT_WAIT: "Wait: this run is still going.",
     NEXT_NOTHING: "Nothing.",
@@ -174,7 +177,13 @@ SENTENCE_BY_CAUSE: dict[str, str] = {
         "the gate could not establish what happened. It may have done all of its work; "
         "recording that as never having run would claim more than is known"
     ),
-    CAUSE_TIMED_OUT: "the engine's bound killed the step before it finished",
+    CAUSE_TIMED_OUT: (
+        "the step was stopped at its bound before it reported — its own, enforced by the "
+        "wrapper with headroom to say what it did, or the engine's over a wrapper that "
+        "never reached its report. Where a divergence stands beside it, an assertion ran "
+        "over what the step left and that is how it went; where none does, nothing "
+        "asserted over it and what it left is unproven"
+    ),
     CAUSE_RETRY_EXHAUSTED: "the step hit its retry bound",
     CAUSE_ORCHESTRATOR_DIED: (
         "the run's own process was killed under the step, so nothing decided its fate at all"

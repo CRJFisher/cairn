@@ -53,7 +53,15 @@ from cairn.report.spine import (
     SECTIONS,
     SINKS,
 )
-from tests.test_run_record import PACKAGE_ROOT, SHAPES, alive_copy, load, record_of
+from tests.test_run_record import (
+    PACKAGE_ROOT,
+    SHAPES,
+    alive_copy,
+    halted_chain,
+    killed_chain,
+    load,
+    record_of,
+)
 
 DOCUMENT = PACKAGE_ROOT / "docs" / "report.md"
 
@@ -80,7 +88,10 @@ UNSTATED = {
     # Conditions rather than statements: they decide which sentences the verdict section
     # carries, and those sentences say more than the flag would.
     "run.engine_contradicted": "it decides the contradiction sentence, which says more",
-    "run.owner_alive": "it decides the crash sentence, which says more",
+    "run.owner_alive": "it decides the crash sentence and the could-not-look sentence, which say more",
+    # The same paths, in the same report, as a sentence naming what is owed about them —
+    # which is what a reader acts on. The bare list would be the follow-up item twice.
+    "left_uncommitted": "the step's follow-up item names these paths and says what is owed",
 }
 
 
@@ -463,6 +474,20 @@ class AnExclusionIsUnmissable(unittest.TestCase):
                 self.assertIn("not a clean success", opening)
                 self.assertIn("step/beta", opening)
 
+    def test_a_run_whose_process_could_not_be_checked_is_never_called_dead(self) -> None:
+        """The reader may not inspect processes ([23 A]): the run reads as running, the
+        report says the process could not be checked, and the crash sentence never appears."""
+        state, reports, run_id = load("crashed")
+        with patch("cairn.liveness.process_start_time", return_value=None):
+            record = extract(alive_copy(state), reports, run_id=run_id)
+        self.assertIsNone(record["owner_alive"])
+        for sink in SINKS:
+            with self.subTest(sink=sink):
+                text = rendered(record, sink).text
+                self.assertIn("could not be checked", text)
+                self.assertNotIn("is gone", text)
+                self.assertNotIn("orchestrator_died", text)
+
     def test_a_blocked_run_opens_on_the_block(self) -> None:
         record = record_of("blocked")
         for sink in SINKS:
@@ -643,6 +668,44 @@ class TheDivergencesStandSideBySide(unittest.TestCase):
                     "two accounts that do not agree",
                     loose(rendered(record_of("green"), sink).text),
                 )
+
+
+class ABrokenRunReadsAsWhatHappened(unittest.TestCase):
+    """[22 A] and [23 B]: the report names the fault, says what the killed step left in the
+    tree before it says re-run, and counts the steps a halt left behind on one line."""
+
+    def test_a_killed_steps_passing_assertion_is_said_before_the_rerun(self) -> None:
+        state, reports = killed_chain()
+        record = extract(state, reports, run_id="run-killed")
+        for sink in SINKS:
+            with self.subTest(sink=sink):
+                text = rendered(record, sink).text
+                self.assertIn("work it left", text)
+                self.assertLess(text.index("work it left"), text.index("run offer"))
+                self.assertIn("9000", text)
+
+    def test_the_steps_a_halt_left_behind_take_one_line_and_still_each_have_a_row(self) -> None:
+        state, reports = halted_chain(tuple(f"s{n:02d}" for n in range(1, 16)), fails_at="s02")
+        record = extract(state, reports, run_id="run-halt")
+        for sink in SINKS:
+            with self.subTest(sink=sink):
+                text = rendered(record, sink).text
+                self.assertEqual(text.count("with 12 more"), 1)
+                self.assertIn("behind s02", text)
+                for step in record["steps"]:
+                    self.assertIn(step["step_id"], text)
+
+    def test_a_failed_assertions_last_lines_are_quoted_under_what_to_do_next(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            log = Path(temporary) / "verify_b.out"
+            log.write_text("FAIL  src/thing.test.ts > renders\n", encoding="utf-8")
+            state, reports = halted_chain(("a", "b", "c"), fails_at="b", assertion_log=str(log))
+            record = extract(state, reports, run_id="run-halt")
+        for sink in SINKS:
+            with self.subTest(sink=sink):
+                text = rendered(record, sink).text
+                self.assertIn("what its assertion said", text)
+                self.assertIn("thing.test.ts", text)
 
 
 class TheNextActionIsRendered(unittest.TestCase):
@@ -846,9 +909,12 @@ class TheTerminalRenderingIsTheDefault(unittest.TestCase):
         """A verbatim line is never wrapped: it is the text a person copies."""
         for shape in SHAPES:
             record = record_of(shape)
-            verbatim = {
-                str(step["resume_command"]) for step in record["steps"]
-            } | {str(step["asked"]) for step in record["steps"]}
+            verbatim = (
+                {str(step["resume_command"]) for step in record["steps"]}
+                | {str(step["asked"]) for step in record["steps"]}
+                | {str(step["assertion_tail"]) for step in record["steps"]}
+                | {str(record["next_action"]["command"])}
+            )
             for line in rendered(record, "terminal").text.splitlines():
                 if any(part and part in line for part in verbatim):
                     continue

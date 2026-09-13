@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -30,6 +31,10 @@ from typing import Any
 from cairn.baseconfig import ensure_dag_retry_disabled
 from cairn.gitio import git
 from cairn.locks import git_write_mutex
+from cairn.topology import worktrees_root_for
+
+# The plan slug every worktree path in this measurement is derived from.
+PLAN_SLUG = "measure"
 
 PACKAGE_ROOT = Path(__file__).parents[1]
 
@@ -89,17 +94,30 @@ def measure_mutex_cost(steps: int, repeats: int) -> dict[str, float]:
 
 
 def write_workflow(
-    path: Path, repository: Path, trees: Path, steps: int, seconds: float, concurrent: bool
+    path: Path,
+    repository: Path,
+    trees: Path,
+    steps: int,
+    seconds: float,
+    concurrent: bool,
+    runs: Path,
 ) -> None:
     body: list[dict[str, Any]] = []
+    del trees
     for index in range(steps):
-        worktree = trees / f"step_{index}"
+        # Derived the way the setup itself derives it, from the repository the step stands
+        # in: the path is not carried in the body, so a measurement that named its own
+        # would be measuring a fan-out into directories nothing created.
+        worktree = worktrees_root_for(repository, PLAN_SLUG) / f"s{index}"
         body.append(
             {
                 "name": f"setup_s{index}",
-                "run": (
-                    f"{sys.executable} -m cairn worktree setup --worktree {worktree} "
-                    f"--branch step/s{index} --base main"
+                "run": shlex.join(
+                    [
+                        sys.executable, "-m", "cairn", "worktree", "setup",
+                        "--plan", PLAN_SLUG, "--step", f"s{index}",
+                        "--branch", f"step/s{index}",
+                    ]
                 ),
                 "working_dir": str(repository),
                 "timeout_sec": 300,
@@ -109,10 +127,23 @@ def write_workflow(
         body.append(
             {
                 "name": f"work_s{index}",
-                "run": (
-                    f"{sys.executable} -c 'import pathlib,time; "
-                    f'pathlib.Path("out_{index}.txt").write_text("x"); '
-                    f"time.sleep({seconds})'"
+                # Through the wrapper, as an emitted step is, so the step records what was
+                # dirty before it and its commit has a scope to stage ([21]). A raw body
+                # would leave the commit nothing but a marker, and the measurement would be
+                # of a fan-out that lands nothing.
+                "run": shlex.join(
+                    [
+                        sys.executable, "-m", "cairn", "exec", "--command",
+                        shlex.join(
+                            [
+                                sys.executable, "-c",
+                                (
+                                    f'import pathlib,time; pathlib.Path("out_{index}.txt")'
+                                    f'.write_text("x"); time.sleep({seconds})'
+                                ),
+                            ]
+                        ),
+                    ]
                 ),
                 "working_dir": str(worktree),
                 "timeout_sec": 300,
@@ -123,7 +154,12 @@ def write_workflow(
         body.append(
             {
                 "name": f"commit_s{index}",
-                "run": f"{sys.executable} -m cairn commit --message 'cairn(s{index}): work'",
+                "run": shlex.join(
+                    [
+                        sys.executable, "-m", "cairn", "commit",
+                        "--message", f"cairn(s{index}): work", "--step", f"s{index}",
+                    ]
+                ),
                 "working_dir": str(worktree),
                 "timeout_sec": 300,
                 "retry_policy": {"limit": 0, "interval_sec": 1},
@@ -134,7 +170,16 @@ def write_workflow(
         "type": "graph",
         "retry_policy": {"limit": 0, "interval_sec": 1},
         "max_active_steps": steps * 3 if concurrent else 1,
-        "env": [{"PYTHONPATH": str(PACKAGE_ROOT)}],
+        # The two a generated workflow declares. `worktree setup` reads the parent branch
+        # from its own environment and refuses where nothing set it, because an unset one
+        # means the step was not launched from a workflow Cairn wrote.
+        "params": [
+            {"CAIRN_REPOSITORY": str(repository)},
+            {"CAIRN_PARENT_BRANCH": "main"},
+        ],
+        # The work steps run through the wrapper, so they need somewhere to leave their
+        # reports — which is what gives each commit a snapshot to scope itself by.
+        "env": [{"PYTHONPATH": str(PACKAGE_ROOT)}, {"CAIRN_RUNS_DIR": str(runs)}],
         "steps": body,
     }
     path.write_text(json.dumps(workflow, indent=2), encoding="utf-8")
@@ -155,7 +200,9 @@ def measure_engine_fanout(steps: int, seconds: float) -> dict[str, float]:
             trees = root / "trees"
             trees.mkdir()
             workflow = root / "measure.yaml"
-            write_workflow(workflow, repository, trees, steps, seconds, concurrent)
+            runs = root / "runs"
+            runs.mkdir()
+            write_workflow(workflow, repository, trees, steps, seconds, concurrent, runs)
             started = time.monotonic()
             outcome = subprocess.run(
                 [engine, "start", "--run-id", f"measure_{label.replace(' ', '_')}", str(workflow)],

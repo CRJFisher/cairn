@@ -35,6 +35,7 @@ from cairn.gitio import (
     read_blob,
     resolve_ref,
     state_directory,
+    tree_state,
     update_ref,
 )
 from cairn.liveness import self_start_time
@@ -208,20 +209,32 @@ def unresolved_merge(directory: Path) -> str | None:
 def refuse_dirty_repository(directory: Path) -> None:
     """Halt a run whose target repository already has uncommitted work in it.
 
-    A chain step runs in the repository's own working tree and its commit stages
-    everything there, so anything the user left uncommitted would be swept into a commit
-    the plan claims as a step's output. Refusing here costs nothing — the run has not spent
-    anything yet — and it is the only moment at which the two are still distinguishable.
+    A chain step runs in the repository's own working tree, and its commit stages only
+    what its own session dirtied — so a path that was already dirty when the step started
+    is one the step cannot land, and a step that needed to change it would leave verified
+    work uncommitted under a marker that says it is done ([21]). The same reader answers
+    this question before the offer is spent and again at the run's first act; asking it
+    twice through one function is what keeps the two refusals the same refusal ([24 D]).
     """
-    dirty = git(directory, ("status", "--porcelain")).stdout
+    dirty = tree_state(directory, untracked="normal")
+    if dirty is None:
+        # Absent is not clean. A tree git will not answer about is one whose uncommitted
+        # work cannot be established, and starting over it is the move this refusal exists
+        # to prevent — the same reading `commit_step` gives the same answer ([21]).
+        raise CairnError(
+            "git_failed",
+            f"git would not say what is uncommitted in {directory}, so whether a run may "
+            "start against it cannot be established",
+            detail={"working_directory": str(directory)},
+        )
     if not dirty:
         return
-    paths = [line[3:] for line in dirty.splitlines()[:10]]
+    paths = list(dirty[:10])
     raise CairnError(
         "repository_dirty",
-        f"{directory} has uncommitted work in it, which a step's commit would sweep up as "
-        f"its own output: {', '.join(paths)}. Commit it, remove it, or `git stash -u` "
-        "before running — plain `git stash` leaves untracked files behind",
+        f"{directory} has uncommitted work in it, which a step's commit could neither "
+        f"land as its own nor tell from its own: {', '.join(paths)}. Commit it, remove it, "
+        "or `git stash -u` before running — plain `git stash` leaves untracked files behind",
         detail={"working_directory": str(directory), "paths": paths},
     )
 

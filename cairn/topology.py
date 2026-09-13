@@ -20,6 +20,7 @@ from typing import Any, NamedTuple, TypedDict
 
 from cairn.plan.schema import (
     AGENT_FAMILY,
+    AGENT_REPORT_GRACE,
     DEFAULT_KIND,
     ENGINE_NAME_MAX_BYTES,
     MERGE_RETRIES,
@@ -192,40 +193,63 @@ def parse_node_name(name: str) -> Naming:
     return Naming(role, subject)
 
 
-def _levels(graph: Graph) -> list[list[str]]:
-    """The dependency levels, each holding steps with no dependency on each other.
+def dependency_levels(pending: dict[str, set[str]]) -> list[list[str]]:
+    """The dependency levels of a graph given as `{step: its upstream steps}`.
 
-    Deterministic in id order at every level, so the same graph always waves the same way
-    and a run record stays comparable across runs.
+    Each level holds steps with no dependency on each other, and every level is in name
+    order, so the same graph always levels the same way. Stated once because two readers
+    need the same levelling: the derivation, which waves a plan by it, and the run record,
+    which names the first step in it whose gate closed for a cause of its own
+    ([record/extract.py]) — two orderings of one graph would be two answers to "which
+    step halted the run". They do not hand it the same graph: the derivation levels a
+    plan's steps, the record levels the engine's nodes and collapses them back to steps.
     """
-    by_id = {step["id"]: step for step in graph["steps"]}
-    pending = {
-        step_id: {dep["id"] for dep in step["deps"] if dep["id"] in by_id}
-        for step_id, step in by_id.items()
-    }
-    waves: list[list[str]] = []
+    remaining = {step_id: set(upstream) for step_id, upstream in pending.items()}
+    levels: list[list[str]] = []
     settled: set[str] = set()
-    while pending:
+    while remaining:
         ready = sorted(
-            step_id for step_id, deps in pending.items() if deps <= settled
+            step_id for step_id, upstream in remaining.items() if upstream <= settled
         )
         if not ready:
             raise TopologyError(
-                "the graph has a dependency cycle among "
-                + ", ".join(sorted(pending))
-                + "; the validator refuses this before a topology is derived"
+                "the graph has a dependency cycle among " + ", ".join(sorted(remaining))
             )
-        waves.append(ready)
+        levels.append(ready)
         settled.update(ready)
         for step_id in ready:
-            del pending[step_id]
-    return waves
+            del remaining[step_id]
+    return levels
+
+
+def _levels(graph: Graph) -> list[list[str]]:
+    by_id = {step["id"]: step for step in graph["steps"]}
+    try:
+        return dependency_levels(
+            {
+                step_id: {dep["id"] for dep in step["deps"] if dep["id"] in by_id}
+                for step_id, step in by_id.items()
+            }
+        )
+    except TopologyError as cycle:
+        # Said here and not in the levelling itself: a plan reaches this only past a
+        # validator that refuses cycles, while a record levels whatever a truncated or
+        # hand-edited state file holds and no validator has ever seen it.
+        raise TopologyError(
+            f"{cycle}; the validator refuses this before a topology is derived"
+        ) from cycle
 
 
 def _step_seconds(step: Step) -> int:
-    # A wait's emitted bound carries the report grace, so the arithmetic counts it too:
-    # the number stated and the number the engine enforces have to be the same one.
-    grace = WAIT_REPORT_GRACE if step.get("command_type") == "wait_until" else 0
+    # A wait's and an agent's emitted bounds carry their report grace, so the arithmetic
+    # counts it too: the number stated and the number the engine enforces have to be the
+    # same one.
+    if step.get("command_type") == "wait_until":
+        grace = WAIT_REPORT_GRACE
+    elif step["kind"].startswith(AGENT_FAMILY):
+        grace = AGENT_REPORT_GRACE
+    else:
+        grace = 0
     return step_max_seconds(step["timeout"] + grace, step["retries"], RETRY_INTERVAL)
 
 
@@ -608,6 +632,7 @@ __all__ = [
     "Wave",
     "check_name",
     "critical_path_seconds",
+    "dependency_levels",
     "derive",
     "node_name",
     "parse_node_name",

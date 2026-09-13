@@ -15,6 +15,7 @@ import traceback
 from collections.abc import Callable
 from pathlib import Path
 
+from cairn.assertions import NEEDED_VERB, needed_main
 from cairn.baseconfig import (
     assert_dag_retry_disabled,
     base_config_path,
@@ -34,7 +35,7 @@ from cairn.core import (
     write_report,
 )
 from cairn.enginehome import run_records_path
-from cairn.gitio import refuse_unusable_repository
+from cairn.gitio import refuse_unusable_repository, tree_state
 from cairn.hooks import HOOK_VERB, hook_main
 from cairn.locks import (
     acquire_run_lock,
@@ -71,7 +72,7 @@ from cairn.verify import gate_main as verify_gate_main
 from cairn.wave import run_join
 from cairn.workflow.cli import main as workflow_main
 from cairn.workflow.stamp import read_stamp, workflow_path
-from cairn.worktrees import commit_all, prune_worktrees, setup_worktree
+from cairn.worktrees import DIRTY_BEFORE, commit_step, prune_worktrees, setup_worktree
 
 Handler = Callable[[argparse.Namespace, RuntimeContext], CommandResult]
 DEFAULT_SHELL = "/bin/sh"
@@ -84,20 +85,43 @@ GATE_WORK_PENDING = EXIT_OK
 GATE_MARKER_FRESH = EXIT_FAILED
 
 
+def _with_dirty_before(result: CommandResult, before: tuple[str, ...] | None) -> CommandResult:
+    """Carry what was already dirty when the step started into the step's own report.
+
+    Taken before the session and recorded after it, because the commit that follows can
+    only stage what the step itself dirtied if it knows what somebody else had already
+    dirtied ([21]). The key is written either way: `null` where git would not say, so the
+    commit can refuse rather than stage the marker over work it cannot scope — a step whose
+    snapshot failed is not a step that dirtied nothing.
+    """
+    snapshot = None if before is None else sorted(before)
+    return result._replace(detail={**result.detail, DIRTY_BEFORE: snapshot})
+
+
 def _exec(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
     refuse_lost_repository(context.working_directory, context.run_id)
-    return run_exec(args.command, context.working_directory, args.shell)
+    before = tree_state(context.working_directory)
+    return _with_dirty_before(
+        run_exec(args.command, context.working_directory, args.shell), before
+    )
 
 
 def _wait(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
     if args.duration is not None:
         return run_wait_duration(args.duration, args.timeout)
-    return run_wait_until(
-        args.until,
-        context.working_directory,
-        args.shell,
-        args.timeout,
-        args.interval,
+    # A wait is a work node like any other, so it snapshots like one: its commit reads the
+    # same key, and a wait that recorded none would be indistinguishable from a step whose
+    # snapshot failed.
+    before = tree_state(context.working_directory)
+    return _with_dirty_before(
+        run_wait_until(
+            args.until,
+            context.working_directory,
+            args.shell,
+            args.timeout,
+            args.interval,
+        ),
+        before,
     )
 
 
@@ -105,14 +129,19 @@ def _agent(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
     # The cheapest moment this run can discover it no longer owns the repository: one ref
     # read, against a session that is about to cost an hour of paid time.
     refuse_lost_repository(context.working_directory, context.run_id)
-    return run_provider(
-        args.provider,
-        args.prompt,
-        context.working_directory,
-        "auto",
-        args.model,
-        args.max_budget_usd,
-        args.tool or [],
+    before = tree_state(context.working_directory)
+    return _with_dirty_before(
+        run_provider(
+            args.provider,
+            args.prompt,
+            context.working_directory,
+            "auto",
+            args.model,
+            args.max_budget_usd,
+            args.tool or [],
+            deadline_seconds=args.timeout,
+        ),
+        before,
     )
 
 
@@ -288,7 +317,9 @@ def _worktree(args: argparse.Namespace, context: RuntimeContext) -> CommandResul
 
 def _commit(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
     refuse_lost_repository(context.working_directory, context.run_id)
-    return commit_all(context.working_directory, args.message)
+    return commit_step(
+        context.working_directory, args.message, step_id=args.step, context=context
+    )
 
 
 def _merge(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
@@ -376,6 +407,7 @@ def _parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     child.add_argument("--prompt", required=True)
     child.add_argument("--model")
     child.add_argument("--max-budget-usd", type=float)
+    child.add_argument("--timeout", type=float, required=True)
     child.add_argument("--tool", action="append")
 
     # `marker absent` is the precondition and is deliberately absent from this parser: it
@@ -409,6 +441,7 @@ def _parser(*, add_help: bool = True) -> argparse.ArgumentParser:
 
     child = subcommands.add_parser("commit", add_help=add_help)
     child.add_argument("--message", required=True)
+    child.add_argument("--step", required=True)
 
     merge = subcommands.add_parser("merge", add_help=add_help)
     merge_subcommands = merge.add_subparsers(dest="merge_command", required=True)
@@ -599,6 +632,12 @@ def main(argv: list[str] | None = None) -> int:
     # dispatch, which would skip the step and leave a report claiming it failed.
     if arguments[:1] == ["marker"] and arguments[1:2] != ["write"]:
         return gate_main(arguments[1:])
+    # The assertion's own gate fails open like the marker gate, and it is routed ahead of
+    # the fail-closed arm below on purpose: routed into that parser, its argument skew
+    # would be swallowed as a closed gate, the assertion would skip, and the engine would
+    # hand the mark gate a `0` for it ([assertions.py]).
+    if arguments[:2] == ["verify", NEEDED_VERB]:
+        return needed_main(arguments[2:])
     # The verify gate is a precondition too, and it is the fail-open gate's exact inverse:
     # `marker absent` runs the work again whenever it cannot tell, and this one records
     # nothing whenever it cannot tell. Redoing convergent work is cheap; a marker over

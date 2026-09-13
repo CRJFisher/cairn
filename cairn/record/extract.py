@@ -21,11 +21,13 @@ forever — while repairing that file stays [supervision.md]'s, so the two never
 from __future__ import annotations
 
 import json
+import os
 import shlex
 from collections.abc import Container, Mapping
 from pathlib import Path
 from typing import Any, cast
 
+from cairn.assertions import ASSERTION_SOURCES, BACKED_BY_KEY, EXIT_KEY, SOURCE_KEY
 from cairn.layout import view_url
 from cairn.providers import resume_command
 from cairn.record import engine
@@ -87,6 +89,7 @@ from cairn.record.vocabulary import (
     VERDICT_GREEN_WITH_EXCLUSIONS,
     VERDICT_RUNNING,
 )
+from cairn.skill.vocabulary import TRIGGER_RECOVERY
 from cairn.supervise import owner_liveness
 from cairn.text import (
     LINE_LIMIT,
@@ -97,17 +100,32 @@ from cairn.text import (
     normalise,
     normalise_all,
 )
-from cairn.topology import BRANCH_PREFIX, RUN_ROLES, WAVE_ROLES, node_name
+from cairn.topology import (
+    BRANCH_PREFIX,
+    RUN_ROLES,
+    WAVE_ROLES,
+    TopologyError,
+    dependency_levels,
+    node_name,
+)
 from cairn.verify import (
     EXCLUSION_CAUSES,
     GATE_INDETERMINATE,
+    NOT_REACHED,
     ORCHESTRATOR_DIED,
+    REPORTED_KILLED,
+    TIMED_OUT,
     USER_DECISION_REQUIRED,
 )
 from cairn.verify import (
     divergence_line as _divergence_line,
 )
-from cairn.workflow.schema import ENGINE_VERSION, OCCASION_PARAM, REPOSITORY_PARAM
+from cairn.workflow.schema import (
+    CAIRN_INVOCATION,
+    ENGINE_VERSION,
+    OCCASION_PARAM,
+    REPOSITORY_PARAM,
+)
 
 # The role whose failure costs a run its worktrees and nothing else. Every other piece of
 # Cairn's own housekeeping stands between the plan and its result, so its failure is the
@@ -236,12 +254,20 @@ def classify_step(
     has_assertion: bool,
     run_settled: bool,
     orchestrator_gone: bool,
+    engine_killed: bool = False,
 ) -> tuple[str, list[str], str | None]:
     """One step's outcome, its overlays and its cause, from the engine and the reports together.
 
     Read top to bottom; the first case that matches decides. The engine says whether the
     step ran, and Cairn's own reports say what came of it — neither can raise what the other
     lowered, which is the same rule the verify gate itself is built on.
+
+    `engine_killed` is the one fact the gate cannot see: the engine stopped the step at its
+    bound, spelled only in the node's own error. It decides exactly one cell — a failed work
+    node that left no report — and there it outranks the gate's `not_reached`, because the
+    gate read an absent report as a step that never ran and the engine says it ran until it
+    was killed ([22 A]). It never outranks a cause the gate established on evidence of its
+    own, and it never touches a step that did report.
     """
     overlays: list[str] = []
     if not has_assertion:
@@ -268,8 +294,15 @@ def classify_step(
             return OUTCOME_FAILED, overlays, ORCHESTRATOR_DIED
         return OUTCOME_RUNNING, overlays, None
     if work_status == engine.NODE_STATUS_SKIPPED:
-        # Skipped with no no-op report: the gate ran and decided, but left nothing behind
-        # that says what it decided, so the step's fate is unestablished rather than fresh.
+        if _cause(mark_report) == NOT_REACHED:
+            # The engine spells a chain halt and a marker no-op both `skipped`; the gate
+            # tells them apart. A no-op leaves its report and was caught above; a step
+            # behind a halt leaves none, so its gate closed `not_reached` — and that is a
+            # step that never ran and never will, not one excluded on its own account
+            # ([23 B]). Reading it as excluded made a halted chain a near-clean success.
+            return OUTCOME_NOT_REACHED, overlays, NOT_REACHED
+        # Skipped with no no-op report and no gate account of a halt: the step's fate is
+        # unestablished rather than fresh.
         return OUTCOME_EXCLUDED, overlays, GATE_INDETERMINATE
 
     # The step ran. What came of it is the gate's to say.
@@ -283,6 +316,13 @@ def classify_step(
     if cause == USER_DECISION_REQUIRED:
         overlays.append(OVERLAY_BLOCKED)
         return OUTCOME_EXCLUDED, _ordered(overlays), cause
+    if (
+        engine_killed
+        and work_report is None
+        and work_status == engine.NODE_STATUS_FAILED
+        and cause in (None, NOT_REACHED, GATE_INDETERMINATE)
+    ):
+        return OUTCOME_FAILED, _ordered(overlays), TIMED_OUT
     if mark_status == engine.NODE_STATUS_SUCCEEDED:
         return OUTCOME_VERIFIED, _ordered(overlays), None
     if cause is not None:
@@ -372,14 +412,93 @@ def derive_verdict(
     return VERDICT_GREEN
 
 
+def step_order(nodes: dict[str, dict[str, Any]], step_ids: list[str]) -> list[str]:
+    """The run's steps in dependency order, read off the edges the engine enforced.
+
+    The one order both "what halted this run" and "what to do next" are answered in
+    ([23 B]): a chain reads front to back, and a fan-out reads wave by wave with a wave's
+    steps in id order. The levelling is the derivation's own function, but the graph is
+    not the derivation's: this levels the engine's nodes and collapses each level back to
+    the steps they belong to, so the steps of one level are sorted here rather than
+    inherited — node order would put a step named late behind one of its own roles.
+    Total and never raising: a record building over a hand-edited or truncated state file
+    falls back to id order rather than costing the person the record.
+    """
+    pending = {
+        name: {upstream for upstream in engine.node_depends(node) if upstream in nodes}
+        for name, node in nodes.items()
+    }
+    try:
+        levels = dependency_levels(pending)
+    except TopologyError:
+        return sorted(step_ids)
+    wanted = set(step_ids)
+    ordered: list[str] = []
+    for level in levels:
+        subjects = {
+            naming.subject
+            for naming in (engine.classify(name) for name in level)
+            if naming is not None and naming.subject in wanted
+        }
+        ordered.extend(sorted(subjects - set(ordered)))
+    return ordered + sorted(wanted - set(ordered))
+
+
+def _halts(steps: list[StepRecord], order: list[str]) -> list[str]:
+    """Every step, in dependency order, whose gate closed for a cause of its own.
+
+    A step behind a halt, and one whose fate nothing established, both carry a cause that
+    is not theirs; neither is where the fault is, and naming one as the subject of "what
+    to do next" sends a person to a bystander ([23 B]).
+    """
+    by_id = {step["step_id"]: step for step in steps}
+    return [
+        step_id
+        for step_id in order
+        if by_id[step_id]["outcome"] in (OUTCOME_FAILED, OUTCOME_EXCLUDED)
+        and by_id[step_id]["cause"] not in (NOT_REACHED, GATE_INDETERMINATE)
+    ]
+
+
+def _halted_by(steps: list[StepRecord], order: list[str]) -> str | None:
+    """The first step the run halted at, or None where nothing halted it."""
+    halts = _halts(steps, order)
+    return halts[0] if halts else None
+
+
+def _never_reached_line(unreached: list[str], fault: str | None) -> str:
+    """One line for every step a halt left behind, naming the halt where the record knows it.
+
+    `fault` is passed only where the run halted in one place. Two independent halts leave
+    two sets of steps behind, and one line naming the first of them would tell a person the
+    other branch stopped for a reason it did not.
+    """
+    behind = "" if fault is None else f" behind {fault}"
+    if len(unreached) == 1:
+        return f"never reached{behind}"
+    return flatten(
+        f"never reached{behind}, with {len(unreached) - 1} more: {', '.join(unreached[1:])}",
+        limit=LINE_LIMIT,
+    )
+
+
 def derive_attention(
     steps: list[StepRecord],
     infrastructure: list[Infrastructure],
     budget: Budget,
     waves: list[WaveCensus],
+    order: list[str],
 ) -> list[Attention]:
-    """Everything a reader has to act on, assembled in the frozen order rather than sorted into it."""
+    """Everything a reader has to act on, assembled in the frozen order rather than sorted into it.
+
+    Failures come in dependency order, and the steps a halt left behind come as **one**
+    item rather than one each: fourteen identical "never ran" lines outnumber the one line
+    that names the fault, and none of the fourteen is a thing a person can act on. Every
+    such step keeps its own outcome in `steps`; the collapse is what the attention list is
+    for, which is action ([23 B]).
+    """
     items: list[Attention] = []
+    by_id = {step["step_id"]: step for step in steps}
     for step in steps:
         if OVERLAY_BLOCKED in step["overlays"]:
             items.append(
@@ -390,16 +509,28 @@ def derive_attention(
                     cause=step["cause"],
                 )
             )
-    for step in steps:
-        if step["outcome"] in (OUTCOME_FAILED, OUTCOME_NOT_REACHED):
+    for step_id in order:
+        step = by_id[step_id]
+        if step["outcome"] == OUTCOME_FAILED:
             items.append(
                 Attention(
                     kind=ATTENTION_FAILURE,
                     subject=step["step_id"],
-                    summary=step["said"] or f"the step is {step['outcome']}",
+                    summary=_failure_summary(step),
                     cause=step["cause"],
                 )
             )
+    unreached = [step_id for step_id in order if by_id[step_id]["outcome"] == OUTCOME_NOT_REACHED]
+    if unreached:
+        halts = _halts(steps, order)
+        items.append(
+            Attention(
+                kind=ATTENTION_FAILURE,
+                subject=unreached[0],
+                summary=_never_reached_line(unreached, halts[0] if len(halts) == 1 else None),
+                cause=NOT_REACHED,
+            )
+        )
     for step in steps:
         if step["outcome"] == OUTCOME_EXCLUDED and OVERLAY_BLOCKED not in step["overlays"]:
             items.append(
@@ -479,25 +610,45 @@ def derive_attention(
     return items
 
 
+def _failure_summary(step: StepRecord) -> str:
+    """What a failed step's attention line says, in the step's own words where it has any.
+
+    A step a bound stopped has none, so the line carries the two numbers a person weighs
+    before deciding whether to run it again: the bound that fired and how long it had run.
+    """
+    if step["said"]:
+        return step["said"]
+    if step["cause"] == TIMED_OUT and step["timeout_seconds"] is not None:
+        elapsed = step["elapsed_seconds"]
+        after = "" if elapsed is None else f" after {elapsed:.1f} s"
+        return f"the engine stopped the step at its {step['timeout_seconds']} s bound{after}"
+    return f"the step is {step['outcome']}"
+
+
 def derive_next_action(
     verdict: str,
     steps: list[StepRecord],
+    *,
     engine_state: str,
     run_id: str,
     plan: str | None,
+    repository: str | None,
     waves: list[WaveCensus],
-    orchestrator_gone: bool,
+    infrastructure: list[Infrastructure],
+    order: list[str],
 ) -> NextAction:
     """What a reader does now, in one value plus the command that does it.
 
-    A command is carried only where one can be spelled correctly and completely. The retry
-    needs the plan as well as the run, because the engine takes the run as a flag and the
-    plan as its operand — a command missing either is a command that fails when it is
-    pasted, which is worse than the report saying plainly that it has none.
+    The subject is the step the fault is at — the first in dependency order whose gate
+    closed for a cause of its own — and never a step behind it ([23 B]). A command is
+    carried only where one can be spelled correctly and completely: the recovery offer
+    needs the plan and the repository as well as the run, and one missing any of them
+    fails when it is pasted, which is worse than the report saying plainly it has none.
     """
+    by_id = {step["step_id"]: step for step in steps}
     if verdict == VERDICT_BLOCKED:
         blocked = next(
-            (step["step_id"] for step in steps if OVERLAY_BLOCKED in step["overlays"]),
+            (step_id for step_id in order if OVERLAY_BLOCKED in by_id[step_id]["overlays"]),
             None,
         )
         return NextAction(action=NEXT_DECIDE, subject=blocked, command=None)
@@ -513,28 +664,65 @@ def derive_next_action(
     if verdict == VERDICT_RUNNING:
         return NextAction(action=NEXT_WAIT, subject=None, command=None)
     if verdict == VERDICT_FAILED:
-        # A killed run stays `Running` in the engine's own record, and `dagu retry` refuses a
-        # run it still believes is going ([01-engine-spike.md]) — so the retry would fail when
-        # pasted, and the reconciliation that would unblock it takes a path this derivation
-        # does not carry. A command is carried only where it can be spelled correctly and
-        # completely, and here it cannot be.
-        if orchestrator_gone:
-            return NextAction(action=NEXT_RERUN, subject=None, command=None)
-        return NextAction(action=NEXT_RERUN, subject=None, command=_retry_command(run_id, plan))
+        subject = _halted_by(steps, order) or next(
+            (
+                step_id
+                for step_id in order
+                if by_id[step_id]["outcome"]
+                in (OUTCOME_FAILED, OUTCOME_EXCLUDED, OUTCOME_NOT_REACHED)
+            ),
+            None,
+        )
+        return NextAction(
+            action=NEXT_RERUN,
+            subject=subject,
+            command=_recovery_command(run_id, plan, repository),
+        )
     if verdict == VERDICT_GREEN_WITH_EXCLUSIONS:
         excluded = next(
-            (step["step_id"] for step in steps if step["outcome"] == OUTCOME_EXCLUDED),
+            (step_id for step_id in order if by_id[step_id]["outcome"] == OUTCOME_EXCLUDED),
             None,
         ) or next((entry["branch"] for entry in census_exclusions(waves)), None)
-        return NextAction(action=NEXT_SETTLE_MERGE, subject=excluded, command=None)
+        # A merge is settled only where the topology has one. A wave's census is taken by
+        # a join, and a join stands only in an isolated wave, which always lands through
+        # merge slots — so a census is evidence of a merge even where the engine's own
+        # node list has been cut short. A chain has neither, and re-running is its whole
+        # remedy ([23 B]).
+        has_merge = bool(waves) or any(item["role"] == "merge" for item in infrastructure)
+        if has_merge:
+            return NextAction(action=NEXT_SETTLE_MERGE, subject=excluded, command=None)
+        return NextAction(
+            action=NEXT_RERUN,
+            subject=excluded,
+            command=_recovery_command(run_id, plan, repository),
+        )
     return NextAction(action=NEXT_NOTHING, subject=None, command=None)
 
 
-def _retry_command(run_id: str, plan: str | None) -> str | None:
-    """Measured against Dagu 2.11.0: `--run-id` is a required flag and the plan is the operand."""
-    if not plan:
+def _recovery_command(run_id: str, plan: str | None, repository: str | None) -> str | None:
+    """The skill's own offer of a run that continues this one ([skill/cli.py]).
+
+    Never `dagu retry`: re-running a plan is the whole recovery story, and a continued
+    occasion is what makes it cheap, so the record hands a person the offer rather than
+    the engine's verb — which also refuses a run the engine still believes is going.
+    """
+    if not plan or not repository:
         return None
-    return f"dagu retry --run-id={shlex.quote(run_id)} {shlex.quote(plan)}"
+    return shlex.join(
+        [
+            *CAIRN_INVOCATION,
+            "run",
+            "offer",
+            "--plan",
+            plan,
+            "--repository",
+            repository,
+            "--trigger",
+            TRIGGER_RECOVERY,
+            "--recovering",
+            run_id,
+        ]
+    )
 
 
 def _parameters(record: dict[str, Any]) -> dict[str, str]:
@@ -566,12 +754,15 @@ def _step_record(
     """One step, assembled from the nodes it became and the accounts they left."""
     work = nodes.get(f"{WORK_ROLE}_{step_id}")
     mark = nodes.get(f"{MARK_ROLE}_{step_id}")
-    has_assertion = f"verify_{step_id}" in nodes
+    assertion = nodes.get(f"verify_{step_id}")
+    has_assertion = assertion is not None
 
     work_report = reports.get(f"{WORK_ROLE}_{step_id}")
     mark_report = reports.get(f"{MARK_ROLE}_{step_id}")
     commit_report = reports.get(f"{COMMIT_ROLE}_{step_id}")
+    assertion_account = _detail(reports.get(f"verify_{step_id}"))
 
+    killed = None if work is None else engine.parse_timeout(work.get("error"))
     outcome, overlays, cause = classify_step(
         work_status=None if work is None else _status(work),
         mark_status=None if mark is None else _status(mark),
@@ -580,7 +771,25 @@ def _step_record(
         has_assertion=has_assertion,
         run_settled=run_settled,
         orchestrator_gone=orchestrator_gone,
+        engine_killed=killed is not None,
     )
+    divergence = _divergence(mark_report)
+    assertion_tail = (
+        _assertion_tail(assertion)
+        if assertion is not None and _status(assertion) == engine.NODE_STATUS_FAILED
+        else None
+    )
+    divergence_is_derived = False
+    if cause == TIMED_OUT and divergence is None:
+        # The gate saw no report and recorded no divergence; the engine node for the
+        # assertion says whether it passed over what the killed step left, and that is the
+        # one account the record can still weigh against a session nobody heard from.
+        # Reached only where the assertion ran at all, which behind a step that left no
+        # report means its own gate faulted open ([24 B]).
+        divergence = _asserted_over_a_killed_step(assertion)
+        if divergence is not None:
+            divergence_is_derived = True
+            overlays = _ordered([*overlays, OVERLAY_DIVERGENCE])
 
     work_detail = _detail(work_report)
     commit_detail = _detail(commit_report)
@@ -622,7 +831,13 @@ def _step_record(
         "started_at": None if work is None else engine.moment(work.get("startedAt")),
         "finished_at": None if work is None else engine.moment(work.get("finishedAt")),
         "exit_code": exit_code,
-        "divergence": _divergence(mark_report),
+        "assertion_exit": as_count(assertion_account.get(EXIT_KEY)),
+        "assertion_source": _source(assertion_account.get(SOURCE_KEY)),
+        "assertion_backed_by": _reported_text(assertion_account.get(BACKED_BY_KEY)),
+        "timeout_seconds": None if killed is None else killed.bound_seconds,
+        "elapsed_seconds": None if killed is None else killed.elapsed_seconds,
+        "assertion_tail": assertion_tail,
+        "divergence": divergence,
     }
     return StepRecord(
         step_id=step_id,
@@ -630,16 +845,77 @@ def _step_record(
         overlays=overlays,
         verified=outcome == OUTCOME_VERIFIED,
         cost_is_notional=work_detail.get("cost_is_notional") is True,
+        # The commit's follow-up is the step's too: a path it left uncommitted because
+        # somebody else had it dirty is work the step found and did not do ([21]).
         follow_up_work=normalise_all(
-            work_report.get("follow_up_work") if work_report is not None else None
+            [*_follow_ups(work_report), *_follow_ups(commit_report)]
         ),
+        left_uncommitted=normalise_all(commit_detail.get("left_uncommitted")),
         nodes=sorted(_nodes_of_step(nodes, step_id)),
         provenance=_provenance(
             fields,
-            derived=("exit_code", "resume_command"),
+            derived=(
+                "exit_code",
+                "resume_command",
+                "timeout_seconds",
+                "elapsed_seconds",
+                *(("divergence",) if divergence_is_derived else ()),
+            ),
         ),
         **cast(Any, fields),
     )
+
+
+# What a failed assertion's output is read back for. Its last lines are where a test
+# runner or a type checker names what failed, and a person deciding whether to re-run wants
+# that line, not the log's path ([23 B]).
+ASSERTION_TAIL_BYTES = 8192
+
+
+def _assertion_tail(assertion: dict[str, Any]) -> str | None:
+    """The end of what a failed assertion printed, from the logs the engine kept for it.
+
+    Standard output first — a test runner's verdict and a type checker's findings land
+    there — and standard error where that is empty. The logs live in the engine's home and
+    outlive the run; where they are gone the record says so by carrying nothing.
+    """
+    for channel in ("stdout", "stderr"):
+        path = engine.text(assertion.get(channel))
+        if path is None:
+            continue
+        try:
+            with open(path, "rb") as handle:
+                handle.seek(0, os.SEEK_END)
+                handle.seek(max(0, handle.tell() - ASSERTION_TAIL_BYTES))
+                text = handle.read().decode("utf-8", errors="replace")
+        except OSError:
+            continue
+        tail = normalise(text[-TEXT_LIMIT:], limit=TEXT_LIMIT)
+        if tail:
+            return tail
+    return None
+
+
+def _asserted_over_a_killed_step(assertion: dict[str, Any] | None) -> Divergence | None:
+    """What the assertion node found, where the step it asserted was killed before reporting."""
+    if assertion is None:
+        return None
+    status = _status(assertion)
+    if status == engine.NODE_STATUS_SUCCEEDED:
+        return Divergence(reported=REPORTED_KILLED, asserted=True)
+    if status == engine.NODE_STATUS_FAILED:
+        return Divergence(reported=REPORTED_KILLED, asserted=False)
+    return None
+
+
+def _source(value: object) -> str | None:
+    """Which execution backed an assertion, quoted only where it is one of the two words."""
+    return value if isinstance(value, str) and value in ASSERTION_SOURCES else None
+
+
+def _follow_ups(report: dict[str, Any] | None) -> list[Any]:
+    found: Any = None if report is None else report.get("follow_up_work")
+    return list(cast(list[Any], found)) if isinstance(found, list) else []
 
 
 def _status(node: dict[str, Any]) -> int:
@@ -863,12 +1139,14 @@ def extract(
     edges = _edges(nodes)
     waves = _census(reports)
     budget = _budget(steps)
+    order = step_order(nodes, step_ids)
     verdict = derive_verdict(steps, infrastructure, engine_state, waves)
-    attention = derive_attention(steps, infrastructure, budget, waves)
+    attention = derive_attention(steps, infrastructure, budget, waves, order)
 
     parameters = _parameters(record)
     lock_detail = _detail(reports.get("lock_acquire"))
     plan = engine.text(lock_detail.get("plan")) or engine.text(record.get("name"))
+    git = _git(parameters, reports, waves)
     fields: dict[str, object] = {
         "plan": plan,
         "graph_sha256": engine.text(lock_detail.get("graph_sha256")),
@@ -907,9 +1185,17 @@ def extract(
         waves=waves,
         attention=attention,
         budget=budget,
-        git=_git(parameters, reports, waves),
+        git=git,
         next_action=derive_next_action(
-            verdict, steps, engine_state, run_id, plan, waves, orchestrator_gone
+            verdict,
+            steps,
+            engine_state=engine_state,
+            run_id=run_id,
+            plan=plan,
+            repository=git["repository"],
+            waves=waves,
+            infrastructure=infrastructure,
+            order=order,
         ),
         provenance=_provenance(fields, derived=("owner_alive", "view_url")),
         **cast(Any, fields),
@@ -1078,4 +1364,5 @@ __all__ = [
     "derive_verdict",
     "extract",
     "read_reports",
+    "step_order",
 ]

@@ -1,0 +1,47 @@
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'"Trebuchet MS", Verdana, Arial, sans-serif','fontSize':'14px','background':'#f7f3ec','primaryColor':'#ece4d6','primaryBorderColor':'#c06d4f','primaryTextColor':'#1d2024','secondaryColor':'#f7f3ec','secondaryBorderColor':'#9a9b97','secondaryTextColor':'#2f3338','tertiaryColor':'#fffdf8','tertiaryBorderColor':'#d8cfbe','tertiaryTextColor':'#2f3338','lineColor':'#2f3338','textColor':'#2f3338','mainBkg':'#ece4d6','nodeBorder':'#c06d4f','clusterBkg':'#fffdf8','clusterBorder':'#d8cfbe','edgeLabelBackground':'#f7f3ec','titleColor':'#1d2024'},'flowchart':{'htmlLabels':true,'curve':'basis','nodeSpacing':34,'rankSpacing':44,'padding':8,'wrappingWidth':420,'useMaxWidth':true}}}%%
+flowchart TB
+
+  subgraph RUN["Running a plan"]
+    S1["5 · 24 D<br/>cairn run start<br/>the priced offer, accepted<br/>dirty tree refused here"]
+    S2["lock_acquire<br/>refuses a dirty tree<br/>today, after the offer"]
+    S3{{"8 · 22 B<br/>work_&lt;id&gt;<br/>marker gate: opens<br/>session carries its bound"}}
+    S4{{"6 · 24 B  ·  7 · 24 A<br/>verify_&lt;id&gt;<br/>needed gate: opens<br/>skips: unreached, shared"}}
+    S5[/"6 · 24 B · 7 · 24 A<br/>mark_&lt;id&gt; — gate closes<br/>reads the report first,<br/>then writes the proof"\]
+    S6["4 · 21<br/>commit_&lt;id&gt;<br/>stage this step's paths,<br/>not the repository root"]
+    S1 --> S2 --> S3 --> S4 --> S5 --> S6
+  end
+
+  subgraph ART["What the run leaves behind"]
+    A1[("reports/ and the<br/>engine's own nodes")]
+    A2[("the repository's<br/>git history")]
+    A3[("assertions/<br/>&lt;command-sha256&gt;.json<br/>shared proofs<br/>NEW — 24 A")]
+  end
+
+  subgraph READ["Reading what a run did"]
+    R1(["1 · 23 A<br/>liveness probe<br/>os.kill, then ps<br/>not visible is not dead"])
+    R2["2 · 22 A  ·  3 · 23 B (a)<br/>classify_step<br/>killed step: timed_out<br/>cascade skip: not_reached"]
+    R3["3 · 23 B (b, c)<br/>derive_verdict, attention<br/>and next_action<br/>the headline names it"]
+    A4[("the run record")]
+    R4["1 · 23 A · 3 · 23 B<br/>cairn report<br/>the liveness line, and<br/>the cascade collapse"]
+    R1 --> R2
+    R2 --> R3 --> A4 --> R4
+  end
+
+  S3 -. writes .-> A1
+  S4 -.-> A1
+  S5 -.-> A1
+  S6 -. writes .-> A2
+  S4 -. reads .-> A3
+  S5 -. writes .-> A3
+  A1 --> R2
+
+  style RUN fill:#fffdf8,stroke:#d8cfbe,color:#1d2024
+  style ART fill:#fffdf8,stroke:#d8cfbe,color:#1d2024
+  style READ fill:#fffdf8,stroke:#d8cfbe,color:#1d2024
+
+  classDef moved fill:#f4e2d8,stroke:#c06d4f,stroke-width:2px,color:#1d2024;
+  classDef added fill:#e6ead6,stroke:#6f7a4f,stroke-width:2px,color:#1d2024;
+  classDef artifact fill:#efece6,stroke:#9a9b97,stroke-width:1.5px,color:#2f3338;
+  class S1,S3,S4,S5,S6,R1,R2,R3,R4 moved;
+  class S2,A1,A2,A4 artifact;
+  class A3 added;

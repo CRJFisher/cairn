@@ -186,8 +186,9 @@ steps for being wide, which is a plan-size cap nobody asked for.
 A step's own weight is `timeout × attempts + interval × retries`, because **the engine
 applies `timeout_sec` to each attempt rather than to the step** — measured, not assumed. A
 bound counted once would understate a plan by hours. A `wait_until` step counts the
-fifteen-second grace its emitted bound carries, so the number stated and the number the
-engine enforces are the same one.
+fifteen-second grace its emitted bound carries and an agent step the 180-second report
+grace, so the number stated and the number the engine enforces are the same one — which is
+also why a plan close to the 48-hour ceiling can be refused for the graces alone.
 
 A plan whose slowest chain exceeds the 48-hour ceiling is refused at generation time, with
 the arithmetic named. A declared `cairn wait` counts in full, because it holds the run lock
@@ -197,8 +198,8 @@ the lock's reclaim window ([supervision.md](supervision.md)).
 ## Measured
 
 Five independent steps, five seconds of work each, real worktrees and the git write mutex
-in place: **6.86s against 28.23s** run one step at a time — a ratio of **0.24** where 0.20
-is ideal and the engine's own raw parallelism measured 0.33. The mutex adds about **40ms
+in place: **6.66s against 29.46s** run one step at a time — a ratio of **0.23** where 0.20
+is ideal and the engine's own raw parallelism measured 0.33. The mutex adds about **44ms
 per git write**, which is the serialisation itself and not overhead around it: two writes
 per step against several seconds of work is under two percent, and against an agent step
 measured in minutes it is not a cost the fan-out can feel.

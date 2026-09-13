@@ -42,6 +42,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from cairn.assertions import command_digest
 from paid.redact import redact_reports
 from paid.spend import opted_in, refuse_unpaid
 from paid.vocabulary import PAID_OPT_IN
@@ -79,14 +80,18 @@ def step(
     depends: list[str] | None = None,
     precondition: str | None = None,
     continue_on: dict[str, bool] | None = None,
+    timeout: int = 120,
+    identifier: str | None = None,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "name": name,
         "run": run,
         "working_dir": "{WORKDIR}",
-        "timeout_sec": 120,
+        "timeout_sec": timeout,
         "retry_policy": {"limit": 0, "interval_sec": 1},
     }
+    if identifier is not None:
+        body["id"] = identifier
     if depends:
         body["depends"] = depends
     if precondition is not None:
@@ -171,6 +176,7 @@ SHAPES: dict[str, dict[str, Any]] = {
                     "agent", "run", "--provider", "claude",
                     "--prompt", AGENT_TASK,
                     "--max-budget-usd", "1",
+                    "--timeout", "120",
                 ),
             ),
             step("verify_alpha", "test -f note.txt", depends=["work_alpha"]),
@@ -181,7 +187,7 @@ SHAPES: dict[str, dict[str, Any]] = {
             ),
             step(
                 "commit_alpha",
-                cairn("commit", "--message", "cairn(alpha): the note"),
+                cairn("commit", "--message", "cairn(alpha): the note", "--step", "alpha"),
                 depends=["mark_alpha"],
                 continue_on={"skipped": True},
             ),
@@ -276,6 +282,79 @@ SHAPES: dict[str, dict[str, Any]] = {
             step("commit_gamma", "true", depends=["mark_gamma"]),
         ],
         "sample": True,
+    },
+    "timed-out": {
+        "why": (
+            "the engine killed a step at its bound before any report was written — its "
+            "node is a plain `failed` with the kill spelled only in its error — so its "
+            "assertion's own gate declined the assertion for want of that report, the "
+            "mark gate closed over the same absence, and the step behind it was skipped "
+            "with its own gates doing the same. The record reads the kill over the gate's "
+            "word for the first, and the halt over the engine's `skipped` for the second"
+        ),
+        "steps": [
+            # A raw command rather than `cairn exec`, because the wrapper would catch the
+            # engine's signal and leave a `cancelled` report; the fault this shape pins is
+            # a step that left none.
+            step(
+                "work_alpha",
+                f"sleep {HOLD_SECONDS}",
+                timeout=2,
+                continue_on={"failure": True, "skipped": True},
+            ),
+            step(
+                "verify_alpha",
+                "true",
+                depends=["work_alpha"],
+                identifier="verify_alpha",
+                # The gate the emitter writes, on the node the emitter writes it on. Without
+                # it this shape would record an assertion running over a step that left no
+                # report — which no generated workflow can produce ([24 B]).
+                precondition=cairn(
+                    "verify", "needed", "--step", "alpha",
+                    "--command-digest", command_digest("true"),
+                ),
+                continue_on={"failure": True, "skipped": True},
+            ),
+            step(
+                "mark_alpha",
+                cairn("exec", "--command", "true"),
+                depends=["verify_alpha"],
+                precondition=cairn(
+                    "verify", "gate", "--step", "alpha", "--position", "chain",
+                    "--verify-exit", "${verify_alpha.exit_code}",
+                ),
+            ),
+            step("commit_alpha", cairn("exec", "--command", "true"), depends=["mark_alpha"]),
+            step(
+                "work_beta",
+                cairn("exec", "--command", "true"),
+                depends=["commit_alpha"],
+                precondition=cairn("marker", "absent", "--step", "beta", "--scope", "once"),
+                continue_on={"failure": True, "skipped": True},
+            ),
+            step(
+                "verify_beta",
+                "true",
+                depends=["work_beta"],
+                identifier="verify_beta",
+                precondition=cairn(
+                    "verify", "needed", "--step", "beta",
+                    "--command-digest", command_digest("true"),
+                ),
+                continue_on={"failure": True, "skipped": True},
+            ),
+            step(
+                "mark_beta",
+                cairn("exec", "--command", "true"),
+                depends=["verify_beta"],
+                precondition=cairn(
+                    "verify", "gate", "--step", "beta", "--position", "chain",
+                    "--verify-exit", "${verify_beta.exit_code}",
+                ),
+            ),
+            step("commit_beta", cairn("exec", "--command", "true"), depends=["mark_beta"]),
+        ],
     },
     "crashed": {
         "why": (

@@ -23,6 +23,7 @@ from cairn.core import EXIT_OK, CairnError
 from cairn.enginehome import run_records_path
 from cairn.gitio import runs_root
 from cairn.layout import RECORD_FILE, check_run_id
+from cairn.locks import refuse_dirty_repository, refuse_unresolved_merge
 from cairn.marker import mint_occasion
 from cairn.record.store import build_run_record
 from cairn.skill.consent import Refused, make_offer, record_engine_command, spend
@@ -147,12 +148,22 @@ def _cmd_start(args: argparse.Namespace) -> int:
     try:
         check_run_id(run_id)
         refuse_unusable_engine()
+        # The working tree, read in the same breath as the engine: the run's first act
+        # refuses a dirty tree and an unresolved merge, and a refusal there has already
+        # spent the acceptance. Asked here through the very functions the lock asks it
+        # through, so the two refusals are one refusal; the run's own stays as the
+        # backstop for a tree that dirties itself in between ([24 D]).
+        refuse_unresolved_merge(repository)
+        refuse_dirty_repository(repository)
         # Asked here rather than where it is used. It shells out to the engine and can
         # refuse; raised after the spend that would be a crash over a consumed acceptance,
         # and every refusal has to happen while the yes is still standing.
         records = run_records_path()
     except EngineUnavailable as unavailable:
         print(f"refused  {unavailable}", file=sys.stderr)
+        return EXIT_REFUSED
+    except CairnError as unsettled:
+        print(f"refused  {unsettled.cause}: {unsettled}", file=sys.stderr)
         return EXIT_REFUSED
     except ValueError as malformed:
         print(f"refused  {run_id!r} is not a run id: {malformed}", file=sys.stderr)

@@ -6,10 +6,11 @@ stderr attached, rather than a `CalledProcessError` surfacing wherever it was ra
 
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from functools import cache
 from pathlib import Path
 from typing import NamedTuple
@@ -401,18 +402,82 @@ def checked_out_branch(directory: Path) -> str | None:
     return outcome.stdout if outcome.exit_code == 0 else None
 
 
-def tree_state(directory: Path) -> tuple[str, ...] | None:
-    """Every path the working tree has something to say about, or None if git will not say.
+UNTRACKED_MODES = ("all", "normal")
 
-    Absent is not clean. A directory git cannot answer about has to stay distinguishable
-    from one it answered "nothing here" about, because the two license opposite moves.
+
+def tree_entries(
+    directory: Path, *, untracked: str = "all"
+) -> tuple[tuple[str, str], ...] | None:
+    """Every path the working tree has something to say about, with git's two status
+    letters for it, or None if git will not say.
+
+    Read NUL-terminated and with renames off, so a path holding a space, a quote or a byte
+    outside ASCII is one entry rather than a line `line[3:]` would cut short, and a rename
+    is two paths rather than one entry carrying an arrow. Two pairs of readers ask two
+    questions of this: the pre-spend refusal and the run's own both ask whether a tree is
+    clean at all, and read `normal` so they refuse the same trees; the work step's snapshot
+    and the commit that subtracts it both ask which paths that session dirtied, and read
+    `all` so they subtract the same paths ([21]).
+
+    `untracked` is git's own `--untracked-files` mode: `all` names every file, `normal`
+    names an untracked directory once. Absent is not clean. A directory git cannot answer
+    about has to stay distinguishable from one it answered "nothing here" about, because the
+    two license opposite moves.
     """
-    outcome = git(
-        directory, ("status", "--porcelain", "--untracked-files=all"), check=False
+    if untracked not in UNTRACKED_MODES:
+        raise ValueError(f"unknown untracked-files mode {untracked!r}")
+    outcome = _git_bytes(
+        directory,
+        ("status", "--porcelain", "-z", "--no-renames", f"--untracked-files={untracked}"),
     )
-    if outcome.exit_code != 0:
+    if outcome is None:
         return None
-    return tuple(line[3:] for line in outcome.stdout.splitlines() if line.strip())
+    found: list[tuple[str, str]] = []
+    for entry in outcome.split(b"\0"):
+        if len(entry) < 4:
+            continue
+        found.append((entry[:2].decode("ascii", errors="replace"), entry[3:].decode("utf-8", errors="surrogateescape")))
+    return tuple(found)
+
+
+def digest_states(states: Mapping[str, str]) -> str:
+    """One digest over a set of named states, in name order.
+
+    Stated once because two keys are built this way — a step's `inputs` key
+    ([marker.py]) and the tree state an assertion's proof is shared under
+    ([assertions.py]) — and two spellings of one digest is how they come to disagree over
+    the same files.
+    """
+    digest = hashlib.sha256()
+    for name in sorted(states):
+        digest.update(f"{name}\0{states[name]}\n".encode())
+    return digest.hexdigest()
+
+
+def tree_state(directory: Path, *, untracked: str = "all") -> tuple[str, ...] | None:
+    """The paths of `tree_entries`, for a reader that asks only whether anything is dirty."""
+    entries = tree_entries(directory, untracked=untracked)
+    if entries is None:
+        return None
+    return tuple(path for _, path in entries)
+
+
+def _git_bytes(directory: Path, arguments: Sequence[str]) -> bytes | None:
+    """One git command whose output is a NUL-separated byte stream rather than text lines."""
+    try:
+        completed = subprocess.run(
+            [GIT, *LOCK_CONFIGURATION, *arguments],
+            cwd=directory,
+            capture_output=True,
+            timeout=GIT_TIMEOUT_SECONDS,
+            env=_environment(),
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    return completed.stdout
 
 
 REF_CONTENTION_ATTEMPTS = 5

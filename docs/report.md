@@ -122,10 +122,25 @@ named beside it. Each no-op then names the scope its key matched under and both 
 `once` and `daily` are the difference between correct caching and stale research, and a
 recovery run rendered naively is a screen of grey with no account of who paid for it.
 
+## A run whose process could not be checked
+
+Where the engine still says a run is running and the reader could not inspect its process —
+a sandboxed harness shell, the ordinary case when Cairn is driven through a coding agent —
+the first section says in one line that the process could not be checked and that the run
+reads as running as far as the record shows. It never calls the process gone: that sentence,
+and the `orchestrator_died` it comes with, belong to a probe that succeeded and found
+nothing. The engine's own record is the better witness, and the report says so.
+
 ## The receipts
 
 Per step: cost and whether it is notional, turns, model, session identity, transcript,
-standard error, branch, commit, diffstat, exit code, timings, and a resume command.
+standard error, branch, commit, diffstat, exit code, the assertion's exit with the execution
+that backed it and the step that proved it, the bound a stopped step was stopped at and how
+long it had run, timings, and a resume command.
+
+Where the step a reader is sent to failed its assertion, the next-action section quotes the
+end of what that assertion printed, so the reason a gate closed is in the report rather than
+in a log file the reader has to go and open.
 
 The resume command is `verbatim`, and it carries its own `cd` into the directory the step ran
 in. On a green run the wave's prune has since removed that worktree, so the command names a

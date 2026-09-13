@@ -1,0 +1,71 @@
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'"Trebuchet MS", Verdana, Arial, sans-serif','fontSize':'14px','background':'#f7f3ec','primaryColor':'#ece4d6','primaryBorderColor':'#c06d4f','primaryTextColor':'#1d2024','secondaryColor':'#f7f3ec','secondaryBorderColor':'#9a9b97','secondaryTextColor':'#2f3338','tertiaryColor':'#fffdf8','tertiaryBorderColor':'#d8cfbe','tertiaryTextColor':'#2f3338','lineColor':'#2f3338','textColor':'#2f3338','mainBkg':'#ece4d6','nodeBorder':'#c06d4f','clusterBkg':'#fffdf8','clusterBorder':'#d8cfbe','edgeLabelBackground':'#f7f3ec','titleColor':'#1d2024'},'flowchart':{'htmlLabels':true,'curve':'basis','nodeSpacing':30,'rankSpacing':38,'padding':8,'wrappingWidth':420,'useMaxWidth':true}}}%%
+flowchart TB
+
+  subgraph LADDER["classify_step — the first case that matches decides"]
+    R1["1 · the work report<br/>says noop"]
+    R2["2 · the engine's status is<br/>aborted, not_started,<br/>or still running"]
+    R3["3 · the engine says the<br/>work node was skipped"]
+    R4["4 · a user decision is<br/>required — the work<br/>report, or the gate's<br/>own cause"]
+    R5["5 · the mark node<br/>succeeded"]
+    R6["6 · the gate's own report<br/>carries a cause"]
+    RN["NEW CELL · 22 A<br/>the work node failed,<br/>left no report, and the<br/>engine says it timed out"]
+    R7["7 · the work node failed"]
+    R8["8 · nothing above matched"]
+    R1 --> R2 --> R3 --> R4 --> R5 --> R6 --> RN --> R7 --> R8
+  end
+
+  O1["no_op"]
+  O2["not_reached, pending or<br/>running, each matching the<br/>status — or failed +<br/>orchestrator_died"]
+  O3["today: excluded +<br/>gate_indeterminate<br/>23 B (a): not_reached"]
+  O4["excluded +<br/>user_decision_required"]
+  O5["verified"]
+  O6["excluded + that cause"]
+  ON["failed + timed_out<br/>the bound and the elapsed<br/>parsed from the error"]
+  O7["failed"]
+  O8["excluded +<br/>gate_indeterminate"]
+
+  R1 --> O1
+  R2 --> O2
+  R3 --> O3
+  R4 --> O4
+  R5 --> O5
+  R6 --> O6
+  RN --> ON
+  R7 --> O7
+  R8 --> O8
+
+  NOTE["why exactly here<br/>earlier it outranks noop<br/>and needs_user_decision;<br/>later it never fires, the<br/>gate having already<br/>returned not_reached"]
+  RN -. "22 A adds an input" .-> NOTE
+
+  D1["derive_verdict<br/>not_reached returns failed<br/>exit 3 becomes exit 1<br/>settle_merge leaves"]
+  D2["derive_attention<br/>not_reached buckets under<br/>failure, second of the kinds<br/>fourteen items move up"]
+  D3["derive_next_action<br/>the failed branch carries<br/>no subject at all today<br/>naming the fault adds one"]
+
+  O1 ~~~ O2
+  O2 ~~~ O3
+  O3 ~~~ O4
+  O4 ~~~ O5
+  O5 ~~~ O6
+  O6 ~~~ ON
+  ON ~~~ O7
+  O7 ~~~ O8
+
+  RIP["what moves with them,<br/>two functions away"]
+  O3 ==> RIP
+  ON ==> RIP
+  RIP ==> D1
+  RIP ==> D2
+  RIP ==> D3
+  D1 ~~~ D2
+  D2 ~~~ D3
+
+  style LADDER fill:#fffdf8,stroke:#d8cfbe,color:#1d2024
+
+  classDef moved fill:#f4e2d8,stroke:#c06d4f,stroke-width:2px,color:#1d2024;
+  classDef plain fill:#efece6,stroke:#9a9b97,stroke-width:1.5px,color:#2f3338;
+  classDef note fill:#fffdf8,stroke:#d8cfbe,stroke-width:1.5px,color:#2f3338;
+  classDef ripple fill:#faf0e9,stroke:#c06d4f,stroke-width:2px,stroke-dasharray:5 3,color:#1d2024;
+  class R1,R2,R4,R5,R6,R7,R8,O1,O2,O4,O5,O6,O7,O8 plain;
+  class R3,RN,O3,ON moved;
+  class NOTE note;
+  class D1,D2,D3,RIP ripple;

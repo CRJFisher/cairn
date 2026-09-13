@@ -14,12 +14,12 @@ sequenced here changes what a verdict is, who may write a marker, or what an off
 The nine changes are four separable pieces of work, and the order within each is forced by
 what one change teaches the next.
 
-| Theme                                       | Items          | Surface    | What a person meets today                                                          |
-| ------------------------------------------- | -------------- | ---------- | ---------------------------------------------------------------------------------- |
-| The record states things that did not happen | 23 A, 22 A, 23 B | **Report** | A live run reported dead; a step with four commits reported as never run             |
-| A commit claims work that is not the step's  | 21, 24 D        | **Run**    | Another session's uncommitted edit inside `cairn(task_X): …`, under a message about neither |
-| A recovery re-pays for proofs already bought | 24 B, 24 A      | **Run**    | ~30 minutes per recovery proving one command against one tree, fourteen times        |
-| A killed step leaves no account of itself    | 22 B            | **Run**    | The engine's bound fires, the wrapper never reaches its report write                 |
+| Theme                                        | Items            | Surface    | What a person meets today                                                                   |
+| -------------------------------------------- | ---------------- | ---------- | ------------------------------------------------------------------------------------------- |
+| The record states things that did not happen | 23 A, 22 A, 23 B | **Report** | A live run reported dead; a step with four commits reported as never run                    |
+| A commit claims work that is not the step's  | 21, 24 D         | **Run**    | Another session's uncommitted edit inside `cairn(task_X): …`, under a message about neither |
+| A recovery re-pays for proofs already bought | 24 B, 24 A       | **Run**    | ~30 minutes per recovery proving one command against one tree, fourteen times               |
+| A killed step leaves no account of itself    | 22 B             | **Run**    | The engine's bound fires, the wrapper never reaches its report write                        |
 
 ## The order
 
@@ -105,20 +105,24 @@ recovery that is slow. Where dogfood turnaround is the binding constraint instea
 — 24 B alone takes ~30 minutes off every recovery for very little work, and 24 A and B are what
 produced the loudest complaint in the record.
 
-## Decided, not built
+## Decided
 
-Three items are questions. Two of them gate work above.
+Three items were questions rather than work. Each has its answer, recorded where the contract
+it touches lives. Two of the three then took build work to record the answer — the timeout
+warning is a new parse-report warning, and the build-product ruling rewrote
+[16](16-release.md) as well as [docs/workflow.md](../docs/workflow.md). The verify-retry
+answer took none: it is a sentence beside `retries`.
 
-- **May a verify retry once?** ([24 C](24-recovery-economics.md)) A plan-contract ruling. Left
-  open, the gate's false-negative rate is the suite's flake rate times fourteen executions per
-  recovery. It interacts with 24 A: once results are shared, one flaky execution closes every
-  gate quoting that command, so 24 A raises the price of leaving this unanswered.
+- **May a verify retry once?** ([24 C](24-recovery-economics.md)) **No.** The engine records
+  no per-node retry count, so a retried pass would read exactly like a first-try pass in the
+  run record; the remedy for an assertion that flakes is the plan stating one that does not.
+  Recorded beside `retries` in [plan-contract.md](../docs/plan-contract.md), with the price
+  24 A puts on leaving a flaky assertion in: one shared proof closes every gate quoting it.
 - **Does a non-default timeout carry its evidence, the way an edge does?**
-  ([22](22-timed-out-step.md)) The 9,000 s bound came from the derivation, and no document
-  states it.
+  ([22](22-timed-out-step.md)) **It warns.** A timeout that differs from the kind's default is
+  a warning on the parse report naming the step and the bound, because nothing quotes the
+  document's words for it — never a refusal, and no schema change.
 - **Is an emitted definition a portable artifact or a per-machine build product?**
-  ([23 C](23-reading-a-broken-run.md)) `cairn/workflow/build.py:156` resolves `PYTHONPATH` at
-  authoring on purpose, and `docs/workflow.md:269` documents that as the design.
-  [16](16-release.md) claims the opposite of the result — _"a generated workflow encoding the
-  generating machine's absolute paths is author-shaped even when the source is not."_ The two
-  documents disagree today, and a fresh machine is the release's own test.
+  ([23 C](23-reading-a-broken-run.md)) **A per-machine build product**, authored on the machine
+  that runs it, until binary resolution lands. [docs/workflow.md](../docs/workflow.md)'s
+  design stands and [16](16-release.md) now says the same.

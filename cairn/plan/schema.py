@@ -118,6 +118,19 @@ MERGE_RETRIES = 0
 # are the same one.
 WAIT_REPORT_GRACE = 15
 
+# An agent step owns its declared bound the same way: the wrapper stops the session at
+# `--timeout`, and the engine's own kill lands this much later. The grace is for the
+# report, not the work — it covers stopping the provider, one resume that asks the session
+# for the account it owes, and the write of the report the engine's kill would otherwise
+# erase ([22 B]). Measured: a session that has committed its work answers that in a turn,
+# and the alternative was a step with four commits and a passing assertion recorded as one
+# that never ran.
+AGENT_REPORT_GRACE = 180
+# What the resume may spend of the grace. The remainder is headroom for stopping the
+# provider and writing the report — the two things that must happen before the engine's
+# bound, whatever the resumed session does.
+AGENT_RESUME_MARGIN = 30
+
 # The engine applies `timeout_sec` to each attempt rather than to the step [V], so a step's
 # worst case is every attempt plus every wait between them. Every duration Cairn states —
 # the run's maximum, and the lock reclaim window derived from it — is built from this.
