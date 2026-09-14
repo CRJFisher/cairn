@@ -23,6 +23,7 @@ doc 17's.
 """
 
 import ast
+import hashlib
 import io
 import json
 import re
@@ -100,6 +101,7 @@ from cairn.skill.vocabulary import (
 )
 from cairn.topology import ROLES, worktrees_parent
 from cairn.verify import EXCLUSION_CAUSES
+from cairn.workflow.gate import Admission
 from cairn.workflow.schema import PARENT_BRANCH_PARAM, REPOSITORY_PARAM
 from cairn.workflow.stamp import workflow_path
 from scripts.measure_surface import block as measure_surface_block
@@ -729,6 +731,28 @@ class WhatAcceptsAnOfferAndWhatDoesNot(unittest.TestCase):
         made = self._offer()
         granted = consent.spend(self.repository, made.offer_id, reply="yes, go ahead", run_id=RUN_ID)
         self.assertIsInstance(granted, consent.Authorisation)
+
+    def test_an_admission_prices_its_snapshot_not_later_source_bytes(self) -> None:
+        body = self.workflow.read_bytes()
+        expected_cost = consent.disclosure(self.workflow, "main")
+        admission = Admission(hashlib.sha256(body).hexdigest(), body, "unchanged")
+        changed = cast(
+            dict[str, Any], json.loads(self.workflow.read_text(encoding="utf-8"))
+        )
+        cast(list[dict[str, Any]], changed["steps"])[0]["run"] = "echo changed"
+        self.workflow.write_text(json.dumps(changed), encoding="utf-8")
+
+        made, stated = consent.make_offer(
+            self.repository,
+            plan="offline-export",
+            workflow=self.workflow,
+            parent_branch="main",
+            occasion_reading="new_occasion",
+            occasion=None,
+            admission=admission,
+        )
+        self.assertEqual(stated, expected_cost)
+        self.assertEqual(made.body_sha256, admission.sha256)
 
     def test_the_same_acceptance_cannot_authorise_a_second(self) -> None:
         made = self._offer()
@@ -1757,6 +1781,7 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
             {PARENT_BRANCH_PARAM: "main"},
             {"CAIRN_OCCASION": ""},
         ]
+        document["env"][0]["PYTHONPATH"] = str(PACKAGE_ROOT)
         self.workflow.write_text(json.dumps(document), encoding="utf-8")
         self.launched: list[Sequence[str]] = []
 
@@ -1817,6 +1842,14 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
             self.assertIn(line, spoken)
         self.assertIn(CONSENT_NOTHING_YET, spoken)
         self.assertTrue(consent.read_offer(self.repository, self._minted(spoken)))
+
+    def test_offer_refuses_a_hand_edit_that_breaks_the_complete_gate(self) -> None:
+        document = json.loads(self.workflow.read_text(encoding="utf-8"))
+        document["steps"][0]["timeout_sec"] = False
+        self.workflow.write_text(json.dumps(document), encoding="utf-8")
+        code, spoken = self._offer()
+        self.assertEqual(code, 1)
+        self.assertIn("missing_timeout", spoken)
 
     def _zones(self, spoken: str) -> tuple[str, str]:
         """What the person hears, and what is the session's alone.
@@ -1896,6 +1929,12 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
         self.assertEqual(len(self.launched), 1)
         self.assertIn(f"{PARENT_BRANCH_PARAM}=release", " ".join(self.launched[0]))
         self.assertIn("verified work lands on release", started)
+        launched_workflow = Path(self.launched[0][-1])
+        self.assertNotEqual(launched_workflow, self.workflow)
+        self.assertEqual(
+            launched_workflow.read_bytes(),
+            self.workflow.read_bytes(),
+        )
 
     def test_a_dirty_tree_refuses_before_the_offer_is_spent_and_the_same_yes_stands(
         self,

@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "all-roots",
-    "cairn_generator": "5",
+    "cairn_generator": "6",
     "cairn_engine": "2.11.0",
     "cairn_graph_sha256": "cc6372f3b498c2ddcfba74e8669868fa4af2f475528d58748a3eb5a9056f632b",
-    "cairn_body_sha256": "6993cb990ebf2261fd0fe70c3ec246553ce14279dc96b75b28e126c5a845fcd2"
+    "cairn_body_sha256": "dae26474f39856a7ba80c7d6b9f43f0df2b73090fd1f9c5ebb502e81b2eab145"
   },
   "params": [
     {
@@ -54,7 +54,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn lock acquire --plan all-roots --run-timeout 24360"
+      "run": "python3 -m cairn lock acquire --plan all-roots --run-timeout 24600"
     },
     {
       "name": "setup_drop_the_legacy_exporter",
@@ -257,12 +257,12 @@
     {
       "name": "merge_w1_1",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 4200,
+      "timeout_sec": 4320,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn merge land --slot 1 --provider claude --branch step/drop_the_legacy_exporter --branch step/tighten_the_log_format",
+      "run": "python3 -m cairn merge land --slot 1 --provider claude --model sonnet --max-budget-usd 5.0 --timeout 3600 --branch step/drop_the_legacy_exporter --branch step/tighten_the_log_format",
       "depends": [
         "join_w1"
       ]
@@ -283,12 +283,12 @@
     {
       "name": "merge_w1_2",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 4200,
+      "timeout_sec": 4320,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn merge land --slot 2 --provider claude --branch step/drop_the_legacy_exporter --branch step/tighten_the_log_format",
+      "run": "python3 -m cairn merge land --slot 2 --provider claude --model sonnet --max-budget-usd 5.0 --timeout 3600 --branch step/drop_the_legacy_exporter --branch step/tighten_the_log_format",
       "depends": [
         "verify_merge_w1_1"
       ]

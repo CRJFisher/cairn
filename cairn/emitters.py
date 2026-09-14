@@ -18,12 +18,16 @@ from pathlib import Path
 from typing import Any
 
 from cairn.assertions import NEEDED_VERB, command_digest
+from cairn.bounds import nonnegative_integer, positive_finite, positive_integer
 from cairn.plan.schema import (
     AGENT_FAMILY,
     AGENT_REPORT_GRACE,
     INPUTS_SCOPE,
+    MERGE_BUDGET_USD,
+    MERGE_MODEL,
     MERGE_RETRIES,
     MERGE_TIMEOUT,
+    MERGE_WORK_TIMEOUT,
     RETRY_INTERVAL,
     SUPPORT_RETRIES,
     SUPPORT_TIMEOUT,
@@ -54,6 +58,8 @@ def retry_policy(limit: int, interval_seconds: int) -> dict[str, Any]:
     policy is present, so "never retry" is written with an interval it will never use
     ([01]).
     """
+    if not nonnegative_integer(limit) or not positive_integer(interval_seconds):
+        raise ValueError("retry limit must be nonnegative and its interval positive")
     return {"limit": limit, "interval_sec": interval_seconds}
 
 
@@ -105,7 +111,7 @@ def emit_agent(step: Step, working_directory: str) -> EngineStep:
     provider = step["kind"][len(AGENT_FAMILY) :]
     model = step.get("model")
     budget = step.get("max_budget_usd")
-    if not model or budget is None or budget <= 0:
+    if not model or not positive_finite(budget):
         raise ValueError(
             f"agent step {step['id']!r} carries no model or no positive dollar ceiling, "
             "so the session it opens could not be priced"
@@ -444,6 +450,12 @@ def emit_merge(node: Node) -> EngineStep:
         str(detail["slot"]),
         "--provider",
         str(detail["provider"]),
+        "--model",
+        MERGE_MODEL,
+        "--max-budget-usd",
+        str(MERGE_BUDGET_USD),
+        "--timeout",
+        str(MERGE_WORK_TIMEOUT),
     ]
     for branch in list(detail["candidates"]):
         arguments.extend(("--branch", str(branch)))

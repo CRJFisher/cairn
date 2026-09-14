@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import Any, NamedTuple, TypedDict, cast
 
+from cairn.bounds import positive_finite
 from cairn.core import (
     EXIT_FAILED,
     EXIT_OK,
@@ -36,6 +38,7 @@ from cairn.gitio import (
     tree_state,
 )
 from cairn.locks import git_write_mutex, refuse_unresolved_merge, unresolved_merge
+from cairn.plan.schema import MERGE_BUDGET_USD, MERGE_MODEL, MERGE_WORK_TIMEOUT
 from cairn.providers import run_provider
 from cairn.verify import EXCLUSION_CAUSES, GATE_INDETERMINATE, NOT_REACHED, mark_name
 
@@ -536,12 +539,30 @@ def run_merge(
     into: str,
     candidates: Sequence[str],
     provider: str,
-    model: str | None,
-    max_budget_usd: float | None,
     context: RuntimeContext,
+    model: str | None = MERGE_MODEL,
+    max_budget_usd: float | None = MERGE_BUDGET_USD,
+    timeout_seconds: float | None = MERGE_WORK_TIMEOUT,
     run_agent: ProviderCall = run_provider,
 ) -> CommandResult:
     """Land one of this wave's branches, or report honestly why none was landed."""
+    model = model or MERGE_MODEL
+    max_budget_usd = (
+        MERGE_BUDGET_USD if max_budget_usd is None else max_budget_usd
+    )
+    timeout_seconds = (
+        MERGE_WORK_TIMEOUT if timeout_seconds is None else timeout_seconds
+    )
+    if (
+        not model.strip()
+        or not positive_finite(max_budget_usd)
+        or not positive_finite(timeout_seconds)
+    ):
+        raise CairnError(
+            "invalid_arguments",
+            "merge resolution requires a model and positive finite budget and timeout",
+        )
+    work_deadline = time.monotonic() + timeout_seconds
     refuse_unresolved_merge(repository)
     _refuse_redirected_environment()
     on = checked_out_branch(repository)
@@ -637,19 +658,42 @@ def run_merge(
                 detail={**detail, "stderr": merged.stderr},
             )
         detail["conflicted"] = list(conflicted)
+        detail["resolution"] = {
+            "model": model,
+            "max_budget_usd": max_budget_usd,
+            "timeout_seconds": timeout_seconds,
+        }
         # Outside the write mutex: a session can run for an hour and the mutex's own wait
         # is five minutes, so holding it across one would turn every contender into a
         # failure rather than a wait. Nothing else in the run writes here — the slots are
         # chained, the join is upstream and the prune is downstream.
-        agent = run_agent(
-            provider,
-            merge_prompt(branch, into, conflicted),
-            repository,
-            "auto",
-            model,
-            max_budget_usd,
-            [],
-        )
+        remaining = max(0.001, work_deadline - time.monotonic())
+        try:
+            agent = run_agent(
+                provider,
+                merge_prompt(branch, into, conflicted),
+                repository,
+                "auto",
+                model,
+                max_budget_usd,
+                [],
+                deadline_seconds=remaining,
+            )
+        except CairnError as exc:
+            exc.detail = {
+                **detail,
+                **exc.detail,
+                "resolved_by": resolved_by,
+                "resolution": {
+                    **cast(dict[str, Any], detail["resolution"]),
+                    "session_id": exc.detail.get(
+                        "session_id", exc.detail.get("generated_session_id")
+                    ),
+                    "total_cost_usd": exc.detail.get("total_cost_usd"),
+                    "timed_out": exc.cause == "timed_out",
+                },
+            }
+            raise
         if agent.status == "failed" or agent.needs_user_decision:
             # Left exactly as git left it. An abort does not converge: the branch would
             # still be unmerged, so the next run re-attempts the same merge and stops here
@@ -657,7 +701,19 @@ def run_merge(
             return agent._replace(
                 exit_code=agent.exit_code or EXIT_FAILED,
                 cause=agent.cause or "merge_conflict",
-                detail={**detail, **agent.detail, "resolved_by": resolved_by},
+                detail={
+                    **detail,
+                    **agent.detail,
+                    "resolved_by": resolved_by,
+                    "resolution": {
+                        **cast(dict[str, Any], detail["resolution"]),
+                        "session_id": agent.detail.get(
+                            "session_id", agent.detail.get("generated_session_id")
+                        ),
+                        "total_cost_usd": agent.detail.get("total_cost_usd"),
+                        "timed_out": bool(agent.detail.get("timed_out")),
+                    },
+                },
                 follow_up_work=[
                     *agent.follow_up_work,
                     *follow_up,
@@ -682,6 +738,15 @@ def run_merge(
             "checks": verdict["checks"],
         }
     )
+    if agent is not None:
+        detail["resolution"] = {
+            **cast(dict[str, Any], detail["resolution"]),
+            "session_id": agent.detail.get(
+                "session_id", agent.detail.get("generated_session_id")
+            ),
+            "total_cost_usd": agent.detail.get("total_cost_usd"),
+            "timed_out": bool(agent.detail.get("timed_out")),
+        }
     if not verdict["proven"]:
         unsettled = [f"settle the merge of {branch} into {into} in {repository}, then re-run"]
         if facts.ancestor:

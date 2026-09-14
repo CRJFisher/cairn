@@ -138,7 +138,7 @@ is derived from the record rather than composed as prose, and is one of:
 | `decide`          | a step is blocked on a human decision                                                | none — a person decides, and no command does                                                               |
 | `settle_merge`    | a step or a census exclusion left work unlanded, in a run whose topology has a merge | none                                                                                                       |
 | `rerun`           | the run failed, or a merge-less run left work unlanded                               | `python3 -m cairn run offer --plan <plan> --repository <repository> --trigger recovery --recovering <run>` |
-| `start_scheduler` | the run is queued and nothing is draining the queue                                  | `cairn schedule start`                                                                                     |
+| `start_scheduler` | the run is queued and nothing is draining the queue                                  | `cairn schedule offer --scope start`                                                                       |
 | `wait`            | the run is still in flight                                                           | none                                                                                                       |
 | `nothing`         | the run is green, or every step no-opped                                             | none                                                                                                       |
 

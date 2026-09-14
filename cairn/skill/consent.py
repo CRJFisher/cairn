@@ -29,7 +29,9 @@ claim.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import os
 import tempfile
 from collections.abc import Sequence
@@ -51,11 +53,12 @@ from cairn.skill.vocabulary import (
     RUN_COST_FACTS,
 )
 from cairn.topology import TopologyError, parse_node_name, worktrees_parent
+from cairn.workflow.gate import Admission
 from cairn.workflow.schema import (
     PARENT_BRANCH_PARAM,
     REPOSITORY_PARAM,
     declared_parameter,
-    is_agent_body,
+    is_paid_body,
     read,
     split_argv,
 )
@@ -182,7 +185,7 @@ def agent_steps(document: Any) -> int:
     topology maintains while the argv is what the step actually does — and the emitter that
     writes those bodies owns the shape, so the reader asks it rather than restating it.
     """
-    return sum(1 for body in _bodies(document) if is_agent_body(body))
+    return sum(1 for body in _bodies(document) if is_paid_body(body))
 
 
 def _flag_value(words: tuple[str, ...], flag: str) -> str | None:
@@ -190,6 +193,14 @@ def _flag_value(words: tuple[str, ...], flag: str) -> str | None:
         if word == flag:
             return words[index + 1]
     return None
+
+
+def _flag_values(words: tuple[str, ...], flag: str) -> list[str]:
+    return [
+        words[index + 1]
+        for index, word in enumerate(words[:-1])
+        if word == flag
+    ]
 
 
 class SessionBound(NamedTuple):
@@ -208,16 +219,28 @@ def session_bounds(document: Any) -> list[SessionBound]:
     """
     found: list[SessionBound] = []
     for body in _bodies(document):
-        if not is_agent_body(body):
+        if not is_paid_body(body):
             continue
         words = split_argv(body)
-        ceiling = _flag_value(words, "--max-budget-usd")
-        model = _flag_value(words, "--model")
+        ceilings = _flag_values(words, "--max-budget-usd")
+        models = _flag_values(words, "--model")
+        timeouts = _flag_values(words, "--timeout")
+        ceiling = ceilings[0] if len(ceilings) == 1 else None
+        model = models[0] if len(models) == 1 else None
         try:
-            priced = ceiling is not None and float(ceiling) > 0
-        except ValueError:
+            priced = (
+                ceiling is not None
+                and math.isfinite(float(ceiling))
+                and float(ceiling) > 0
+            )
+        except (ValueError, OverflowError):
             priced = False
-        if not priced or model is None or not model.strip():
+        timeout = timeouts[0] if len(timeouts) == 1 else None
+        try:
+            timed = timeout is not None and math.isfinite(float(timeout)) and float(timeout) > 0
+        except (ValueError, OverflowError):
+            timed = False
+        if not priced or not timed or model is None or not model.strip():
             raise CairnError(
                 "invalid_arguments",
                 f"an agent body in this definition writes no dollar ceiling or no model "
@@ -278,14 +301,14 @@ def longest_timeout(document: Any) -> int:
         body = entry.get("run")
         own = (
             _flag_value(split_argv(body), "--timeout")
-            if isinstance(body, str) and is_agent_body(body)
+            if isinstance(body, str) and is_paid_body(body)
             else None
         )
         if own is not None:
             try:
                 timeouts.append(int(float(own)))
                 continue
-            except ValueError:
+            except (ValueError, OverflowError):
                 pass
         timeout = entry.get("timeout_sec")
         if isinstance(timeout, int) and not isinstance(timeout, bool):
@@ -370,6 +393,7 @@ def make_offer(
     occasion: str | None,
     parent_branch: str | None = None,
     moment: datetime | None = None,
+    admission: Admission | None = None,
 ) -> tuple[Offer, tuple[str, ...]]:
     """Mint one offer and state its price in the same act.
 
@@ -378,8 +402,28 @@ def make_offer(
     obtainable from a call that has already composed the cost. There is no path to a run
     whose price was never stated.
     """
-    stated = disclosure(workflow, parent_branch)
-    branch = parent_branch or declared_branch(workflow)
+    priced = workflow
+    priced_temporary: Path | None = None
+    if admission is not None:
+        descriptor, name = tempfile.mkstemp(
+            prefix=f".{workflow.name}.", suffix=".admitted"
+        )
+        priced_temporary = Path(name)
+        try:
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(admission.body)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except BaseException:
+            priced_temporary.unlink(missing_ok=True)
+            raise
+        priced = priced_temporary
+    try:
+        stated = disclosure(priced, parent_branch)
+        branch = parent_branch or declared_branch(priced)
+    finally:
+        if priced_temporary is not None:
+            priced_temporary.unlink(missing_ok=True)
     if branch is None:
         raise CairnError(
             "invalid_arguments",
@@ -396,7 +440,7 @@ def make_offer(
         parent_branch=branch,
         occasion_reading=occasion_reading,
         occasion=occasion,
-        body_sha256=file_digest(workflow),
+        body_sha256=admission.sha256 if admission is not None else file_digest(workflow),
         offered_at=now,
         cost=stated,
     )
@@ -405,7 +449,9 @@ def make_offer(
     descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            json.dump(record._asdict(), handle, indent=2, sort_keys=True)
+            json.dump(
+                record._asdict(), handle, indent=2, sort_keys=True, allow_nan=False
+            )
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
@@ -499,6 +545,33 @@ def _claim(marker: Path, note: str) -> bool:
     finally:
         Path(temporary).unlink(missing_ok=True)
     return True
+
+
+def _snapshot_workflow(
+    repository: Path, offer_id: str, name: str, body: bytes
+) -> Path:
+    """Persist the admitted bytes under their DAG name before the offer is claimed."""
+    directory = offers_directory(repository) / offer_id
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / name
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=f".{name}.", suffix=".tmp", dir=directory
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(body)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o400)
+        os.replace(temporary, target)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+    if file_digest(target) != hashlib.sha256(body).hexdigest():
+        raise CairnError(
+            "invalid_arguments",
+            f"{target} did not preserve the workflow bytes this offer admitted",
+        )
+    return target
 
 
 def _spent_at(marker: Path) -> str:
@@ -598,6 +671,7 @@ def record_engine_command(
                 "command": list(command),
             },
             sort_keys=True,
+            allow_nan=False,
         )
         + "\n",
     )
@@ -654,7 +728,11 @@ def spend(
             ),
         )
     workflow = Path(held.workflow)
-    if not workflow.exists() or file_digest(workflow) != held.body_sha256:
+    try:
+        source_body = workflow.read_bytes()
+    except OSError:
+        source_body = b""
+    if hashlib.sha256(source_body).hexdigest() != held.body_sha256:
         return Refused(
             outcome=REFUSED_WORKFLOW_MOVED,
             why=(
@@ -662,11 +740,13 @@ def spend(
                 "to is not what would run. Offer the run again"
             ),
         )
+    snapshot = _snapshot_workflow(repository, offer_id, workflow.name, source_body)
     marker = offer_path(repository, offer_id).with_name(f"{offer_id}{SPENT_SUFFIX}")
     now = (datetime.now(UTC) if moment is None else moment.astimezone(UTC)).isoformat()
     claimed = json.dumps(
         {"spent_at": now, "reply": reply, "run_id": run_id, "command": []},
         sort_keys=True,
+        allow_nan=False,
     )
     if not _claim(marker, f"{claimed}\n"):
         spent = read_acceptance(marker)
@@ -687,7 +767,7 @@ def spend(
     return Authorisation(
         offer_id=offer_id,
         plan=held.plan,
-        workflow=held.workflow,
+        workflow=str(snapshot),
         repository=held.repository,
         parent_branch=held.parent_branch,
         occasion=held.occasion,

@@ -17,20 +17,22 @@ scheduler hazard that re-executes every failed run on the machine ([09]).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple, cast
 
 from cairn.baseconfig import BASE_CONFIG_NAME, ensure_dag_retry_disabled
 from cairn.emitters import retry_policy
 from cairn.enginehome import ENGINE_BINARY
 from cairn.plan.schema import RETRY_INTERVAL
-from cairn.workflow.preflight import Fault
-from cairn.workflow.schema import ENGINE_VERSION, WORKFLOW_SUFFIX
+from cairn.workflow.preflight import Fault, preflight
+from cairn.workflow.schema import ENGINE_VERSION, LABEL_PLAN, WORKFLOW_SUFFIX, read
+from cairn.workflow.stamp import describe
 
 GATE_TIMEOUT = 120
 
@@ -59,6 +61,14 @@ ENGINE_LOG_LINE = re.compile(r"^time=\S+\s+level=")
 # What a refusal may carry of the engine's own words. Generous, because the reason is the
 # whole point of reading it, and bounded, because it is text from another program.
 REASON_LIMIT = 2000
+
+
+class Admission(NamedTuple):
+    """The exact bytes that passed every execution gate."""
+
+    sha256: str
+    body: bytes
+    provenance: str
 
 
 def engine_reason(completed: subprocess.CompletedProcess[str]) -> str:
@@ -260,9 +270,68 @@ def gate(path: Path, *, binary: str | None = None, named: Path | None = None) ->
     return faults
 
 
+def admit(
+    path: Path,
+    *,
+    binary: str | None = None,
+    expected_plan: str | None = None,
+) -> tuple[Admission | None, list[Fault]]:
+    """Gate one stable byte snapshot and prove the source still holds it afterwards."""
+    try:
+        body = path.read_bytes()
+    except OSError as exc:
+        return None, [
+            Fault("not_a_document", None, f"{path} could not be read for admission: {exc}")
+        ]
+    digest = hashlib.sha256(body).hexdigest()
+    with tempfile.TemporaryDirectory(prefix="cairn-admit-") as scratch:
+        snapshot = Path(scratch) / path.name
+        snapshot.write_bytes(body)
+        try:
+            document = read(snapshot)
+        except (OSError, ValueError) as exc:
+            return None, [
+                Fault("not_a_document", None, f"{path} is not standard JSON: {exc}")
+            ]
+        plan = expected_plan
+        if plan is None and isinstance(document, dict):
+            labels = cast(dict[str, Any], document).get("labels")
+            if isinstance(labels, dict):
+                labelled_plan = cast(dict[str, Any], labels).get(LABEL_PLAN)
+                if isinstance(labelled_plan, str):
+                    plan = labelled_plan
+        # Inspect provenance on the same immutable copy the structural and engine gates
+        # consume. Embedded labels are sufficient; consulting the mutable source again here
+        # would make provenance describe potentially different bytes.
+        description = describe(snapshot, plan or "")
+        provenance = description.state
+        faults = preflight(document)
+        if not faults:
+            faults = gate(snapshot, binary=binary, named=path)
+    try:
+        unchanged = hashlib.sha256(path.read_bytes()).hexdigest() == digest
+    except OSError:
+        unchanged = False
+    if not faults and not unchanged:
+        faults = [
+            Fault(
+                "engine_validate",
+                None,
+                f"{path} changed while its admission gate was running; offer it again",
+            )
+        ]
+    return (
+        (Admission(digest, body, provenance), [])
+        if not faults
+        else (None, faults)
+    )
+
+
 __all__ = [
     "ENGINE_BINARY",
+    "Admission",
     "EngineUnavailable",
+    "admit",
     "assert_pinned",
     "engine_path",
     "engine_reason",

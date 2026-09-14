@@ -12,6 +12,7 @@ silently does nothing, or a daemon they did not know they had asked for.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -26,15 +27,18 @@ from cairn.schedule import (
     describe_run,
     install,
     installed,
+    make_daemon_offer,
     published_path,
     queued_runs,
     remove,
     scheduler_command,
+    spend_daemon_offer,
     start,
 )
+from cairn.workflow.gate import admit
 from cairn.workflow.stamp import stamp_path, workflow_path
 
-VERBS = frozenset({"install", "remove", "status", "start"})
+VERBS = frozenset({"offer", "install", "remove", "status", "start"})
 EXIT_REFUSED = 1
 
 # What a person is agreeing to. Printed wherever the escalation is made, because a schedule
@@ -49,6 +53,7 @@ COST = f"""a schedule costs a persistent process, not just a line in a file:
   - while it is up, its retry scanner re-executes every failed run recorded on this machine
     in the previous {RETRY_SCANNER_HOURS} hours — including runs Cairn never wrote. That is
     asserted off before it starts, and `start` refuses otherwise, naming what it found."""
+COST_SHA256 = hashlib.sha256(COST.encode("utf-8")).hexdigest()
 
 
 def _triggers_path(repository: Path, plan: str) -> Path:
@@ -58,12 +63,53 @@ def _triggers_path(repository: Path, plan: str) -> Path:
     )
 
 
+def _dags(args: argparse.Namespace) -> Path:
+    return Path(args.dags).resolve() if args.dags else dags_directory().resolve()
+
+
+def _cmd_offer(args: argparse.Namespace) -> int:
+    dags = _dags(args)
+    if args.scope == "install" and (not args.repository or not args.plan):
+        raise CairnError(
+            "invalid_arguments",
+            "an install offer requires --repository and --plan",
+        )
+    repository = Path(args.repository).resolve() if args.repository else None
+    # The disclosure is written first. If output cannot be delivered, no persisted id
+    # exists for a caller to accept without having received the current cost.
+    print(COST)
+    offer = make_daemon_offer(
+        args.scope,
+        dags=dags,
+        repository=repository,
+        plan=args.plan,
+        disclosure_sha256=COST_SHA256,
+    )
+    print(f"\noffer   {offer.offer_id}")
+    print(f"scope   {offer.scope}")
+    return 0
+
+
 def _cmd_install(args: argparse.Namespace) -> int:
     repository = Path(args.repository).resolve()
-    if not args.accept_daemon:
-        print(f"refused  {COST}\n\nRe-run with --accept-daemon.", file=sys.stderr)
-        return EXIT_REFUSED
-    dags = Path(args.dags) if args.dags else None
+    dags = _dags(args)
+    source = workflow_path(repository, args.plan)
+    admission, faults = admit(source, expected_plan=args.plan)
+    if admission is None:
+        raise CairnError(
+            "workflow_not_admitted",
+            f"{source} did not pass the execution gate: "
+            + "; ".join(str(fault) for fault in faults),
+        )
+    spend_daemon_offer(
+        dags,
+        args.offer,
+        scope="install",
+        reply=args.reply,
+        repository=repository,
+        plan=args.plan,
+        disclosure_sha256=COST_SHA256,
+    )
     # The record is written before the link, because the link is what arms the scheduler:
     # a failure between the two must leave a note about a schedule that does not fire
     # rather than a schedule nothing recorded.
@@ -79,7 +125,7 @@ def _cmd_install(args: argparse.Namespace) -> int:
         # handling a credential — which Cairn does not do, by construction.
         record["webhook"] = {"token_sink": args.webhook_token_sink}
     write_json(_triggers_path(repository, args.plan), record)
-    published = install(repository, args.plan, dags=dags)
+    published = install(repository, args.plan, dags=dags, admission=admission)
     print(f"linked   {published} -> {record['workflow']}")
     print(f"recorded {_triggers_path(repository, args.plan)}")
     print(f"fires    {_fires(published)}")
@@ -162,13 +208,17 @@ def _cmd_start(args: argparse.Namespace) -> int:
     The assertion is here rather than at install because this is the only moment the hazard
     can fire, and a machine that was safe a month ago is not evidence about this one.
     """
-    dags = Path(args.dags) if args.dags else None
-    if not args.accept_daemon:
-        print(f"refused  {COST}\n\nRe-run with --accept-daemon.", file=sys.stderr)
-        return EXIT_REFUSED
+    dags = _dags(args)
     waiting = assert_safe_to_start(
         base_config=Path(args.base_config) if args.base_config else None,
         records=Path(args.engine_records) if args.engine_records else None,
+    )
+    spend_daemon_offer(
+        dags,
+        args.offer,
+        scope="start",
+        reply=args.reply,
+        disclosure_sha256=COST_SHA256,
     )
     for run in waiting:
         print(f"draining {describe_run(run)}")
@@ -184,11 +234,19 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="cairn schedule", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
+    child = sub.add_parser("offer")
+    child.add_argument("--scope", choices=("install", "start"), required=True)
+    child.add_argument("--plan")
+    child.add_argument("--repository")
+    child.add_argument("--dags")
+    child.set_defaults(handler=_cmd_offer)
+
     child = sub.add_parser("install")
     child.add_argument("--plan", required=True)
     child.add_argument("--repository", default=".")
     child.add_argument("--dags")
-    child.add_argument("--accept-daemon", action="store_true")
+    child.add_argument("--offer", required=True)
+    child.add_argument("--reply", required=True)
     child.add_argument(
         "--webhook-token-sink",
         help="where the bearer token will be kept; recorded, never the token itself",
@@ -213,7 +271,8 @@ def main(argv: list[str] | None = None) -> int:
     child.add_argument("--dags")
     child.add_argument("--base-config")
     child.add_argument("--engine-records")
-    child.add_argument("--accept-daemon", action="store_true")
+    child.add_argument("--offer", required=True)
+    child.add_argument("--reply", required=True)
     child.add_argument("--dry-run", action="store_true")
     child.set_defaults(handler=_cmd_start)
 

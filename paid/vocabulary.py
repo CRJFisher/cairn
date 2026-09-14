@@ -291,6 +291,7 @@ CAPABILITY_BY_COMMAND: dict[str, str] = {
     "workflow check": CAPABILITY_EXPLAIN,
     "run offer": CAPABILITY_RUN,
     "run start": CAPABILITY_RUN,
+    "schedule offer": CAPABILITY_SCHEDULE,
     "schedule install": CAPABILITY_SCHEDULE,
     "schedule remove": CAPABILITY_SCHEDULE,
     "schedule start": CAPABILITY_SCHEDULE,

@@ -53,6 +53,7 @@ from cairn.skill.vocabulary import (
     CONSENT_RELAY_OPEN,
     TRIGGER_SHAPES,
 )
+from cairn.workflow.gate import admit
 from cairn.workflow.stamp import workflow_path
 
 EXIT_REFUSED = 1
@@ -105,6 +106,13 @@ def _cmd_offer(args: argparse.Namespace) -> int:
     workflow = workflow_path(Path(str(args.repository)).resolve(), plan)
     refuse_missing_definition(workflow, plan, str(args.repository))
     repository = _repository(str(args.repository), workflow)
+    admission, faults = admit(workflow, expected_plan=plan)
+    if admission is None:
+        detail = "\n".join(f"refused  {fault}" for fault in faults)
+        raise CairnError(
+            "workflow_not_admitted",
+            f"{workflow} did not pass the execution gate:\n{detail}",
+        )
     record = None
     if args.recovering:
         record = build_run_record(
@@ -132,6 +140,7 @@ def _cmd_offer(args: argparse.Namespace) -> int:
         parent_branch=args.parent_branch,
         occasion_reading=reading.reading,
         occasion=reading.occasion,
+        admission=admission,
     )
     # Two zones, and the markers are the whole point. Everything above the close is said to
     # the person verbatim; everything below it is the session's clerical work, the offer id

@@ -20,6 +20,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -582,16 +583,21 @@ class InstallingASchedulePublishesIntoTheWatchedDirectory(unittest.TestCase):
         self.dags = self.root / "dags"
         self.workflow = self.repository / ".git" / "cairn" / "workflows" / "nightly.yaml"
         self.workflow.parent.mkdir(parents=True)
-        self.workflow.write_text(serialise(document(schedule="0 3 * * *")), encoding="utf-8")
+        scheduled = document(schedule="0 3 * * *")
+        scheduled["env"][0]["PYTHONPATH"] = str(CAIRN_ROOT)
+        self.workflow.write_text(serialise(scheduled), encoding="utf-8")
 
     def test_a_definition_cairn_never_wrote_cannot_be_scheduled(self) -> None:
         with self.assertRaises(CairnError):
             install(self.repository, "absent", dags=self.dags)
 
-    def test_installing_links_rather_than_copies_so_re_authoring_is_picked_up(self) -> None:
+    def test_installing_links_an_immutable_admitted_snapshot(self) -> None:
         published = install(self.repository, "nightly", dags=self.dags)
         self.assertTrue(published.is_symlink())
-        self.assertEqual(published.readlink(), self.workflow)
+        self.assertNotEqual(published.readlink(), self.workflow)
+        admitted = published.read_bytes()
+        self.workflow.write_text("changed after admission", encoding="utf-8")
+        self.assertEqual(published.read_bytes(), admitted)
 
     def test_installing_twice_is_the_same_installation(self) -> None:
         first = install(self.repository, "nightly", dags=self.dags)
@@ -1012,9 +1018,8 @@ class ASecondFiringDoesItsWork(unittest.TestCase):
 class TheScheduleSurfaceStatesWhatItCosts(unittest.TestCase):
     """The escalation gate, driven through the command line rather than the library.
 
-    `--accept-daemon` is the one thing standing between wanting a recurring plan and
-    acquiring a daemon whose retry scanner re-executes paid work, so it is exercised where
-    a person meets it.
+    The persisted offer is the boundary between wanting a recurring plan and acquiring a
+    daemon whose retry scanner re-executes paid work.
     """
 
     def setUp(self) -> None:
@@ -1030,9 +1035,9 @@ class TheScheduleSurfaceStatesWhatItCosts(unittest.TestCase):
         )
         self.workflow = self.repository / ".git" / "cairn" / "workflows" / "nightly.yaml"
         self.workflow.parent.mkdir(parents=True)
-        self.workflow.write_text(
-            serialise(document(schedule="0 3 * * *")), encoding="utf-8"
-        )
+        scheduled = document(schedule="0 3 * * *")
+        scheduled["env"][0]["PYTHONPATH"] = str(CAIRN_ROOT)
+        self.workflow.write_text(serialise(scheduled), encoding="utf-8")
 
     def run_cli(self, *arguments: str) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
@@ -1040,23 +1045,63 @@ class TheScheduleSurfaceStatesWhatItCosts(unittest.TestCase):
             code = cairn_main(["schedule", *arguments])
         return code, out.getvalue(), err.getvalue()
 
+    def offer(self, scope: str) -> str:
+        arguments = ["offer", "--scope", scope, "--dags", str(self.dags)]
+        if scope == "install":
+            arguments.extend(
+                ("--plan", "nightly", "--repository", str(self.repository))
+            )
+        code, out, _ = self.run_cli(*arguments)
+        self.assertEqual(code, 0)
+        self.assertIn("persistent process", out)
+        found = re.search(r"^offer\s+(\S+)$", out, re.MULTILINE)
+        self.assertIsNotNone(found)
+        return cast(re.Match[str], found).group(1)
+
     def install(self, *extra: str) -> tuple[int, str, str]:
+        offer = self.offer("install")
         return self.run_cli(
             "install", "--plan", "nightly", "--repository", str(self.repository),
-            "--dags", str(self.dags), *extra,
+            "--dags", str(self.dags), "--offer", offer, "--reply", "yes", *extra,
         )
 
-    def test_installing_without_accepting_the_daemon_is_refused_with_its_cost(self) -> None:
-        code, _, err = self.install()
+    def test_installing_without_a_prior_offer_is_refused(self) -> None:
+        code, _, err = self.run_cli(
+            "install", "--plan", "nightly", "--repository", str(self.repository),
+            "--dags", str(self.dags), "--offer", "20200101T000000Z-deadbeef",
+            "--reply", "yes",
+        )
         self.assertEqual(code, 1)
-        self.assertIn("persistent process", err)
-        self.assertIn("re-executes every failed run", err)
+        self.assertIn("names no daemon offer", err)
         self.assertEqual(installed(dags=self.dags), [], "it published anyway")
+
+    def test_a_negative_reply_does_not_spend_the_offer(self) -> None:
+        offer = self.offer("install")
+        code, _, err = self.run_cli(
+            "install", "--plan", "nightly", "--repository", str(self.repository),
+            "--dags", str(self.dags), "--offer", offer, "--reply", "no",
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("affirmative reply", err)
+        self.assertEqual(installed(dags=self.dags), [])
+
+    def test_install_refuses_changed_bytes_that_fail_the_complete_gate(self) -> None:
+        offer = self.offer("install")
+        changed = json.loads(self.workflow.read_text(encoding="utf-8"))
+        changed["steps"][0]["timeout_sec"] = False
+        self.workflow.write_text(json.dumps(changed), encoding="utf-8")
+        code, _, err = self.run_cli(
+            "install", "--plan", "nightly", "--repository", str(self.repository),
+            "--dags", str(self.dags), "--offer", offer, "--reply", "yes",
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("missing_timeout", err)
+        self.assertEqual(installed(dags=self.dags), [])
 
     def test_accepting_the_daemon_links_the_definition_and_says_what_will_fire_it(
         self,
     ) -> None:
-        code, out, _ = self.install("--accept-daemon")
+        code, out, _ = self.install()
         self.assertEqual(code, 0)
         self.assertIn("cron '0 3 * * *'", out)
         self.assertEqual([p.name for p in installed(dags=self.dags)], ["nightly.yaml"])
@@ -1064,20 +1109,22 @@ class TheScheduleSurfaceStatesWhatItCosts(unittest.TestCase):
     def test_installing_a_definition_with_no_schedule_says_nothing_will_fire_it(self) -> None:
         """The trigger that silently does nothing, in the direction the watched directory
         cannot show."""
-        self.workflow.write_text(serialise(document()), encoding="utf-8")
-        code, out, _ = self.install("--accept-daemon")
+        unscheduled = document()
+        unscheduled["env"][0]["PYTHONPATH"] = str(CAIRN_ROOT)
+        self.workflow.write_text(serialise(unscheduled), encoding="utf-8")
+        code, out, _ = self.install()
         self.assertEqual(code, 0)
         self.assertIn("declares no schedule", out)
 
     def test_the_record_holds_where_a_token_goes_and_never_a_token(self) -> None:
-        self.install("--accept-daemon", "--webhook-token-sink", "1password: cairn/hooks")
+        self.install("--webhook-token-sink", "1password: cairn/hooks")
         sidecar = self.workflow.with_name("nightly.triggers.json")
         recorded = json.loads(sidecar.read_text(encoding="utf-8"))
         self.assertEqual(recorded["webhook"], {"token_sink": "1password: cairn/hooks"})
         self.assertNotIn("dagu_wh_", sidecar.read_text(encoding="utf-8"))
 
     def test_removing_takes_the_record_with_the_link(self) -> None:
-        self.install("--accept-daemon", "--webhook-token-sink", "somewhere")
+        self.install("--webhook-token-sink", "somewhere")
         code, _, _ = self.run_cli(
             "remove", "--plan", "nightly", "--repository", str(self.repository),
             "--dags", str(self.dags),
@@ -1099,17 +1146,22 @@ class TheScheduleSurfaceStatesWhatItCosts(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("unsafe", out)
 
-    def test_starting_without_accepting_the_daemon_is_refused(self) -> None:
-        code, _, err = self.run_cli("start", "--dry-run")
+    def test_starting_without_a_prior_offer_is_refused(self) -> None:
+        code, _, err = self.run_cli(
+            "start", "--dry-run", "--dags", str(self.dags),
+            "--base-config", str(self.base), "--engine-records", str(self.records),
+            "--offer", "20200101T000000Z-deadbeef", "--reply", "yes",
+        )
         self.assertEqual(code, 1)
-        self.assertIn("persistent process", err)
+        self.assertIn("names no daemon offer", err)
 
     def test_starting_asserts_the_machine_before_it_prints_the_invocation(self) -> None:
         self.base.write_text(
             "retry_policy:\n  limit: 3\n  interval_sec: 5\n", encoding="utf-8"
         )
+        offer = self.offer("start")
         code, out, err = self.run_cli(
-            "start", "--accept-daemon", "--dry-run", "--base-config", str(self.base),
+            "start", "--offer", offer, "--reply", "yes", "--dry-run", "--base-config", str(self.base),
             "--engine-records", str(self.records), "--dags", str(self.dags),
         )
         self.assertEqual(code, 1)
@@ -1117,12 +1169,31 @@ class TheScheduleSurfaceStatesWhatItCosts(unittest.TestCase):
         self.assertNotIn("starting", out)
 
     def test_a_safe_machine_prints_the_invocation_it_would_become(self) -> None:
+        offer = self.offer("start")
         code, out, _ = self.run_cli(
-            "start", "--accept-daemon", "--dry-run", "--base-config", str(self.base),
+            "start", "--offer", offer, "--reply", "yes", "--dry-run", "--base-config", str(self.base),
             "--engine-records", str(self.records), "--dags", str(self.dags),
         )
         self.assertEqual(code, 0)
         self.assertIn(f"--dags {self.dags}", out)
+
+        code, _, err = self.run_cli(
+            "start", "--offer", offer, "--reply", "yes", "--dry-run",
+            "--base-config", str(self.base), "--engine-records", str(self.records),
+            "--dags", str(self.dags),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("already spent", err)
+
+    def test_an_install_offer_cannot_authorise_process_start(self) -> None:
+        offer = self.offer("install")
+        code, _, err = self.run_cli(
+            "start", "--offer", offer, "--reply", "yes", "--dry-run",
+            "--base-config", str(self.base), "--engine-records", str(self.records),
+            "--dags", str(self.dags),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("does not authorise", err)
 
 
 class TheReleaseCannotBeMadeToFailByWhatItRecords(unittest.TestCase):

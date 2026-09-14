@@ -522,6 +522,16 @@ def run_claude(
             deny_patterns=denied,
             model=model,
         )
+    except CairnError as exc:
+        exc.detail = {
+            **exc.detail,
+            "session_id": session_id,
+            "generated_session_id": session_id,
+            "model": model,
+            "permission_mode": permission_mode,
+            "deny_patterns": list(denied),
+        }
+        raise
 
     rescue: dict[str, Any] = {}
     if ended_without_reporting(return_code, result):

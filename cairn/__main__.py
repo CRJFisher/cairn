@@ -20,6 +20,7 @@ from cairn.baseconfig import (
     assert_dag_retry_disabled,
     base_config_path,
 )
+from cairn.bounds import positive_finite
 from cairn.commands import run_exec, run_wait_duration, run_wait_until
 from cairn.core import (
     EXIT_FAILED,
@@ -58,7 +59,7 @@ from cairn.merge import run_merge, verify_landed
 from cairn.parameters import parent_branch, refuse_misfiled_records
 from cairn.parameters import repository as declared_repository
 from cairn.plan.cli import main as plan_main
-from cairn.plan.schema import SCOPES
+from cairn.plan.schema import AGENT_BUDGET_USD, AGENT_MODEL, SCOPES
 from cairn.providers import run_provider
 from cairn.record.cli import main as record_main
 from cairn.record.store import build_run_record, write_record
@@ -129,6 +130,16 @@ def _agent(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
     # The cheapest moment this run can discover it no longer owns the repository: one ref
     # read, against a session that is about to cost an hour of paid time.
     refuse_lost_repository(context.working_directory, context.run_id)
+    if (
+        not positive_finite(args.timeout)
+        or not positive_finite(args.max_budget_usd)
+        or not isinstance(args.model, str)
+        or not args.model.strip()
+    ):
+        raise CairnError(
+            "invalid_arguments",
+            "an agent session requires a positive finite timeout and budget and a model",
+        )
     before = tree_state(context.working_directory)
     return _with_dirty_before(
         run_provider(
@@ -332,6 +343,16 @@ def _merge(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
             candidates=args.branch,
             context=context,
         )
+    if (
+        not positive_finite(args.timeout)
+        or not positive_finite(args.max_budget_usd)
+        or not isinstance(args.model, str)
+        or not args.model.strip()
+    ):
+        raise CairnError(
+            "invalid_arguments",
+            "a merge resolution requires a positive finite timeout and budget and a model",
+        )
     return run_merge(
         context.working_directory,
         slot=args.slot,
@@ -340,6 +361,7 @@ def _merge(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
         provider=args.provider,
         model=args.model,
         max_budget_usd=args.max_budget_usd,
+        timeout_seconds=args.timeout,
         context=context,
     )
 
@@ -405,8 +427,8 @@ def _parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     child = agent_subcommands.add_parser("run", add_help=add_help)
     child.add_argument("--provider", required=True)
     child.add_argument("--prompt", required=True)
-    child.add_argument("--model")
-    child.add_argument("--max-budget-usd", type=float)
+    child.add_argument("--model", default=AGENT_MODEL)
+    child.add_argument("--max-budget-usd", type=float, default=AGENT_BUDGET_USD)
     child.add_argument("--timeout", type=float, required=True)
     child.add_argument("--tool", action="append")
 
@@ -454,10 +476,10 @@ def _parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     child.add_argument("--provider", required=True)
     # A resolution is a paid session like any other, and until these existed it was the one
     # session in a run that no caller could price or choose a model for. The emitter writes
-    # neither, so a generated workflow is unchanged; what they buy is a resolver that can be
-    # bounded by whoever is paying for it.
-    child.add_argument("--model")
-    child.add_argument("--max-budget-usd", type=float)
+    # all three; these parser requirements also keep hand-written invocations bounded.
+    child.add_argument("--model", required=True)
+    child.add_argument("--max-budget-usd", type=float, required=True)
+    child.add_argument("--timeout", type=float, required=True)
     child = merge_subcommands.add_parser("verify", add_help=add_help)
     child.add_argument("--merge", required=True)
     child.add_argument("--branch", action="append", required=True)

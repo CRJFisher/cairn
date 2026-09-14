@@ -332,6 +332,13 @@ kilobytes and it is never re-emitted inline through a conversation, where it cou
 reproduced faithfully. It is gated where it cannot be run from and moved into place only
 once it passes, so a refused definition never reaches the path a run would start from.
 
+Authoring is not the final admission. `run offer` gates a stable snapshot of the selected
+file through preflight and both engine checks, then records its byte digest. `run start`
+checks that digest before spending the offer and launches a private snapshot of those bytes.
+`schedule install` performs the same gate and links a content-addressed admitted snapshot,
+never the mutable authored file. An edit remains visible to provenance and can be admitted,
+but it never inherits an earlier offer or installation.
+
 The last row is the one the workflow's own bytes cannot show. A hand edit to the _workflow_
 moves its body hash; an edit to the **plan** leaves the workflow untouched and silently
 stale, so the digest the stamp records is compared against the plan being authored from and

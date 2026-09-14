@@ -485,7 +485,7 @@ def acquire_run_lock(
         "reclaim_after": acquired_at + run_timeout_seconds * reclaim_factor,
         "status_file": status_file,
     }
-    payload = json.dumps(record, indent=2, sort_keys=True) + "\n"
+    payload = json.dumps(record, indent=2, sort_keys=True, allow_nan=False) + "\n"
     object_id = hash_object(directory, payload)
 
     held = _held(directory)

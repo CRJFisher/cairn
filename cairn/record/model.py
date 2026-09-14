@@ -12,7 +12,7 @@ its section's map as `absent`, so no absence can be mistaken for a measured zero
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Any, NotRequired, TypedDict
 
 from cairn.verify import Divergence
 
@@ -132,6 +132,7 @@ class Infrastructure(TypedDict):
     summary: str | None
     started_at: str | None
     finished_at: str | None
+    resolution: NotRequired[dict[str, Any]]
     provenance: dict[str, str]
 
 

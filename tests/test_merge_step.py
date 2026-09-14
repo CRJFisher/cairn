@@ -49,7 +49,10 @@ from cairn.merge import (
     verify_landed,
 )
 from cairn.plan.schema import (
+    MERGE_BUDGET_USD,
+    MERGE_MODEL,
     MERGE_TIMEOUT,
+    MERGE_WORK_TIMEOUT,
     RESERVED_ID_PREFIXES,
     SUPPORT_TIMEOUT,
     normalise,
@@ -202,6 +205,13 @@ class TheChainTheTopologyEmits(unittest.TestCase):
         self.assertEqual(emitted(fan, "merge_w2_1", graph)["timeout_sec"], MERGE_TIMEOUT)
         self.assertGreater(MERGE_TIMEOUT, SUPPORT_TIMEOUT)
         self.assertEqual(emitted(fan, "verify_merge_w2_1", graph)["timeout_sec"], SUPPORT_TIMEOUT)
+
+    def test_a_slot_body_discloses_every_resolver_bound(self) -> None:
+        graph = fixture("fan-out")
+        body = emitted(topology("fan-out"), "merge_w2_1", graph)["run"]
+        self.assertIn(f"--model {MERGE_MODEL}", body)
+        self.assertIn(f"--max-budget-usd {MERGE_BUDGET_USD}", body)
+        self.assertIn(f"--timeout {MERGE_WORK_TIMEOUT}", body)
 
     def test_the_topology_prices_a_slot_as_the_session_too(self) -> None:
         """The run's own maximum and the lock lease derive from the node, not the body."""
@@ -466,6 +476,7 @@ class RepositoryCase(unittest.TestCase):
         )
         self.calls: list[str] = []
         self.passed: tuple[Any, ...] = ()
+        self.passed_keywords: dict[str, Any] = {}
 
     def write(self, name: str, body: str) -> None:
         (self.repository / name).write_text(body, encoding="utf-8")
@@ -528,6 +539,7 @@ class RepositoryCase(unittest.TestCase):
     def recording_agent(self, *args: Any, **kwargs: Any) -> CommandResult:
         """A resolver that keeps the argv slots the model and the ceiling travel in."""
         self.passed = args
+        self.passed_keywords = kwargs
         return self.resolving_agent(*args, **kwargs)
 
     def resolving_agent(self, *args: Any, **kwargs: Any) -> CommandResult:
@@ -561,13 +573,17 @@ class TheCallersCeilingReachesTheResolvingSession(RepositoryCase):
         self.assertEqual(self.passed[4], "claude-haiku-4-5-20251001")
         self.assertEqual(self.passed[5], 0.25)
 
-    def test_a_caller_naming_neither_leaves_the_provider_to_its_own_defaults(self) -> None:
+    def test_a_caller_naming_neither_gets_the_merge_roles_exact_bounds(self) -> None:
         self.branch("step/a", "shared.txt", "one\nfrom-a\nthree\n")
         self.branch("step/b", "shared.txt", "one\nfrom-b\nthree\n")
         self.land(["step/a", "step/b"], slot=1, run_agent=self.recording_agent)
         self.land(["step/a", "step/b"], slot=2, run_agent=self.recording_agent)
-        self.assertIsNone(self.passed[4])
-        self.assertIsNone(self.passed[5])
+        self.assertEqual(self.passed[4], MERGE_MODEL)
+        self.assertEqual(self.passed[5], MERGE_BUDGET_USD)
+        self.assertGreater(self.passed_keywords["deadline_seconds"], 0)
+        self.assertLessEqual(
+            self.passed_keywords["deadline_seconds"], MERGE_WORK_TIMEOUT
+        )
 
 
 class ARealConflictLandsAndIsProven(RepositoryCase):
@@ -623,6 +639,37 @@ class TheHaltPathConverges(RepositoryCase):
         result = self.land(["step/a", "step/b"], slot=2)
         self.assertIn("shared.txt", result.detail["conflicted"])
         self.assertTrue(any("re-run" in line for line in result.follow_up_work))
+
+    def test_a_timed_out_resolution_keeps_its_session_account(self) -> None:
+        def timed_out(*_args: Any, **_kwargs: Any) -> CommandResult:
+            return CommandResult(
+                EXIT_FAILED,
+                "failed",
+                "stopped",
+                [],
+                False,
+                "timed_out",
+                {
+                    "session_id": "session-1",
+                    "total_cost_usd": 0.25,
+                    "timed_out": True,
+                },
+            )
+
+        result = self.land(
+            ["step/a", "step/b"], slot=2, run_agent=timed_out
+        )
+        self.assertEqual(
+            result.detail["resolution"],
+            {
+                "model": MERGE_MODEL,
+                "max_budget_usd": MERGE_BUDGET_USD,
+                "timeout_seconds": MERGE_WORK_TIMEOUT,
+                "session_id": "session-1",
+                "total_cost_usd": 0.25,
+                "timed_out": True,
+            },
+        )
 
     def test_a_second_attempt_over_the_preserved_merge_refuses_before_paying(self) -> None:
         self.land(["step/a", "step/b"], slot=2)

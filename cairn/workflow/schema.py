@@ -90,7 +90,10 @@ ENGINE_VERSION = "2.11.0"
 # anything to assert, and its agent and commit bodies are missing arguments this binary
 # requires — so those steps report `invalid_arguments` rather than opening a session or
 # staging anything. Re-author rather than re-run.
-GENERATOR_VERSION = 5
+# 6: every merge body carries its resolver model, dollar ceiling, and internal deadline.
+# Definitions written by 5 leave conflict resolution to provider defaults and the engine's
+# outer kill, so they must be re-authored before execution.
+GENERATOR_VERSION = 6
 
 # The one execution type. The alternative reading serialises the graph, which is the defect
 # Cairn exists to avoid — and `type: chain` without `depends` validates clean and silently
@@ -271,6 +274,7 @@ def resolvable_names(document: Any) -> frozenset[str]:
 # module that types the document owns it rather than each reader restating it.
 CAIRN_INVOCATION = ("python3", "-m", "cairn")
 AGENT_SUBCOMMAND = ("agent", "run")
+MERGE_SUBCOMMAND = ("merge", "land")
 
 
 def is_agent_body(body: str) -> bool:
@@ -281,6 +285,21 @@ def is_agent_body(body: str) -> bool:
         argv[:prefix] == CAIRN_INVOCATION
         and argv[prefix : prefix + len(AGENT_SUBCOMMAND)] == AGENT_SUBCOMMAND
     )
+
+
+def is_merge_body(body: str) -> bool:
+    """Whether this step may open the merge resolver's paid session."""
+    argv = split_argv(body)
+    prefix = len(CAIRN_INVOCATION)
+    return (
+        argv[:prefix] == CAIRN_INVOCATION
+        and argv[prefix : prefix + len(MERGE_SUBCOMMAND)] == MERGE_SUBCOMMAND
+    )
+
+
+def is_paid_body(body: str) -> bool:
+    """Whether this body can open any paid provider session."""
+    return is_agent_body(body) or is_merge_body(body)
 
 
 def declared_parameter(document: Any, name: str) -> str | None:
@@ -318,7 +337,7 @@ def serialise(document: Workflow) -> str:
     `sort_keys` is off: the declaration order of the types above is a reading order, and a
     generated file that changes is read as a diff.
     """
-    return json.dumps(document, indent=2, ensure_ascii=False) + "\n"
+    return json.dumps(document, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
 
 
 def body_digest(document: Any) -> str:
@@ -338,7 +357,9 @@ def body_digest(document: Any) -> str:
         }
         if kept:
             body["labels"] = kept
-    canonical = json.dumps(body, indent=2, ensure_ascii=False, sort_keys=True)
+    canonical = json.dumps(
+        body, indent=2, ensure_ascii=False, sort_keys=True, allow_nan=False
+    )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -348,7 +369,12 @@ def read(path: Path) -> Any:
     The preflight checks this rather than the structure that produced it, so a fault in
     serialisation is inside the blast radius rather than behind it.
     """
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(
+        path.read_text(encoding="utf-8"),
+        parse_constant=lambda value: (_ for _ in ()).throw(
+            ValueError(f"{value} is not standard JSON")
+        ),
+    )
 
 
 __all__ = [
@@ -364,6 +390,7 @@ __all__ = [
     "LABEL_GRAPH_DIGEST",
     "LABEL_PLAN",
     "LABEL_PREFIX",
+    "MERGE_SUBCOMMAND",
     "OCCASION_PARAM",
     "OVERLAP_SKIP",
     "PARAMETERS",
@@ -381,6 +408,8 @@ __all__ = [
     "body_digest",
     "declared_parameter",
     "is_agent_body",
+    "is_merge_body",
+    "is_paid_body",
     "read",
     "reference",
     "references_in",

@@ -141,7 +141,9 @@ def _append(path: Path, record: dict[str, Any]) -> None:
     and two reconcilers appending at once would interleave their halves and leave neither
     line parseable — which reads back as the original `running` snapshot.
     """
-    blob = (json.dumps(record, separators=(",", ":")) + "\n").encode("utf-8")
+    blob = (
+        json.dumps(record, separators=(",", ":"), allow_nan=False) + "\n"
+    ).encode("utf-8")
     descriptor = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     try:
         os.write(descriptor, blob)

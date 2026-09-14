@@ -259,7 +259,15 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     whole report. The escapes read back as the same string, so nothing is lost but width.
     """
     write_text(
-        path, json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True) + "\n"
+        path,
+        json.dumps(
+            payload,
+            indent=2,
+            sort_keys=True,
+            ensure_ascii=True,
+            allow_nan=False,
+        )
+        + "\n",
     )
 
 

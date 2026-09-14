@@ -31,28 +31,211 @@ hazard can actually fire.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import tempfile
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast
 
 from cairn.baseconfig import (
     assert_catchup_disabled,
     assert_dag_retry_disabled,
     base_config_path,
 )
-from cairn.core import CairnError
+from cairn.core import CairnError, write_json
 from cairn.enginehome import ENGINE_BINARY, dags_directory, run_records_path
+from cairn.marker import OCCASION_PATTERN, mint_occasion
 from cairn.plan.ids import is_plan_slug
 from cairn.record import engine
 from cairn.supervise import find_status_files, last_record
+from cairn.workflow.gate import Admission, admit
 from cairn.workflow.schema import WORKFLOW_SUFFIX
 from cairn.workflow.stamp import workflow_path
 
 # The window the engine's own retry scanner sweeps. A refusal names the runs inside it, so
 # the number is stated here rather than described.
 RETRY_SCANNER_HOURS = 24
+ADMITTED_DIRECTORY = "scheduled"
+DAEMON_OFFERS_DIRECTORY = "daemon-offers"
+DAEMON_SCOPES = ("install", "start")
+
+
+class DaemonOffer(NamedTuple):
+    """One disclosed daemon escalation, scoped to exactly one act."""
+
+    offer_id: str
+    scope: str
+    dags: str
+    repository: str | None
+    plan: str | None
+    offered_at: str
+    disclosure_sha256: str
+
+
+class DaemonAcceptance(NamedTuple):
+    """The single-use acceptance of one daemon offer."""
+
+    offer: DaemonOffer
+    accepted_at: str
+    reply: str
+
+
+def daemon_offers_directory(dags: Path) -> Path:
+    return dags.resolve().parent / ".cairn" / DAEMON_OFFERS_DIRECTORY
+
+
+def daemon_offer_path(dags: Path, offer_id: str) -> Path:
+    if OCCASION_PATTERN.match(offer_id) is None:
+        raise CairnError("invalid_arguments", f"{offer_id!r} is not a daemon offer id")
+    return daemon_offers_directory(dags) / f"{offer_id}.json"
+
+
+def make_daemon_offer(
+    scope: str,
+    *,
+    dags: Path,
+    repository: Path | None = None,
+    plan: str | None = None,
+    disclosure_sha256: str,
+    moment: datetime | None = None,
+) -> DaemonOffer:
+    """Mint an offer only for a fully identified install or process start."""
+    if scope not in DAEMON_SCOPES:
+        raise CairnError("invalid_arguments", f"unknown daemon scope {scope!r}")
+    if scope == "install" and (repository is None or plan is None):
+        raise CairnError(
+            "invalid_arguments", "an install offer requires its repository and plan"
+        )
+    now = (datetime.now(UTC) if moment is None else moment.astimezone(UTC))
+    offer = DaemonOffer(
+        offer_id=mint_occasion(moment),
+        scope=scope,
+        dags=str(dags.resolve()),
+        repository=None if repository is None else str(repository.resolve()),
+        plan=plan,
+        offered_at=now.isoformat(),
+        disclosure_sha256=disclosure_sha256,
+    )
+    write_json(daemon_offer_path(dags, offer.offer_id), offer._asdict())
+    return offer
+
+
+def _read_daemon_offer(dags: Path, offer_id: str) -> DaemonOffer | None:
+    path = daemon_offer_path(dags, offer_id)
+    try:
+        raw: Any = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as exc:
+        raise CairnError("invalid_arguments", f"{path} is unreadable: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise CairnError("invalid_arguments", f"{path} is not a daemon offer")
+    fields = cast(dict[str, Any], raw)
+    try:
+        offer = DaemonOffer(
+            offer_id=str(fields["offer_id"]),
+            scope=str(fields["scope"]),
+            dags=str(fields["dags"]),
+            repository=(
+                None if fields["repository"] is None else str(fields["repository"])
+            ),
+            plan=None if fields["plan"] is None else str(fields["plan"]),
+            offered_at=str(fields["offered_at"]),
+            disclosure_sha256=str(fields["disclosure_sha256"]),
+        )
+    except KeyError as exc:
+        raise CairnError("invalid_arguments", f"{path} is a damaged daemon offer") from exc
+    if (
+        offer.offer_id != offer_id
+        or offer.scope not in DAEMON_SCOPES
+        or not offer.offered_at
+        or len(offer.disclosure_sha256) != 64
+    ):
+        raise CairnError("invalid_arguments", f"{path} is a damaged daemon offer")
+    return offer
+
+
+def spend_daemon_offer(
+    dags: Path,
+    offer_id: str,
+    *,
+    scope: str,
+    reply: str,
+    repository: Path | None = None,
+    plan: str | None = None,
+    disclosure_sha256: str,
+    moment: datetime | None = None,
+) -> DaemonAcceptance:
+    """Accept one matching daemon offer exactly once, leaving an audit marker."""
+    answered = reply.strip().casefold()
+    if not (answered == "yes" or answered.startswith(("yes ", "yes,", "yes."))):
+        raise CairnError(
+            "invalid_arguments",
+            "a daemon acceptance must be an affirmative reply beginning with 'yes'",
+        )
+    offer = _read_daemon_offer(dags, offer_id)
+    if offer is None:
+        raise CairnError("invalid_arguments", f"{offer_id!r} names no daemon offer")
+    expected_repository = None if repository is None else str(repository.resolve())
+    if (
+        offer.scope != scope
+        or offer.dags != str(dags.resolve())
+        or offer.repository != expected_repository
+        or offer.plan != plan
+        or offer.disclosure_sha256 != disclosure_sha256
+    ):
+        raise CairnError(
+            "invalid_arguments",
+            f"daemon offer {offer_id} does not authorise this {scope} act",
+        )
+    accepted_at = (
+        datetime.now(UTC) if moment is None else moment.astimezone(UTC)
+    ).isoformat()
+    try:
+        if datetime.fromisoformat(accepted_at) <= datetime.fromisoformat(
+            offer.offered_at
+        ):
+            raise CairnError(
+                "invalid_arguments",
+                f"daemon acceptance does not postdate offer {offer_id}",
+            )
+    except ValueError as exc:
+        raise CairnError(
+            "invalid_arguments", f"daemon offer {offer_id} has an invalid timestamp"
+        ) from exc
+    marker = daemon_offer_path(dags, offer_id).with_suffix(".spent")
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=f".{marker.name}.", suffix=".tmp", dir=marker.parent
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(
+                {
+                    "accepted_at": accepted_at,
+                    "reply": reply,
+                    "scope": scope,
+                    "offer": offer._asdict(),
+                },
+                handle,
+                sort_keys=True,
+                allow_nan=False,
+            )
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(temporary, marker)
+        except FileExistsError as exc:
+            raise CairnError(
+                "invalid_arguments", f"daemon offer {offer_id} was already spent"
+            ) from exc
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+    return DaemonAcceptance(offer, accepted_at, reply)
 
 
 class EngineRun(NamedTuple):
@@ -238,13 +421,53 @@ def published_path(plan: str, *, dags: Path | None = None) -> Path:
     return root / f"{plan}{WORKFLOW_SUFFIX}"
 
 
-def install(repository: Path, plan: str, *, dags: Path | None = None) -> Path:
-    """Make a plan's definition reachable by the scheduler, without copying it.
+def _scheduled_snapshot(
+    repository: Path, plan: str, admission: Admission
+) -> Path:
+    """Persist admitted bytes at an immutable path the scheduler may safely follow."""
+    root = workflow_path(repository, plan).parent.parent / ADMITTED_DIRECTORY
+    target = root / plan / admission.sha256 / f"{plan}{WORKFLOW_SUFFIX}"
+    if target.exists():
+        if hashlib.sha256(target.read_bytes()).hexdigest() != admission.sha256:
+            raise CairnError(
+                "invalid_arguments",
+                f"{target} does not hold the admitted bytes its path names",
+            )
+        return target
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(admission.body)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o400)
+        os.replace(temporary, target)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+    if hashlib.sha256(target.read_bytes()).hexdigest() != admission.sha256:
+        raise CairnError(
+            "invalid_arguments",
+            f"{target} did not preserve the workflow bytes admission approved",
+        )
+    return target
 
-    A symlink rather than a copy — measured, the engine resolves a linked definition by name
-    — so the workflow keeps one source of truth and re-authoring is picked up without a
-    second install. The engine's name for the DAG is this link's filename, which is what the
-    view's URL and any webhook endpoint are keyed on.
+
+def install(
+    repository: Path,
+    plan: str,
+    *,
+    dags: Path | None = None,
+    admission: Admission | None = None,
+) -> Path:
+    """Make a gated immutable snapshot reachable by the scheduler.
+
+    The watched link never points at the editable authored file. It points at a
+    content-addressed snapshot of bytes admitted by preflight and both engine checks, so a
+    later edit cannot change what the daemon fires. The engine's name for the DAG is this
+    link's filename, which is what the view's URL and any webhook endpoint are keyed on.
 
     A name already taken by something that is not this plan's own link is refused rather
     than replaced: two repositories whose plans share a slug would otherwise fork one DAG
@@ -258,10 +481,32 @@ def install(repository: Path, plan: str, *, dags: Path | None = None) -> Path:
             "plan first",
             detail={"plan": plan, "workflow": str(source)},
         )
+    admitted = admission
+    if admitted is None:
+        admitted, faults = admit(source, expected_plan=plan)
+        if admitted is None:
+            raise CairnError(
+                "workflow_not_admitted",
+                f"{source} did not pass the execution gate: "
+                + "; ".join(str(fault) for fault in faults),
+            )
+    snapshot = _scheduled_snapshot(repository, plan, admitted)
     target = published_path(plan, dags=dags)
     target.parent.mkdir(parents=True, exist_ok=True)
-    if target.is_symlink() and target.readlink() == source:
+    if target.is_symlink() and target.readlink() == snapshot:
         return target
+    admitted_root = workflow_path(repository, plan).parent.parent / ADMITTED_DIRECTORY
+    if target.is_symlink():
+        try:
+            current = target.readlink().resolve()
+        except OSError:
+            current = Path()
+        if admitted_root.resolve() in current.parents:
+            replacement = target.with_name(f".{target.name}.{admitted.sha256[:12]}.tmp")
+            replacement.unlink(missing_ok=True)
+            replacement.symlink_to(snapshot)
+            os.replace(replacement, target)
+            return target
     if target.exists() or target.is_symlink():
         raise CairnError(
             "invalid_arguments",
@@ -270,7 +515,7 @@ def install(repository: Path, plan: str, *, dags: Path | None = None) -> Path:
             "entry first",
             detail={"plan": plan, "published": str(target)},
         )
-    target.symlink_to(source)
+    target.symlink_to(snapshot)
     return target
 
 
@@ -292,11 +537,13 @@ def remove(repository: Path, plan: str, *, dags: Path | None = None) -> Path | N
                 detail={"plan": plan, "published": str(target)},
             )
         return None
-    source = workflow_path(repository, plan)
-    if target.readlink() != source:
+    admitted_root = workflow_path(repository, plan).parent.parent / ADMITTED_DIRECTORY
+    linked = target.readlink().resolve()
+    if admitted_root.resolve() not in linked.parents:
         raise CairnError(
             "invalid_arguments",
-            f"{target} points at {target.readlink()}, not at {source}; it belongs to "
+            f"{target} points at {target.readlink()}, not at an admitted snapshot for "
+            f"{workflow_path(repository, plan)}; it belongs to "
             "another repository's plan of the same name",
             detail={"plan": plan, "published": str(target)},
         )
@@ -330,16 +577,23 @@ def start(*, dags: Path | None = None) -> None:
 
 
 __all__ = [
+    "DAEMON_SCOPES",
     "RETRY_SCANNER_HOURS",
+    "DaemonAcceptance",
+    "DaemonOffer",
     "EngineRun",
     "assert_safe_to_start",
+    "daemon_offer_path",
+    "daemon_offers_directory",
     "describe_run",
     "failed_runs_since",
     "install",
     "installed",
+    "make_daemon_offer",
     "published_path",
     "queued_runs",
     "remove",
     "scheduler_command",
+    "spend_daemon_offer",
     "start",
 ]

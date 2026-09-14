@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "fan-out",
-    "cairn_generator": "5",
+    "cairn_generator": "6",
     "cairn_engine": "2.11.0",
     "cairn_graph_sha256": "22d2007fa505c72c4c0234315a0fa7dd1f76cb9c161aadbf9631f8e1a98a9ecc",
-    "cairn_body_sha256": "beb48c9744eef3028554116c2df877eb56f37679e1978cadeee8dd3da00c0c4d"
+    "cairn_body_sha256": "432feceaefdd41ee0a54e0a2b4441339d0a5c0df5bc74549e6e695bf4c705f26"
   },
   "params": [
     {
@@ -54,7 +54,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn lock acquire --plan fan-out --run-timeout 29940"
+      "run": "python3 -m cairn lock acquire --plan fan-out --run-timeout 30180"
     },
     {
       "name": "work_extract_the_loader_interface",
@@ -333,12 +333,12 @@
     {
       "name": "merge_w2_1",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 4200,
+      "timeout_sec": 4320,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn merge land --slot 1 --provider claude --branch step/keymap_reader --branch step/theme_reader",
+      "run": "python3 -m cairn merge land --slot 1 --provider claude --model sonnet --max-budget-usd 5.0 --timeout 3600 --branch step/keymap_reader --branch step/theme_reader",
       "depends": [
         "join_w2"
       ]
@@ -359,12 +359,12 @@
     {
       "name": "merge_w2_2",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 4200,
+      "timeout_sec": 4320,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn merge land --slot 2 --provider claude --branch step/keymap_reader --branch step/theme_reader",
+      "run": "python3 -m cairn merge land --slot 2 --provider claude --model sonnet --max-budget-usd 5.0 --timeout 3600 --branch step/keymap_reader --branch step/theme_reader",
       "depends": [
         "verify_merge_w2_1"
       ]

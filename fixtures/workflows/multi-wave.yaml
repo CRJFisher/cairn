@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "multi-wave",
-    "cairn_generator": "5",
+    "cairn_generator": "6",
     "cairn_engine": "2.11.0",
     "cairn_graph_sha256": "221a5b31f57a7f14a327b478a0b3912ef489418538aea036fc338a63fadb65d3",
-    "cairn_body_sha256": "6cb9dee2e9c67c89a915dbe93f38a84613725f73a5aa5a11a884052854790ba2"
+    "cairn_body_sha256": "e240c5f1d7439001886ca74df04f424ae59c62740b0423273d2a06f584dabbb6"
   },
   "params": [
     {
@@ -54,7 +54,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn lock acquire --plan multi-wave --run-timeout 41100"
+      "run": "python3 -m cairn lock acquire --plan multi-wave --run-timeout 41340"
     },
     {
       "name": "work_export_schema",
@@ -409,12 +409,12 @@
     {
       "name": "merge_w3_1",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 4200,
+      "timeout_sec": 4320,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn merge land --slot 1 --provider claude --branch step/reader --branch step/zip_packer",
+      "run": "python3 -m cairn merge land --slot 1 --provider claude --model sonnet --max-budget-usd 5.0 --timeout 3600 --branch step/reader --branch step/zip_packer",
       "depends": [
         "join_w3"
       ]
@@ -435,12 +435,12 @@
     {
       "name": "merge_w3_2",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 4200,
+      "timeout_sec": 4320,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn merge land --slot 2 --provider claude --branch step/reader --branch step/zip_packer",
+      "run": "python3 -m cairn merge land --slot 2 --provider claude --model sonnet --max-budget-usd 5.0 --timeout 3600 --branch step/reader --branch step/zip_packer",
       "depends": [
         "verify_merge_w3_1"
       ]

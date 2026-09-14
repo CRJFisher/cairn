@@ -5,6 +5,7 @@ import os
 import re
 from typing import Any
 
+from cairn.bounds import nonnegative_integer, positive_finite, positive_integer
 from cairn.plan.ids import is_engine_id, is_plan_slug
 from cairn.plan.schema import (
     AGENT_FAMILY,
@@ -333,17 +334,17 @@ def validate(raw: Any, source_root: str | None = None) -> Result:
 
     for step in steps:
         step_id = step["id"]
-        if step["timeout"] <= 0:
+        if not positive_integer(step["timeout"]):
             errors.append(
                 Finding("timeout", f"step {step_id!r} has a non-positive timeout", step_id)
             )
-        if step["retries"] < 0:
+        if not nonnegative_integer(step["retries"]):
             errors.append(
                 Finding("retries", f"step {step_id!r} has a negative retry count", step_id)
             )
         if step["kind"].startswith(AGENT_FAMILY):
             budget = step["max_budget_usd"]
-            if budget is None or budget <= 0:
+            if not positive_finite(budget):
                 errors.append(
                     Finding(
                         "budget",

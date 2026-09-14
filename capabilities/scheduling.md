@@ -1,14 +1,14 @@
 # Putting a plan on a schedule or an external trigger
 
 | Contract       | Value                                                                                   |
-| -------------- | ----------------------------------------------------------------------------------------- |
+| -------------- | --------------------------------------------------------------------------------------- |
 | Capability     | `schedule`                                                                              |
 | Entered when   | the dispatch table selected **schedule**                                                |
 | Preconditions  | a plan or workflow named; the repository came from the request; a cadence was asked for |
 | Bound on entry | `capability` · `repository` · `workflow` · `cadence`                                    |
 | Owns           | the cron expression's place, the daemon escalation, and the honest answer about queues  |
 | Defers to      | [../docs/triggers.md](../docs/triggers.md) · [authoring.md](authoring.md)               |
-| Triggers       | a scheduler daemon, on `--accept-daemon` only                                           |
+| Triggers       | a scheduler daemon, after a persisted scope-specific offer is accepted                  |
 
 **A schedule is an escalation, never a side effect of wanting a recurring plan.** A cron
 firing and an external webhook cost the same thing: a scheduler process, whose retry scanner
@@ -27,19 +27,20 @@ graph" is asking for [reading.md](reading.md), not for this.
    ([authoring.md](authoring.md)). The engine validates the expression against the machine's
    own clock; Cairn parses none of it.
 
-2. **State what the daemon costs, before installing.** Run the install without
-   `--accept-daemon` first: it refuses and prints exactly what is being agreed to. Print what
-   it printed. This is a second, separate consent from any run offer — accepting a run does
-   not accept a daemon, and accepting a daemon does not authorise a run.
+2. **State what the daemon costs, before installing.** Run `schedule offer --scope install`
+   with the plan and repository. It prints exactly what is being agreed to and mints the id
+   an acceptance must identify. This is separate from any run or process-start consent.
 
 3. **Install it.** `python3 -m cairn schedule install --plan <slug> --repository <path>
-   --accept-daemon`. It links the definition into the directory the scheduler watches, which
+--offer <id> --reply yes`. It links an immutable admitted snapshot into
+   the directory the scheduler watches, which
    is not where Cairn writes it — a file carrying a schedule that was never installed fires
    never and says nothing. A name already taken by another plan is refused rather than
    replaced.
 
-4. **Start the scheduler, or say plainly that nothing will fire.**
-   `python3 -m cairn schedule start --accept-daemon` **becomes** the scheduler and runs in the
+4. **Start the scheduler, or say plainly that nothing will fire.** Mint a separate
+   `schedule offer --scope start`, then
+   `python3 -m cairn schedule start --offer <id> --reply yes` **becomes** the scheduler and runs in the
    foreground until killed, so keeping a nightly plan firing means keeping that process alive
    under `launchd`, `systemd`, or a terminal left open. It asserts at that moment that the
    machine is safe to run a scheduler on and refuses otherwise, naming every failed run it

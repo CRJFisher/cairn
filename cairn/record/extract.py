@@ -659,7 +659,7 @@ def derive_next_action(
             # Never the bare engine command: starting a scheduler re-executes every failed
             # run on the machine from the previous day unless the machine-wide retry
             # override is in place, and this verb is where that is asserted ([triggers.md]).
-            command="python3 -m cairn schedule start --accept-daemon",
+            command="python3 -m cairn schedule offer --scope start",
         )
     if verdict == VERDICT_RUNNING:
         return NextAction(action=NEXT_WAIT, subject=None, command=None)
@@ -985,12 +985,19 @@ def _infrastructure(
     if _status(node) == engine.NODE_STATUS_SUCCEEDED:
         outcome, cause = OUTCOME_VERIFIED, None
     summary = report.get("summary") if report is not None else None
+    resolution = _detail(report).get("resolution")
+    resolution_field: dict[str, object] = (
+        {"resolution": cast(dict[str, Any], resolution)}
+        if isinstance(resolution, dict)
+        else {}
+    )
     fields: dict[str, object] = {
         "role": None if naming is None else naming.role,
         "cause": cause if cause is not None else _report_cause(report),
         "summary": None if summary is None else normalise(summary, limit=LINE_LIMIT),
         "started_at": engine.moment(node.get("startedAt")),
         "finished_at": engine.moment(node.get("finishedAt")),
+        **resolution_field,
     }
     return Infrastructure(name=name, outcome=outcome, provenance=_provenance(fields), **cast(Any, fields))
 
@@ -1138,7 +1145,7 @@ def extract(
     ]
     edges = _edges(nodes)
     waves = _census(reports)
-    budget = _budget(steps)
+    budget = _budget(steps, infrastructure)
     order = step_order(nodes, step_ids)
     verdict = derive_verdict(steps, infrastructure, engine_state, waves)
     attention = derive_attention(steps, infrastructure, budget, waves, order)
@@ -1255,20 +1262,40 @@ def _edges(nodes: dict[str, dict[str, Any]]) -> list[Edge]:
     return found
 
 
-def _budget(steps: list[StepRecord]) -> Budget:
+def _budget(
+    steps: list[StepRecord], infrastructure: list[Infrastructure]
+) -> Budget:
     priced = [step for step in steps if step["cost_usd"] is not None]
     turns = [step["turns"] for step in steps if step["turns"] is not None]
-    total = sum(cast(float, step["cost_usd"]) for step in priced) if priced else None
+    resolutions = [
+        resolution
+        for item in infrastructure
+        if isinstance(resolution := item.get("resolution"), dict)
+    ]
+    resolution_costs = [
+        cost
+        for resolution in resolutions
+        if (cost := as_money(resolution.get("total_cost_usd"))) is not None
+    ]
+    total = (
+        sum(cast(float, step["cost_usd"]) for step in priced)
+        + sum(resolution_costs)
+        if priced or resolution_costs
+        else None
+    )
     fields: dict[str, object] = {
         "cost_usd": total,
         "turns": sum(turns) if turns else None,
     }
     return Budget(
         cost_usd=total,
-        notional=any(step["cost_is_notional"] for step in priced),
+        notional=any(step["cost_is_notional"] for step in priced)
+        or any(bool(resolution.get("cost_is_notional")) for resolution in resolutions),
         turns=sum(turns) if turns else None,
-        priced_steps=len(priced),
-        unpriced_steps=len(steps) - len(priced),
+        priced_steps=len(priced) + len(resolution_costs),
+        unpriced_steps=(
+            len(steps) - len(priced) + len(resolutions) - len(resolution_costs)
+        ),
         provenance=_provenance(fields, derived=("cost_usd", "turns")),
     )
 

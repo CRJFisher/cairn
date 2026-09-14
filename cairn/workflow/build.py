@@ -217,7 +217,9 @@ def _stamp_labels(graph: Graph, document: Workflow) -> dict[str, str]:
 
 def graph_digest(graph: Graph) -> str:
     """The identity of the plan this workflow was built from."""
-    canonical = json.dumps(graph, indent=2, ensure_ascii=False, sort_keys=True)
+    canonical = json.dumps(
+        graph, indent=2, ensure_ascii=False, sort_keys=True, allow_nan=False
+    )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 

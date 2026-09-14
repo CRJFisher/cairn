@@ -231,7 +231,7 @@ subcommands are is not a step.
 base-config` asserts or writes the engine's disabled DAG retry. Both are described in
 [supervision.md](supervision.md).
 
-`cairn schedule install|status|start|remove` owns the recurring trigger and the daemon it
+`cairn schedule offer|install|status|start|remove` owns the recurring trigger and the daemon it
 costs, and `start` refuses on a machine whose retry or catchup policy would re-execute paid
 work, naming every failed run it found ([triggers.md](triggers.md)).
 

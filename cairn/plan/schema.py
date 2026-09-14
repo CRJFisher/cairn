@@ -109,9 +109,6 @@ REPORT_HEADROOM = SUPPORT_TIMEOUT - MUTEX_WAIT - GIT_TIMEOUT
 # the session alone — at `AGENT_TIMEOUT` the mutex wait and the merge in front of the
 # session come out of the session's own budget, and the engine's kill lands mid-resolution,
 # leaving exactly the unsettled tree the halt path exists to produce only deliberately.
-MERGE_TIMEOUT = AGENT_TIMEOUT + MUTEX_WAIT + GIT_TIMEOUT + REPORT_HEADROOM
-MERGE_RETRIES = 0
-
 # A wait owns the step's declared bound, so the engine's own kill must land strictly after
 # it — otherwise the two fire together and `wait_timeout` never reaches a report. Every
 # number derived from a wait step counts this, so the bound stated and the bound enforced
@@ -130,6 +127,16 @@ AGENT_REPORT_GRACE = 180
 # provider and writing the report — the two things that must happen before the engine's
 # bound, whatever the resumed session does.
 AGENT_RESUME_MARGIN = 30
+
+# A merge resolver is a paid agent role with its own disclosed bounds. Its engine step also
+# leaves the same report grace as an ordinary agent session after the internal deadline.
+MERGE_MODEL = AGENT_MODEL
+MERGE_BUDGET_USD = AGENT_BUDGET_USD
+MERGE_WORK_TIMEOUT = AGENT_TIMEOUT
+MERGE_TIMEOUT = (
+    MUTEX_WAIT + GIT_TIMEOUT + MERGE_WORK_TIMEOUT + AGENT_REPORT_GRACE
+)
+MERGE_RETRIES = 0
 
 # The engine applies `timeout_sec` to each attempt rather than to the step [V], so a step's
 # worst case is every attempt plus every wait between them. Every duration Cairn states —
@@ -317,11 +324,23 @@ STEP_FIELDS: Spec = {
     "tools": {"type": list, "default": None, "nullable": True, "item_type": str},
     "scope": {"type": str, "enum": SCOPES, "default": "once"},
     "reads": {"type": list, "default": [], "item_type": str},
-    "timeout": {"type": int, "default_from": "kind", "nullable": True},
-    "retries": {"type": int, "default_from": "kind", "nullable": True},
+    "timeout": {
+        "type": int,
+        "default_from": "kind",
+        "nullable": True,
+    },
+    "retries": {
+        "type": int,
+        "default_from": "kind",
+        "nullable": True,
+    },
     # Both null on a command step, which opens no session; both always resolved on an
     # agent step, whose session cannot be priced without them.
-    "max_budget_usd": {"type": float, "default_from": "kind", "nullable": True},
+    "max_budget_usd": {
+        "type": float,
+        "default_from": "kind",
+        "nullable": True,
+    },
     "model": {"type": str, "default_from": "kind", "nullable": True},
 }
 
@@ -426,7 +445,7 @@ def _check_fields(obj: object, spec: Spec, where: str, errors: list[str]) -> Non
             errors.append(f"{where}.{name}: {value!r} is not one of {allowed}")
         check = rule.get("check")
         if check is not None and not check(value):
-            errors.append(f"{where}.{name}: {value!r} is not a kind a plan can author")
+            errors.append(f"{where}.{name}: {value!r} is not a valid value")
         item_type: type | None = rule.get("item_type")
         if item_type is not None and isinstance(value, list):
             for index, item in enumerate(cast(list[Any], value)):

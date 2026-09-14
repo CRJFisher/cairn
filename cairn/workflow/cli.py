@@ -61,8 +61,13 @@ def _load(path: str) -> Any:
     """
     try:
         with open(path, encoding="utf-8") as handle:
-            return json.load(handle)
-    except json.JSONDecodeError as exc:
+            return json.load(
+                handle,
+                parse_constant=lambda value: (_ for _ in ()).throw(
+                    ValueError(f"{value} is not standard JSON")
+                ),
+            )
+    except (json.JSONDecodeError, ValueError) as exc:
         raise Refused(f"{path}: not the JSON document Cairn writes — {exc}") from exc
 
 

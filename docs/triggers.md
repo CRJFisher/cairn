@@ -68,12 +68,12 @@ not execute a run; it _enqueues_ one, and only the scheduler drains the queue. S
 is not a cheaper alternative to a schedule — it is the same escalation through a different
 door.
 
-| Path                   | What must be running | Can vary parameters                        | Carries the retry hazard |
-| ---------------------- | -------------------- | ------------------------------------------ | ------------------------ |
-| Skill-started run      | nothing              | the occasion and the branch, never the repository | no                |
-| Manual trigger from UI | `dagu server`        | one editable field per param               | no                       |
-| Cron schedule          | `dagu scheduler`     | **nothing at all**                         | **yes**                  |
-| External webhook       | `dagu scheduler`     | **nothing** — the body arrives beside them | **yes**                  |
+| Path                   | What must be running | Can vary parameters                               | Carries the retry hazard |
+| ---------------------- | -------------------- | ------------------------------------------------- | ------------------------ |
+| Skill-started run      | nothing              | the occasion and the branch, never the repository | no                       |
+| Manual trigger from UI | `dagu server`        | one editable field per param                      | no                       |
+| Cron schedule          | `dagu scheduler`     | **nothing at all**                                | **yes**                  |
+| External webhook       | `dagu scheduler`     | **nothing** — the body arrives beside them        | **yes**                  |
 
 So a schedule or an external trigger is a deliberate, explained escalation from the one-shot
 default, never a side effect of wanting a recurring plan. Wanting the _view_ is not that
@@ -96,11 +96,11 @@ path passes through, before the first worktree and before the first paid session
 there is a failed node carrying its reason — which is what the view draws, what `dagu start`
 exits on, and what the record keeps.
 
-| Parameter             | Refused when                                                                                                                                                           |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Parameter             | Refused when                                                                                                                                                                                                               |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `CAIRN_REPOSITORY`    | not absolute; or the emitter's splice and the runtime's own derivation of the worktrees root disagree; or it names a different repository than the step is standing in; or the declared runs root is not this repository's |
-| `CAIRN_PARENT_BRANCH` | it begins with `-`, or git itself does not accept it as a branch name                                                                                                  |
-| `CAIRN_OCCASION`      | present and not an occasion `cairn occasion new` would mint                                                                                                            |
+| `CAIRN_PARENT_BRANCH` | it begins with `-`, or git itself does not accept it as a branch name                                                                                                                                                      |
+| `CAIRN_OCCASION`      | present and not an occasion `cairn occasion new` would mint                                                                                                                                                                |
 
 The repository rule is not a rule about slashes. The emitter concatenates the parameter with
 the worktrees suffix **as text**, because a parameter reference may stand in `working_dir:`
@@ -140,15 +140,19 @@ Three properties follow, and the third is the one to remember:
 ## Installing a schedule, and the daemon it costs
 
 ```text
-python3 -m cairn schedule install --plan <slug> --repository <path> --accept-daemon
+python3 -m cairn schedule offer --scope install --plan <slug> --repository <path>
+python3 -m cairn schedule install --plan <slug> --repository <path> \
+    --offer <id> --reply 'yes'
 python3 -m cairn schedule status
-python3 -m cairn schedule start --accept-daemon
+python3 -m cairn schedule offer --scope start
+python3 -m cairn schedule start --offer <id> --reply 'yes'
 python3 -m cairn schedule remove --plan <slug> --repository <path>
 ```
 
-`--accept-daemon` is the escalation, and both verbs require it: `install` because a linked
-definition is one a scheduler will fire, and `start` because it becomes that scheduler. Each
-prints what is being agreed to before it does anything.
+Each `offer` prints the cost and mints a persisted, scope-specific id. Installation and
+process start spend separate offers, require an affirmative reply beginning with `yes`,
+record the accepting words, and accept each id once.
+A run offer never authorises either daemon act.
 
 The cron expression goes into the file at authoring time, because a workflow is generated
 and never hand-maintained:
@@ -164,11 +168,12 @@ therefore fires on local time and expires on UTC, which is worth knowing before 
 hour near midnight. The engine validates the expression, which is one of the few places its own
 validator is not blind, so Cairn parses none of it.
 
-`install` links the definition into the directory the scheduler watches. Cairn writes
-workflows into the repository's own admin directory, which is **not** that directory, so a
-file carrying a schedule that was never installed fires never and says nothing. A symlink
-rather than a copy, so the workflow keeps one source of truth and a re-authoring is picked up
-without a second install. The engine's name for the DAG is the link's filename, which is also
+`install` re-runs the complete workflow gate, stores those exact bytes at a read-only,
+content-addressed path, and links that admitted snapshot into the directory the scheduler
+watches. Cairn writes editable workflows into the repository's own admin directory, which is
+**not** that directory, so a file carrying a schedule that was never installed fires never
+and says nothing. Re-authoring does not move the installed snapshot; installing again admits
+and retargets it explicitly. The engine's name for the DAG is the link's filename, which is also
 what the view's URL and any webhook endpoint are keyed on — so a name already taken by
 another plan is refused rather than replaced.
 
@@ -209,7 +214,8 @@ Cairn does not create it, and holds no credential by construction. What it recor
 the token went:
 
 ```text
-python3 -m cairn schedule install --plan <slug> --repository <path> --accept-daemon \
+python3 -m cairn schedule install --plan <slug> --repository <path> \
+    --offer <id> --reply 'yes' \
     --webhook-token-sink '1password: cairn/webhooks'
 ```
 

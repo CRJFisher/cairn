@@ -30,6 +30,7 @@ import tempfile
 from typing import Any, NamedTuple, cast
 
 from cairn.assertions import NEEDED_VERB
+from cairn.bounds import positive_finite, positive_integer, retry_policy_is
 from cairn.plan.schema import INPUTS_SCOPE, ONCE_SCOPE
 from cairn.topology import TopologyError, check_name, parse_node_name
 from cairn.verify import verify_handle
@@ -43,7 +44,7 @@ from cairn.workflow.schema import (
     PARAMETERS,
     REFERENCE,
     ROOT_KEYS,
-    is_agent_body,
+    is_paid_body,
     references_in,
     resolvable_names,
 )
@@ -264,27 +265,36 @@ def _cycle(steps: list[dict[str, Any]]) -> list[str] | None:
         if isinstance(name, str):
             edges[name] = _dependencies(step)
     colour: dict[str, int] = {}
-    stack: list[str] = []
-
-    def walk(node: str) -> list[str] | None:
-        colour[node] = 1
-        stack.append(node)
-        for nxt in edges.get(node, []):
-            if colour.get(nxt) == 1:
-                return stack[stack.index(nxt) :] + [nxt]
-            if colour.get(nxt, 0) == 0 and nxt in edges:
-                found = walk(nxt)
-                if found:
-                    return found
-        stack.pop()
-        colour[node] = 2
-        return None
-
     for node in sorted(edges):
-        if colour.get(node, 0) == 0:
-            found = walk(node)
-            if found:
-                return found
+        if colour.get(node, 0) != 0:
+            continue
+        path: list[str] = []
+        positions: dict[str, int] = {}
+        frames: list[tuple[str, int]] = [(node, 0)]
+        colour[node] = 1
+        path.append(node)
+        positions[node] = 0
+        while frames:
+            current, index = frames[-1]
+            neighbours = edges.get(current, [])
+            if index >= len(neighbours):
+                frames.pop()
+                colour[current] = 2
+                positions.pop(current, None)
+                path.pop()
+                continue
+            nxt = neighbours[index]
+            frames[-1] = (current, index + 1)
+            if nxt not in edges:
+                continue
+            if colour.get(nxt) == 1:
+                start = positions[nxt]
+                return path[start:] + [nxt]
+            if colour.get(nxt, 0) == 0:
+                colour[nxt] = 1
+                positions[nxt] = len(path)
+                path.append(nxt)
+                frames.append((nxt, 0))
     return None
 
 
@@ -301,6 +311,15 @@ def check(document: Any) -> list[Fault]:
     faults: list[Fault] = []
     fields = _mapping(document)
     steps = _steps(document)
+
+    if not retry_policy_is(fields.get("retry_policy"), limit=0, interval_seconds=1):
+        faults.append(
+            Fault(
+                "unbounded_retry",
+                None,
+                "DAG retry_policy must be exactly {'limit': 0, 'interval_sec': 1}",
+            )
+        )
 
     if "name" in fields:
         faults.append(
@@ -492,18 +511,32 @@ def _check_step(step: dict[str, Any], document: Any) -> list[Fault]:
     if _find_keys(step, "with"):
         faults.append(Fault("with_block", name, "a with block reaches an executor's config"))
 
-    if not isinstance(step.get("timeout_sec"), int):
-        faults.append(Fault("missing_timeout", name, "no timeout_sec"))
+    if not positive_integer(step.get("timeout_sec")):
+        faults.append(
+            Fault("missing_timeout", name, f"timeout_sec is {step.get('timeout_sec')!r}")
+        )
     if not isinstance(step.get("working_dir"), str) or not step.get("working_dir"):
         faults.append(Fault("missing_working_dir", name, "no working_dir"))
     retry = step.get("retry_policy")
-    bounded = isinstance(retry, dict) and {"limit", "interval_sec"} <= set(
-        cast(dict[str, Any], retry)
-    )
+    bounded = retry_policy_is(retry)
     # A lifecycle handler takes no retry policy: the engine runs it once on the way out.
     if not is_handler and not bounded:
         faults.append(
-            Fault("unbounded_retry", name, "retry_policy needs both limit and interval_sec")
+            Fault(
+                "unbounded_retry",
+                name,
+                "retry_policy needs only a nonnegative integer limit and positive integer interval_sec",
+            )
+        )
+    elif not is_handler and _must_not_retry(name, step) and not retry_policy_is(
+        retry, limit=0, interval_seconds=1
+    ):
+        faults.append(
+            Fault(
+                "unbounded_retry",
+                name,
+                "paid and repository-mutating nodes must use the exact disabled retry policy",
+            )
         )
 
     faults.extend(_check_routing(step, name, flags))
@@ -528,6 +561,27 @@ def _is_merge_chain(name: str | None) -> bool:
     if not isinstance(name, str):
         return False
     return name.startswith(("merge_", "verify_merge_"))
+
+
+def _must_not_retry(name: str | None, step: dict[str, Any]) -> bool:
+    body = step.get("run")
+    if isinstance(body, str) and is_paid_body(body):
+        return True
+    if not isinstance(name, str):
+        return False
+    try:
+        return parse_node_name(name).role in {
+            "lock",
+            "setup",
+            "commit",
+            "join",
+            "merge",
+            "prune",
+            "verify",
+            "mark",
+        }
+    except TopologyError:
+        return False
 
 
 def _check_routing(
@@ -652,12 +706,12 @@ def _check_occasion(document: Any, step: dict[str, Any], name: str | None) -> li
     return []
 
 
-def _flag_value(words: list[str], flag: str) -> str | None:
-    """The operand after one flag, or None where the flag or its operand is missing."""
-    for index, word in enumerate(words[:-1]):
-        if word == flag:
-            return words[index + 1]
-    return None
+def _flag_values(words: list[str], flag: str) -> list[str]:
+    return [
+        words[index + 1]
+        for index, word in enumerate(words[:-1])
+        if word == flag
+    ]
 
 
 def _check_bounds(step: dict[str, Any], name: str | None) -> list[Fault]:
@@ -667,22 +721,32 @@ def _check_bounds(step: dict[str, Any], name: str | None) -> list[Fault]:
     that is not an agent invocation at all is another rule's business.
     """
     body = step.get("run")
-    if not isinstance(body, str) or not is_agent_body(body):
+    if not isinstance(body, str) or not is_paid_body(body):
         return []
     words = _words(body) or []
     faults: list[Fault] = []
-    ceiling = _flag_value(words, "--max-budget-usd")
+    ceilings = _flag_values(words, "--max-budget-usd")
+    ceiling = ceilings[0] if len(ceilings) == 1 else None
     try:
-        priced = ceiling is not None and float(ceiling) > 0
-    except ValueError:
+        priced = ceiling is not None and positive_finite(float(ceiling))
+    except (ValueError, OverflowError):
         priced = False
     if not priced:
         faults.append(
             Fault("unbounded_session", name, "the body names no positive --max-budget-usd")
         )
-    model = _flag_value(words, "--model")
+    models = _flag_values(words, "--model")
+    model = models[0] if len(models) == 1 else None
     if model is None or not model.strip():
         faults.append(Fault("unbounded_session", name, "the body names no --model"))
+    timeouts = _flag_values(words, "--timeout")
+    timeout = timeouts[0] if len(timeouts) == 1 else None
+    try:
+        timed = timeout is not None and positive_finite(float(timeout))
+    except (ValueError, OverflowError):
+        timed = False
+    if not timed:
+        faults.append(Fault("unbounded_session", name, "the body names no positive --timeout"))
     return faults
 
 

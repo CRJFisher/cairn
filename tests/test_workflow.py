@@ -153,6 +153,12 @@ class TheDocumentIsWrittenAsJson(unittest.TestCase):
         """The validator rejects a file that names itself while a run would accept it."""
         self.assertNotIn("name", reread(document()))
 
+    def test_nonstandard_numeric_json_cannot_be_persisted(self) -> None:
+        built = document()
+        built["steps"][0]["timeout_sec"] = float("nan")
+        with self.assertRaises(ValueError):
+            serialise(built)
+
 
 class TheMachineLevelDefaultsAreStated(unittest.TestCase):
     def test_the_graph_type_is_stated_rather_than_inherited(self) -> None:
@@ -329,6 +335,18 @@ class ThePreflightRefusesWhatTheEngineWouldRun(unittest.TestCase):
     def test_a_missing_timeout_is_refused(self) -> None:
         self.assertIn("missing_timeout", self.mutated(lambda d: d["steps"][0].pop("timeout_sec")))
 
+    def test_nonpositive_and_boolean_timeouts_are_refused(self) -> None:
+        for value in (True, 0, -1):
+            with self.subTest(value=value):
+                self.assertIn(
+                    "missing_timeout",
+                    self.mutated(
+                        lambda d, timeout=value: d["steps"][0].update(
+                            timeout_sec=timeout
+                        )
+                    ),
+                )
+
     def test_an_agent_body_stripped_of_its_bounds_is_refused(self) -> None:
         """A paid session with no written price or model is the one thing an offer
         cannot price, so the file never reaches a run."""
@@ -497,6 +515,38 @@ class ThePreflightRefusesWhatTheEngineWouldRun(unittest.TestCase):
             "unbounded_retry", self.mutated(lambda d: d["steps"][0].update(retry_policy={}))
         )
 
+    def test_malformed_and_active_paid_retries_are_refused(self) -> None:
+        for policy in (
+            {"limit": True, "interval_sec": 1},
+            {"limit": -1, "interval_sec": 1},
+            {"limit": 0, "interval_sec": 0},
+            {"limit": 0, "interval_sec": 1, "other": 1},
+        ):
+            with self.subTest(policy=policy):
+                self.assertIn(
+                    "unbounded_retry",
+                    self.mutated(
+                        lambda d, retry=policy: d["steps"][0].update(
+                            retry_policy=retry
+                        )
+                    ),
+                )
+        def activate_paid(d: dict[str, Any]) -> None:
+            paid = next(step for step in d["steps"] if is_agent_body(str(step.get("run", ""))))
+            paid["retry_policy"] = {"limit": 1, "interval_sec": 1}
+
+        self.assertIn("unbounded_retry", self.mutated(activate_paid))
+
+    def test_dag_retry_is_exactly_disabled(self) -> None:
+        self.assertIn(
+            "unbounded_retry",
+            self.mutated(
+                lambda d: d.update(
+                    retry_policy={"limit": 1, "interval_sec": 1}
+                )
+            ),
+        )
+
     def test_a_with_block_is_refused_because_yaml_retypes_its_values(self) -> None:
         self.assertIn(
             "with_block", self.mutated(lambda d: d["steps"][0].update({"with": {"a": "true"}}))
@@ -528,6 +578,25 @@ class ThePreflightRefusesWhatTheEngineWouldRun(unittest.TestCase):
         for name in SHAPES:
             with self.subTest(shape=name):
                 self.assertEqual(check(reread(document(name))), [])
+
+    def test_a_1500_node_chain_and_cycle_are_decided_without_recursion(self) -> None:
+        built = copy.deepcopy(reread(document("linear-chain")))
+        template = {
+            key: value
+            for key, value in built["steps"][0].items()
+            if key not in ("depends",)
+        }
+        built["steps"] = []
+        for index in range(1500):
+            step = {**template, "name": f"work_n{index}"}
+            if index:
+                step["depends"] = [f"work_n{index - 1}"]
+            built["steps"].append(step)
+        built["max_active_steps"] = 1500
+        self.assertNotIn("cycle", rules(check(built)))
+        built["steps"][0]["depends"] = ["work_n1499"]
+        cycle_faults = [fault for fault in check(built) if fault.rule == "cycle"]
+        self.assertEqual(len(cycle_faults), 1)
 
     def test_every_rule_is_named_once(self) -> None:
         names = [rule.name for rule in RULES]

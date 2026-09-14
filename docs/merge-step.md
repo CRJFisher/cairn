@@ -56,9 +56,10 @@ The topology derives these nodes and the emitters give them bodies;
 - name: merge_w2_1 # the slot: it chooses, lands, and proves what it landed
   depends: [join_w2]
   run: python3 -m cairn merge land --slot 1 --provider claude
+    --model sonnet --max-budget-usd 5.0 --timeout 3600
     --branch step/keymap_reader --branch step/theme_reader
   working_dir: ${CAIRN_REPOSITORY}
-  timeout_sec: 3600
+  timeout_sec: 4320
   retry_policy: { limit: 0, interval_sec: 1 }
 
 - name: verify_merge_w2_1 # the proof, in a process of its own
@@ -86,8 +87,11 @@ session's own bound the mutex wait and the merge in front of it would come out o
 session's budget. Its proof is priced as the support step it always is, because it runs git
 reads and never a session.
 
-**The resolver is the plan's own default agent.** A plan whose steps are all commands still
-gets one, because a conflict is a question about intent whatever produced it.
+**The resolver is the plan's own default agent.** Its model, dollar ceiling, and internal
+work deadline are written into every slot and included in the run offer. A plan whose steps
+are all commands still gets one, because a conflict is a question about intent whatever
+produced it. A stopped resolution records those bounds, its session identity, and any cost
+the provider could report before the engine's outer timeout.
 
 **The slot takes the git write mutex around its own `git merge` and releases it before the
 agent runs.** The mutex's wait is five minutes and a session runs to an hour, so holding it
