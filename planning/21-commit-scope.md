@@ -28,9 +28,28 @@ git(working_directory, ("add", "--all", "--", str(root)))
 
 **Touches.** `cairn/worktrees.py` (`commit_all`, `_staged_diffstat`), `cairn/__main__.py:289-291` (`_commit`), `docs/run-model.md` (the step-record vocabulary, if "excluded paths" becomes a field), `docs/supervision.md` if the exclusion belongs beside the git-write mutex it already documents, `tests/` — needs a fixture with an unrelated dirty path present before a chain-shaped step's session starts and still present after.
 
+## B — An excluded path can still be the step's asserted work
+
+The path-snapshot repair above is necessary but insufficient. If `target.txt` is dirty before
+the step and the step changes that same path, path membership classifies it as somebody else's
+work. Verification can pass over the final uncommitted content, after which the wrapper commits
+the marker while excluding `target.txt`. Discarding the working-tree edit leaves a fresh marker
+over work absent from `HEAD`, so the next run skips the step that would recreate it.
+
+**The correction.** A marker may land only when the committed tree contains the state that was
+asserted. Refuse a chain step whose work overlaps a pre-dirty path, or capture a content-level
+baseline that proves the step did not alter excluded content. A path-only before/after set cannot
+make that proof. The refusal names the overlap and commits neither marker nor partial step output.
+
+This is implemented with [27](27-cross-plan-git-and-lock-isolation.md), which owns positive
+runtime ownership across branches, paths, and locks.
+
 ## Acceptance
 
 - A chain-shaped run's `commit_task_X` step, with an unrelated file dirty before the step's session starts and still dirty after, produces a commit containing only the paths the session's own work touched.
 - The excluded path is named in the step's own record, not silently dropped and not silently absent from any account of what happened.
+- A path dirty before the step and changed by the step cannot produce a commit containing the
+  marker without that path; after any refusal, no fresh marker can survive over state absent from
+  `HEAD`.
 - A worktree-topology run is unaffected: nothing there is ever dirty except the step's own work, so scoping the stage changes nothing observable for it.
 - Reproduction: two Claude Code sessions in one checkout, one running a chain-shaped Cairn step, the other holding an unrelated uncommitted edit for the step's whole duration — the step's wrapping commit does not contain it.

@@ -1,4 +1,4 @@
-# What to fix first — the order 21 through 24 are repaired in
+# What to fix first
 
 [21](21-commit-scope.md), [22](22-timed-out-step.md), [23](23-reading-a-broken-run.md) and
 [24](24-recovery-economics.md) all came out of one seventeen-step chain-shaped plan, run five
@@ -6,10 +6,84 @@ times against task-381. Between them they hold nine changes and three questions 
 than decided. This is the order the nine are done in, what each one depends on, and the two
 places where the design as written needs correcting before it is built.
 
-**Serves** the capability surfaces of **Run** and **Report**. No invariant moves: nothing
-sequenced here changes what a verdict is, who may write a marker, or what an offer prices.
+A repository-wide audit after those repairs added [25](25-execution-admission-and-paid-bounds.md)
+through [29](29-operator-and-report-ergonomics.md), and found two residual safety defects in 21
+and 24. The master order below supersedes the old sequence where they differ; the original
+21–24 reasoning remains afterwards because it still orders work within that group.
 
-## The four themes
+**Serves** every capability surface. The ordering is by the strongest false claim or unsafe
+write each item can currently permit, then by dependency, and only then by user friction.
+
+## Master order after the repository-wide audit
+
+### 0 — Stop shared proof from widening what passes ([24 A](24-recovery-economics.md))
+
+The shared assertion cache has an unlocked read/check/write. Atomic replacement prevents a
+torn file but does not stop a passing process from replacing a failure written concurrently.
+This violates the verify gate's central rule and is the only finding that can directly admit
+unverified work without corrupt input or a hand-edited definition. Lock publication per proof
+key, re-read under the lock, make failure dominant, and prove it with real concurrent processes.
+
+Do this before any optimization or UX work. Until it lands, disabling proof sharing is safer
+than retaining the current implementation.
+
+### 1 — Make markers, branches, and locks prove ownership
+
+Build the correction to [21](21-commit-scope.md) together with
+[27](27-cross-plan-git-and-lock-isolation.md):
+
+- no marker lands without every asserted change in the commit;
+- branches are namespaced by plan as well as step;
+- missing or malformed runtime locks mean ownership is lost;
+- wait predicates re-check ownership for their whole duration.
+
+This precedes further dogfood because each defect can write another plan's work, skip work absent
+from `HEAD`, or continue writing after another run acquired the repository.
+
+### 2 — Admit and bound exactly what will execute
+
+[25](25-execution-admission-and-paid-bounds.md) re-gates the exact workflow bytes at offer,
+start, and schedule boundaries; validates finite positive bounds and disabled retries; prices
+and internally bounds merge-resolution sessions; and gives daemon consent a persisted offer.
+
+This comes before authoring improvements because a perfectly reviewed graph is not protection if
+the published workflow can change afterwards and still run.
+
+### 3 — Close authoring against its sources
+
+[26](26-authoring-closure-and-source-provenance.md) gives every question a durable answer,
+rechecks root-confined source pins during publication, stores one graph per plan, requires an
+explicit schema version, and binds recovery to the plan in the recovered record.
+
+### 4 — Make damaged evidence fail closed
+
+[28](28-record-ingestion-integrity.md) validates report identity and vocabulary, rejects
+incompatible engine/report states and duplicate node identities, validates stored records, and
+attributes unattended triggers accurately. This precedes report presentation because no renderer
+can repair a green verdict derived from malformed evidence.
+
+### 5 — Finish the original record and runtime repairs
+
+Complete the remaining internally ordered work from 22–24 below: liveness, timeout
+classification, next-action ranking, skipped downstream assertions, and paid-session deadline
+coverage. Merge-resolution deadlines are owned by 25 and tested with 22's protocol.
+
+### 6 — Close first-use and authoring friction
+
+Complete [18](18-first-run-friction.md)'s repository inference and assertion conversation,
+[19](19-start-friction.md)'s remaining `plan propose --json` semantics, and
+[16](16-release.md)'s package, Python 3.11, CI, type-check, resource-cleanup, and clean-machine
+release path.
+
+### 7 — Improve the operator and report surfaces
+
+[29](29-operator-and-report-ergonomics.md) adds plan-filtered/latest-run discovery,
+plan-facing step names, truthful scheduler liveness and transactional installation, accurate
+launch language, lossless diagnostics, accessible HTML, and display-width-aware terminal output.
+Then [20](20-visibility-and-follow-on.md) adds live session breadcrumbs and follow-on plan
+drafting on top of records now safe to trust.
+
+## Original 21–24 themes
 
 The nine changes are four separable pieces of work, and the order within each is forced by
 what one change teaches the next.
@@ -21,7 +95,7 @@ what one change teaches the next.
 | A recovery re-pays for proofs already bought | 24 B, 24 A       | **Run**    | ~30 minutes per recovery proving one command against one tree, fourteen times               |
 | A killed step leaves no account of itself    | 22 B             | **Run**    | The engine's bound fires, the wrapper never reaches its report write                        |
 
-## The order
+## The original 21–24 order
 
 ### 1 — Liveness is three values, not two ([23 A](23-reading-a-broken-run.md))
 

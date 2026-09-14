@@ -158,11 +158,35 @@ contributor does not casually cross it.
     one. This document owns the resolution that makes the file portable, and the minimum
     interpreter version, which nothing currently states.
 
+## Release audit additions
+
+The public tree still does not carry an installable cold path: `pyproject.toml` configures
+Pyright but has no project metadata, build backend, or entry point, and the README assumes both
+Dagu and an installed `/cairn` skill. Task 10 therefore includes prerequisites, skill
+registration, and a no-spend discovery check, while tasks 14–15 include a real package manifest
+and Python 3.11 as the explicit minimum.
+
+The quality gate is also broader than the runtime suite:
+
+- `python3 -m unittest discover -s tests -t .` currently passes 1,739 tests, but took about
+  seventeen minutes in the audit rather than the README's stated eight;
+- strict Pyright currently reports nine errors in `tests/test_run_record.py` and
+  `tests/test_supervision.py`;
+- the full run repeatedly emits unclosed-file `ResourceWarning`s;
+- no checked-in CI workflow runs the suite and static checker together;
+- the README's test count and missing-engine notes have drifted from the current suite.
+
+Make test inventory generated or deliberately approximate, avoid promising a runtime without a
+measured CI environment, document one common engine-test policy, close leaked subprocess streams,
+and require both the suite and strict type checking in CI. [29](29-operator-and-report-ergonomics.md)
+owns the user-facing journey; this document owns proving that journey on a clean machine.
+
 ## Exit criteria
 
 - A plan runs end to end on a machine that has never held the author's files, verified by doing it
   rather than by reading the code, and the cold-start time is published.
 - The author-shaped-literal guard passes and runs in CI, over source and generated fixtures.
+- The full unit suite and strict Pyright pass in checked-in CI with no resource-leak warnings.
 - The engine is installed by Cairn or by one documented command, and a version mismatch produces a
   clear halt rather than a silent format drift.
 - The engine's base configuration carries Cairn's values on a machine where the user installed the
@@ -174,6 +198,8 @@ contributor does not casually cross it.
 - The worked example is the failing fixture, and a reader who runs it sees an exclusion with its
   cause.
 - The skill directory is self-contained, asserted by a test, so extraction is a move.
+- `pyproject.toml` states Python 3.11, install metadata, and the executable/skill acquisition
+  path; the README's smoke path works from a fresh checkout.
 
 ## Depends on
 

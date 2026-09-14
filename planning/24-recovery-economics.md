@@ -10,9 +10,32 @@ Found live across five runs of one seventeen-step chain-shaped plan — the task
 
 **Why each proof is right on its own.** The tree has changed since each marker was written — later steps landed on it — so re-asserting an earlier step's end state on today's tree is the guarantee, not waste. What is waste is proving one command's exit status more than once per tree state.
 
-**The change.** Within one run, the verify layer proves each distinct assertion **command** once and lets every gate that quotes that exact command read the one result. The key is the command's bytes; two steps with different commands share nothing. The record still shows every step's assertion with its exit status — provenance says which execution backed it. Nothing changes across runs: the next run proves everything again, because the tree moved.
+**The change.** Within one run, the verify layer proves each distinct assertion **command
+against one tree state** once and lets every gate quoting that command and tree read the result.
+The key is `(command bytes, HEAD, dirty-state digest)`: a pure recovery shares the proof, while
+any landed commit or dirty-tree change invalidates it. Two steps with different commands or tree
+states share nothing. The record still shows every step's assertion with its exit status —
+provenance says which execution backed it. Nothing changes across runs.
 
 **What must not change.** A step-specific assertion (the `grep`-shaped clauses) still runs per step; only byte-identical commands coalesce. A shared result that failed closes every gate that would have read it — sharing never widens what passes.
+
+### Release blocker — publishing a shared proof is a concurrent decision
+
+The first implementation uses an atomic file replacement but an unlocked read/check/write.
+Two assertion processes can both observe no standing proof; a failure can publish first and a
+pass can then replace it. The existing test named for concurrency invokes the two gates
+sequentially and therefore cannot exercise the race.
+
+Publication is an interprocess critical section keyed by the proof path:
+
+- lock, then re-read the standing result before deciding what to write;
+- failure is dominant for one command/tree key and can never be replaced by success;
+- readers never observe a partial file;
+- a crashed writer leaves a reclaimable lock and no invented result;
+- the multiprocess test uses a barrier so both writers reach the decision concurrently.
+
+Until this is true, shared proof caching is less safe than proving each assertion independently
+and must not be treated as a performance-only repair.
 
 **Touches.** `cairn/verify.py`, `cairn/emitters.py` (the verify node body or a result cache keyed on command bytes under the run directory), `docs/verify-gate.md`, `tests/test_verify_gate.py`.
 
@@ -48,7 +71,11 @@ Found live across five runs of one seventeen-step chain-shaped plan — the task
 
 ## Acceptance
 
-- A recovery of an n-step chain whose steps share one assertion command executes that command once, and every gate that quotes it reads the shared result; the record names which execution backed each step.
+- A recovery of an n-step chain whose steps share one assertion command and tree state executes
+  that command once, and every gate that quotes it reads the shared result; the record names
+  which execution backed each step.
+- Concurrent passing and failing executions for one proof key always leave failure standing,
+  regardless of write order or process timing.
 - A run whose chain breaks at step k runs no assertion for steps after k that were skipped for the upstream cause, and its wall clock past the fault is seconds, not minutes; a marker no-op's assertion still runs.
 - `run start` over a dirty tree refuses before the offer is spent, names the paths, and the same acceptance starts the run once the tree is clean.
 - The verify-retry question is answered in [plan-contract.md](../docs/plan-contract.md) one way or the other, with the reasoning recorded beside `retries`.
