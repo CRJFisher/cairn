@@ -25,7 +25,10 @@
 3. **Settle the occasion.** `--trigger fresh` for an ordinary run, `--trigger recovery
 --recovering <run-id>` to continue a run, `--trigger pinned --occasion <value>` to
    continue one by hand. A recovery reads the occasion out of that run's record and never
-   invents one, and a signal that contradicts the trigger is refused rather than dropped.
+   invents one, and a signal that contradicts the trigger is refused rather than dropped. A
+   recovery is offered only through the plan that run was a run of, generated from the graph
+   it ran: a different `--plan`, or a plan re-authored since, is refused before any offer
+   exists — start a fresh run of the re-authored plan instead.
 
 4. **Check what would run, if the person has not seen it.**
    `python3 -m cairn explain workflow --plan <slug> --repository <path>` says what the

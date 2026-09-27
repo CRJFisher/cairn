@@ -96,6 +96,12 @@ so a default stated in one place and applied in another cannot drift apart. `kin
 `timeout`, `retries`, `max_budget_usd` and `model` are the five whose value depends on
 another field, and `normalise` resolves those.
 
+A bound a plan states is judged before any default or conversion touches it: `timeout` is a
+positive integer, `retries` a non-negative integer, and `max_budget_usd` a positive finite
+number. A value outside those — zero, a negative, a boolean, `NaN`, `Infinity`, or an integer
+too large to be a float — is a `schema` error naming the field, and a document spelling `NaN`
+or `Infinity` is refused as it is read.
+
 ### Kinds a plan can author
 
 `command`, and `agent.<provider>` matching `^agent\.[a-z][a-z0-9_]*$`. Nothing names a
@@ -121,6 +127,12 @@ document.** The origin changes what the report says about an edge; it never chan
 whether the edge has to be justified. An edge with no evidence is a validation error, and
 with `--source-root` an edge whose evidence appears in no document is an error too.
 
+`answered` means the author put the edge in the graph by accepting an edge question
+([answering a question](#answering-a-question)). Its evidence is the author's reason as the
+answer recorded it, and it is held to that answer rather than to the documents: an
+`answered` edge with no accepted question on the same edge giving those words is
+`unanswered_edge`.
+
 ## The graph envelope
 
 ```json
@@ -136,13 +148,23 @@ with `--source-root` an edge whose evidence appears in no document is an error t
   },
   "steps": [ … ],
   "omissions": [ { "slug": …, "title": …, "reason": …, "evidence": … } ],
-  "questions": [ { "kind": …, "step": …, "question": …, "evidence": …, "proposed": … } ]
+  "questions": [
+    { "kind": …, "step": …, "dep": …, "question": …, "evidence": …, "proposed": …,
+      "resolution": { "outcome": …, "reading": …, "reason": … } | null }
+  ]
 }
 ```
 
+`cairn_graph_version` is required. It is the discriminator that says which schema the
+document speaks, and a document without one is refused rather than read as the current
+version; there is no earlier version Cairn migrates from.
+
 `sources` pins **every** document the derivation read, each by SHA-256, with `source`
 naming the index among them. A plan written as a folder of numbered task documents pins
-the folder's whole set, so a graph and a moved-on plan cannot silently disagree.
+the folder's whole set, so a graph and a moved-on plan cannot silently disagree. Each
+`path` is relative to the plan's own directory: an absolute path or one climbing out through
+`..` is `source_path`, and with a source root, a path that resolves outside it through a
+symlink is `source_escape`.
 
 `reason` on an omission is one of `deferred`, `gated`, `already_done`, `out_of_scope`. An
 omission's evidence is a quotation, checked like an edge's.
@@ -155,10 +177,38 @@ declares ([the declared readings](#the-declared-readings)): a `non_convergent_ta
 question, and a `missing_verify` question carrying a `proposed` command, must each quote
 the sentence the reading rests on, and the quote is rechecked verbatim.
 
-`proposed` is the derivation's own offer for an unasserted step's end state — the command
-the authoring conversation shows the author ([verify-gate.md](verify-gate.md)). It may sit
-only on a `missing_verify` question, and it is never written into `verify`: only an answer
-is a decision.
+`step` names the step a question is about, and is required on `missing_verify` and
+`non_convergent_task`. `dep` names the other end of the edge an edge question is about —
+`step` depends on `dep` — and is required on `unjustified_edge` and `ambiguous_dependency` and
+absent everywhere else. No two questions share a kind and step, and no two ask about one edge
+(`duplicate_question`), so an answer always says which one it closed.
+
+`proposed` is the derivation's own offer: on a `missing_verify` question, the command for an
+unasserted step's end state ([verify-gate.md](verify-gate.md)); on a `non_convergent_task`
+question, the convergent restatement of the task. It may sit on no other kind, and it is
+never written into the graph by the derivation: only an answer is a decision.
+
+### Answering a question
+
+Every question is the author's to close, and **publication refuses a graph carrying one
+that is not closed**. A `missing_verify` question is answered on its step's `assertion`
+([verify-gate.md](verify-gate.md)), and the answer clears the question. Every other kind
+keeps its question and records the answer beside it as `resolution`, and the same answer
+writes the reading it adopts into the graph fact the question concerns:
+
+| Kind                   | `accepted`                                         | `edited`                        | `declined`                                   |
+| ---------------------- | -------------------------------------------------- | ------------------------------- | -------------------------------------------- |
+| `unjustified_edge`     | the edge is added, origin `answered`; `reason`     | —                               | the edge stays out; `reason`                 |
+| `ambiguous_dependency` | the edge is kept, or added as `answered`; `reason` | —                               | the edge is removed; `reason`                |
+| `non_convergent_task`  | `task` becomes the `proposed` restatement          | `task` becomes the author's own | a waiver: `task` stands as written; `reason` |
+| `unresolved_reference` | —                                                  | `task` becomes the author's own | the reference bears on no step; `reason`     |
+| `plan_gated`           | the author calls the plan live; `reason`           | —                               | —                                            |
+
+`reading` is the reading adopted — the proposal on an accept, the author's own text on an
+edit, and `null` otherwise. `reason` is required wherever the answer is the author's word
+rather than a reading. An outcome a kind does not admit is a `schema` error, and a
+resolution whose graph fact says something else — an accepted edge that is not in the graph,
+a restated task the step does not carry — is `unapplied_answer`.
 
 ## Identifiers
 
@@ -213,37 +263,41 @@ traceback — because a caller cannot tell a crash from a rejection.
 
 **Errors** (a graph carrying one never reaches generation):
 
-| Code                    | Meaning                                                                           |
-| ----------------------- | --------------------------------------------------------------------------------- |
-| `schema`                | a missing, unknown, mistyped, or out-of-vocabulary field                          |
-| `graph_version`         | a graph from a version this validator does not speak                              |
-| `plan_slug`             | a plan slug outside the grammar, or past the engine's 40-byte bound on a DAG name |
-| `no_sources`            | a graph pinning no document, so nothing can be rechecked                          |
-| `source_not_pinned`     | an index document absent from `sources`                                           |
-| `duplicate_source`      | the same document pinned twice                                                    |
-| `step_id`               | an id the engine would reject                                                     |
-| `duplicate_id`          | two steps sharing an id                                                           |
-| `duplicate_slug`        | two steps the plan names identically                                              |
-| `unresolved_dependency` | a dependency naming no step in the graph                                          |
-| `self_dependency`       | a step depending on itself                                                        |
-| `duplicate_dependency`  | the same edge declared twice                                                      |
-| `unjustified_edge`      | an edge with no evidence                                                          |
-| `cycle`                 | a cycle, named step by step — a cycle is not a topology                           |
-| `empty_graph`           | no steps                                                                          |
-| `empty_task`            | a step carrying no task                                                           |
-| `timeout` / `retries`   | a non-positive timeout or a negative retry count                                  |
-| `budget`                | an agent step with no positive dollar ceiling                                     |
-| `model`                 | an agent step naming no model                                                     |
-| `scope_inputs`          | `scope: inputs` with nothing in `reads`                                           |
-| `omitted_and_included`  | one name appearing as both a step and an omission                                 |
-| `unknown_question_step` | a question naming a step that is not in the graph                                 |
-| `unquoted_reading`      | a declared reading that quotes no words                                           |
-| `unassertable_proposal` | a proposed command that cannot fail, so asserts nothing                           |
+| Code                    | Meaning                                                                                                                                                          |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema`                | a missing, unknown, mistyped, or out-of-vocabulary field, a bound out of range, a missing `cairn_graph_version`, or an answer its question's kind does not admit |
+| `graph_version`         | a graph from a version this validator does not speak                                                                                                             |
+| `plan_slug`             | a plan slug outside the grammar, or past the engine's 40-byte bound on a DAG name                                                                                |
+| `no_sources`            | a graph pinning no document, so nothing can be rechecked                                                                                                         |
+| `source_not_pinned`     | an index document absent from `sources`                                                                                                                          |
+| `duplicate_source`      | the same document pinned twice                                                                                                                                   |
+| `source_path`           | a pinned path that is absolute or climbs out of the plan's directory                                                                                             |
+| `step_id`               | an id the engine would reject                                                                                                                                    |
+| `duplicate_id`          | two steps sharing an id                                                                                                                                          |
+| `duplicate_slug`        | two steps the plan names identically                                                                                                                             |
+| `unresolved_dependency` | a dependency naming no step in the graph                                                                                                                         |
+| `self_dependency`       | a step depending on itself                                                                                                                                       |
+| `duplicate_dependency`  | the same edge declared twice                                                                                                                                     |
+| `unjustified_edge`      | an edge with no evidence                                                                                                                                         |
+| `cycle`                 | a cycle, named step by step — a cycle is not a topology                                                                                                          |
+| `empty_graph`           | no steps                                                                                                                                                         |
+| `empty_task`            | a step carrying no task                                                                                                                                          |
+| `model`                 | an agent step naming no model                                                                                                                                    |
+| `scope_inputs`          | `scope: inputs` with nothing in `reads`                                                                                                                          |
+| `omitted_and_included`  | one name appearing as both a step and an omission                                                                                                                |
+| `unknown_question_step` | a question naming a step, or an edge end, that is not in the graph                                                                                               |
+| `duplicate_question`    | two questions of one kind about the same step, or two about the same edge                                                                                        |
+| `settled_question`      | a `missing_verify` question on a step that already has its assertion                                                                                             |
+| `unapplied_answer`      | a recorded answer the graph's own facts contradict                                                                                                               |
+| `unanswered_edge`       | an `answered` edge no accepted question gives                                                                                                                    |
+| `unquoted_reading`      | a declared reading that quotes no words                                                                                                                          |
+| `unassertable_proposal` | a proposed command that cannot fail, so asserts nothing                                                                                                          |
 
-With `--source-root`, five more:
+With `--source-root`, six more:
 
 | Code                     | Meaning                                                                  |
 | ------------------------ | ------------------------------------------------------------------------ |
+| `source_escape`          | a pinned document that resolves outside the root, through a symlink      |
 | `missing_source`         | a pinned document that is not there                                      |
 | `stale_source`           | a document that changed since the graph was derived from it              |
 | `evidence_not_in_source` | an edge, omission or declared reading quoting words no document contains |
@@ -260,6 +314,14 @@ With `--source-root`, five more:
 | `unused_reads`    | `reads` declared under a scope that never hashes them                              |
 | `derived_timeout` | a timeout differing from the kind's default, which nothing quotes the document for |
 | `open_questions`  | questions the author has not answered                                              |
+
+**At publication** `cairn workflow author` runs the validator with the source root it is
+given, in the same invocation that writes the definition, and two warnings become errors:
+
+| Code                  | Meaning                                                        |
+| --------------------- | -------------------------------------------------------------- |
+| `unresolved_question` | a question with no recorded answer                             |
+| `unasserted_step`     | a step with no verify command that nobody has been asked about |
 
 Reachability is not among them. In an acyclic graph every step is reachable from some
 dep-free root by construction, so a reachability check can only ever restate acyclicity.

@@ -12,7 +12,6 @@ reproduced faithfully.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import shutil
 import sys
@@ -20,7 +19,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, cast
 
-from cairn.core import CairnError
+from cairn.core import CairnError, read_standard_json
 from cairn.gitio import (
     checked_out_branch,
     refuse_unusable_repository,
@@ -28,7 +27,7 @@ from cairn.gitio import (
     working_tree_root,
 )
 from cairn.plan.schema import SchemaError
-from cairn.plan.validate import validate
+from cairn.plan.validate import validate_for_publication
 from cairn.topology import TopologyError, derive
 from cairn.workflow.build import build, graph_digest
 from cairn.workflow.gate import EngineUnavailable, gate
@@ -60,14 +59,8 @@ def _load(path: str) -> Any:
     a conversation that may have been interrupted.
     """
     try:
-        with open(path, encoding="utf-8") as handle:
-            return json.load(
-                handle,
-                parse_constant=lambda value: (_ for _ in ()).throw(
-                    ValueError(f"{value} is not standard JSON")
-                ),
-            )
-    except (json.JSONDecodeError, ValueError) as exc:
+        return read_standard_json(Path(path).read_text(encoding="utf-8"))
+    except ValueError as exc:
         raise Refused(f"{path}: not the JSON document Cairn writes — {exc}") from exc
 
 
@@ -76,8 +69,14 @@ def _author(args: argparse.Namespace) -> int:
     # Established before anything is read, so a directory that is not a repository is named
     # as one rather than diagnosed by whatever fails first inside it.
     refuse_unusable_repository(repository)
+    source_root = _source_root(args.source_root)
     raw = _load(args.graph)
-    result = validate(raw)
+    # Every pin and every quotation is re-read here, in the invocation that publishes, and
+    # every question must carry its answer: a graph confirmed against documents that have
+    # since moved, or holding a reading nobody answered, is not the plan that was reviewed.
+    # All of it is asked before anything on disk is touched, so a refusal leaves the
+    # published workflow and its stamp exactly as they were.
+    result = validate_for_publication(raw, str(source_root))
     if not result.ok or result.graph is None:
         for finding in result.errors:
             print(f"error  {finding}", file=sys.stderr)
@@ -152,7 +151,7 @@ def _author(args: argparse.Namespace) -> int:
         # The record of the bytes is written before they are published, so an authoring that
         # dies here leaves a stamp with no file — a state re-authoring names honestly —
         # rather than a file whose stamp accuses a person of having edited it.
-        write_stamp(pending, document, digest, published=target)
+        write_stamp(pending, document, digest, source_root=source_root, published=target)
         os.replace(stamp_path(pending), stamp_path(target))
         os.replace(pending, target)
     finally:
@@ -169,8 +168,20 @@ def _author(args: argparse.Namespace) -> int:
             print(f"warning  {scratch} could not be removed: {leftover}", file=sys.stderr)
 
     print(divergence.summary)
+    print(f"receipt  graph {digest[:12]} checked against {source_root}")
     print(f"{target}")
     return 0
+
+
+def _source_root(stated: str) -> Path:
+    """The plan's own directory, canonical, so every pin is judged beneath one real path."""
+    try:
+        root = Path(stated).resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise Refused(f"--source-root {stated!r} does not exist: {exc}") from exc
+    if not root.is_dir():
+        raise Refused(f"--source-root {stated!r} is not a directory")
+    return root
 
 
 def _refuse_inside_the_working_tree(repository: Path, target: Path) -> None:
@@ -220,6 +231,9 @@ def _parser() -> argparse.ArgumentParser:
     child = verbs.add_parser("author")
     child.add_argument("graph")
     child.add_argument("--repository", required=True)
+    # The directory holding the plan's documents. Required: publication re-reads every
+    # document the graph pins, and a graph that cannot be rechecked is not published.
+    child.add_argument("--source-root", required=True)
     child.add_argument("--parent-branch")
     child.add_argument("--python-path")
     child.add_argument("--out")

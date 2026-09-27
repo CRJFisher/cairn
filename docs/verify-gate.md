@@ -246,8 +246,8 @@ documents people have already written, and what happens then is a designed conve
 
 ```text
 python3 -m cairn plan propose <graph>
-python3 -m cairn plan answer  <graph> --step <id> --command <text> --out <graph>
-python3 -m cairn plan answer  <graph> --step <id> --decline --reason <text> --out <graph>
+python3 -m cairn plan answer  <graph> --kind missing_verify --step <id> --command <text> --out <graph>
+python3 -m cairn plan answer  <graph> --kind missing_verify --step <id> --decline --reason <text> --out <graph>
 ```
 
 `propose` shows, for each unanswered step, the step's own words, the document's words the

@@ -845,8 +845,15 @@ class ASecondFiringDoesItsWork(unittest.TestCase):
         }
         self.workflow = self.author()
 
+    # The plan the graph was derived from, holding the command and the assertion verbatim,
+    # because authoring rechecks every pin and every quotation against it.
+    PLAN_DOCUMENT = (
+        "# Ticker\n\nRun `date +%s%N >> tick.txt` each run, and check with "
+        "`test -f tick.txt`.\n"
+    )
+
     def graph(self) -> dict[str, Any]:
-        digest = hashlib.sha256(b"start\n").hexdigest()
+        digest = hashlib.sha256(self.PLAN_DOCUMENT.encode("utf-8")).hexdigest()
         return {
             "cairn_graph_version": 2,
             "plan": {
@@ -882,13 +889,17 @@ class ASecondFiringDoesItsWork(unittest.TestCase):
         }
 
     def author(self) -> Path:
+        self.plan = self.root / "plan"
+        self.plan.mkdir()
+        (self.plan / "README.md").write_text(self.PLAN_DOCUMENT, encoding="utf-8")
         graph = self.root / "graph.json"
         graph.write_text(json.dumps(self.graph(), indent=2), encoding="utf-8")
         out = self.root / "ticker.yaml"
         outcome = subprocess.run(
             (
                 "python3", "-m", "cairn", "workflow", "author", str(graph),
-                "--repository", str(self.repository), "--out", str(out),
+                "--repository", str(self.repository), "--source-root", str(self.plan),
+                "--out", str(out),
             ),
             capture_output=True, text=True, env=self.environment, check=False,
         )
@@ -916,8 +927,8 @@ class ASecondFiringDoesItsWork(unittest.TestCase):
         outcome = subprocess.run(
             (
                 "python3", "-m", "cairn", "workflow", "author", str(graph),
-                "--repository", str(self.repository), "--out", str(out),
-                "--schedule", "0 3 * * *",
+                "--repository", str(self.repository), "--source-root", str(self.plan),
+                "--out", str(out), "--schedule", "0 3 * * *",
             ),
             capture_output=True, text=True, env=self.environment, check=False,
         )
@@ -932,7 +943,8 @@ class ASecondFiringDoesItsWork(unittest.TestCase):
         outcome = subprocess.run(
             (
                 "python3", "-m", "cairn", "workflow", "author", str(self.root / "graph.json"),
-                "--repository", str(self.repository), "--out", str(self.root / "bad.yaml"),
+                "--repository", str(self.repository), "--source-root", str(self.plan),
+                "--out", str(self.root / "bad.yaml"),
                 "--schedule", "not a cron",
             ),
             capture_output=True, text=True, env=self.environment, check=False,

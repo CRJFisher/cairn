@@ -81,3 +81,30 @@ must describe one lineage.
 `cairn/plan/cli.py`, `cairn/workflow/cli.py`, `cairn/workflow/stamp.py`,
 `cairn/skill/cli.py`, `cairn/skill/resolve.py`, authoring and plan-contract documentation,
 fixture graphs, and their tests.
+
+## Implementation Notes
+
+**Status: done.** All five sections land together; [19](19-start-friction.md) bucket item D is
+closed by A.
+
+- **A.** Every non-assertion question carries a typed `resolution` (`accepted`, `edited`,
+  `declined`) whose admissible outcomes are fixed per kind in `RESOLUTIONS_BY_KIND`; edge
+  questions name their other end in `dep`; an edge an answer adds has origin `answered`.
+  `plan answer --kind …` writes the reading into the graph fact and the answer beside the
+  question in one act ([cairn/plan/questions.py](../cairn/plan/questions.py)), and the
+  validator refuses an answer the facts contradict (`unapplied_answer`, `unanswered_edge`).
+  `missing_verify` keeps its answer on the step's `assertion`. `plan propose` lists every open
+  question and exits 0 whenever it listed; `--json` carries `complete`.
+- **B.** `workflow author` requires `--source-root`, canonicalises it, and runs
+  `validate_for_publication`, which re-reads every pin (refusing `source_path` and
+  `source_escape`), rechecks every digest and quotation, and refuses `unresolved_question` and
+  `unasserted_step` — all before anything is written. The stamp records `source_root` beside
+  `graph_sha256`.
+- **C.** `plan home <slug> --repository <path>` prints `<git-common-dir>/cairn/graphs/<plan>.json`,
+  first filing a shared `graph.json` under the slug it names, refusing an unreadable one or one
+  that disagrees with the plan's existing graph.
+- **D.** `cairn_graph_version` is required; there is no legacy reader. `timeout`, `retries` and
+  `max_budget_usd` are judged in the schema before normalisation, and `plan` reads refuse
+  `NaN`/`Infinity`.
+- **E.** `run offer --trigger recovery` refuses before minting an offer unless the recovered
+  record names the offered plan and the graph digest the admitted workflow carries.

@@ -143,11 +143,14 @@ python3 -m cairn marker absent --step <id> --scope <scope> [--reads <path>]…
 python3 -m cairn marker write  --step <id> --scope <scope> [--reads <path>]…
 python3 -m cairn verify needed --step <id> --command-digest <sha256>
 python3 -m cairn verify gate   --step <id> --position <chain|branch> [--verify-exit <status>]
+python3 -m cairn plan home     <plan-slug> --repository <path>
 python3 -m cairn plan propose  <graph> [--json]
-python3 -m cairn plan answer   <graph> --step <id> (--command <text> | --decline --reason <text>)
-                               [--out <path>]
-python3 -m cairn workflow author <graph> --repository <path> [--parent-branch <name>]
-                               [--python-path <dir>] [--out <path>] [--schedule <cron>]
+python3 -m cairn plan answer   <graph> --kind <kind> [--step <id>] [--dep <id>]
+                               (--command <text> | --accept | --edit <text> | --decline)
+                               [--reason <text>] [--out <path>]
+python3 -m cairn workflow author <graph> --repository <path> --source-root <plan-dir>
+                               [--parent-branch <name>] [--python-path <dir>] [--out <path>]
+                               [--schedule <cron>]
 python3 -m cairn workflow check  <workflow.yaml>
 python3 -m cairn record build   --run <id> [--repository <path>] [--engine-records <path>]
 python3 -m cairn record facts   --run <id> [--repository <path>] [--engine-records <path>]
@@ -179,13 +182,20 @@ which the run mints at its first act and records under its own identity; the dec
 ([triggers.md](triggers.md)).
 
 `plan propose` and `plan answer` are the authoring conversation
-([verify-gate.md](verify-gate.md)). Like the rest of `cairn plan …` they run at derivation
-time, against a graph on disk, and leave no step report. `propose` writes nothing at all,
-and exits nonzero while any step is still unanswered, so a derivation can tell an unfinished
-conversation from a finished one. `answer` writes the answered graph to `--out` atomically,
-or to stdout when none is given; the offer it judges the answer against is the one the
-graph's own `missing_verify` question carries, so an accept, an edit and a command written
-unaided are derived rather than declared, and no invocation can drop or misquote the offer.
+([verify-gate.md](verify-gate.md), [plan-contract.md](plan-contract.md)). Like the rest of
+`cairn plan …` they run at derivation time, against a graph on disk, and leave no step report.
+`propose` writes nothing at all, and lists every step nobody has been asked to assert and every
+other open question, each with the invocations that record its answers. It exits 0 whenever the
+listing was made and 2 when the graph could not be read; `--json` prints `complete` beside the
+two lists, so a caller tells a finished conversation from an unfinished one by what the listing
+holds, never by its exit status. `answer` writes the answered graph to `--out` atomically, or to
+stdout when none is given. A `missing_verify` answer is `--command` or `--decline`, judged
+against the offer the graph's own question carries, so an accept, an edit and a command written
+unaided are derived rather than declared. Every other kind is `--accept`, `--edit` or
+`--decline` as its kind admits; an accept adopts the question's own proposal, never an
+argument, so no invocation can drop or misquote the offer. `plan home` prints the plan's own
+graph path, `<git-common-dir>/cairn/graphs/<plan>.json`, and first files a shared `graph.json`
+under the plan that graph itself names.
 
 `lock acquire` is the run's first act and does eight things before its first spend: assert
 the engine's DAG-level retry is off, **judge every parameter a caller varied**

@@ -5,6 +5,8 @@ import io
 import json
 import os
 import re
+import shlex
+import shutil
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -20,9 +22,15 @@ from cairn.plan.ids import (
     plan_slug_collisions,
     sanitise_id,
 )
+from cairn.plan.questions import ResolutionError, resolve
 from cairn.plan.report import render, waves
-from cairn.plan.schema import ENGINE_NAME_MAX_BYTES, SchemaError, normalise
-from cairn.plan.validate import Finding, validate
+from cairn.plan.schema import (
+    ENGINE_NAME_MAX_BYTES,
+    GRAPH_VERSION,
+    SchemaError,
+    normalise,
+)
+from cairn.plan.validate import Finding, validate, validate_for_publication
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIXTURES = os.path.join(os.path.dirname(HERE), "fixtures", "plans")
@@ -37,6 +45,7 @@ def load(name: str, filename: str) -> Any:
 
 def minimal(**plan: Any) -> dict[str, Any]:
     base: dict[str, Any] = {
+        "cairn_graph_version": GRAPH_VERSION,
         "plan": {
             "slug": "p",
             "title": "P",
@@ -378,9 +387,9 @@ class UncoveredCodes(unittest.TestCase):
         graph = minimal()
         graph["steps"][0]["timeout"] = 0
         graph["steps"][0]["retries"] = -1
-        codes = [f.code for f in validate(graph).errors]
-        self.assertIn("timeout", codes)
-        self.assertIn("retries", codes)
+        messages = [f.message for f in validate(graph).errors if f.code == "schema"]
+        self.assertTrue(any("steps[0].timeout" in message for message in messages), messages)
+        self.assertTrue(any("steps[0].retries" in message for message in messages), messages)
 
     def test_a_name_that_is_both_a_step_and_an_omission_is_refused(self) -> None:
         graph = minimal()
@@ -655,7 +664,10 @@ class StepRecord(unittest.TestCase):
     def test_an_unpriceable_agent_step_is_a_validation_error(self) -> None:
         graph = minimal()
         graph["steps"][0]["max_budget_usd"] = 0
-        self.assertIn("budget", [f.code for f in validate(graph).errors])
+        self.assertIn(
+            "steps[0].max_budget_usd",
+            " ".join(f.message for f in validate(graph).errors if f.code == "schema"),
+        )
         graph = minimal()
         graph["steps"][0]["model"] = "   "
         self.assertIn("model", [f.code for f in validate(graph).errors])
@@ -942,3 +954,287 @@ class ParseReport(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def two_steps(**question: Any) -> dict[str, Any]:
+    """A graph of two roots and one question about them, answered or not."""
+    graph = minimal()
+    graph["steps"].append(
+        {"id": "b", "slug": "b", "title": "B", "task": "Bring b to its end state.",
+         "verify": None}
+    )
+    graph["questions"] = [{"question": "Is it so?", **question}]
+    return graph
+
+
+def answered(graph: dict[str, Any], kind: str, **arguments: Any) -> Any:
+    """The graph after one answer, through the one function every answer goes through."""
+    return resolve(normalise(graph), kind, **arguments)
+
+
+class AnsweringEveryQuestion(unittest.TestCase):
+    """Every question kind closes through a recorded answer that the graph's facts carry."""
+
+    def test_an_accepted_unjustified_edge_puts_the_edge_in_the_graph(self) -> None:
+        graph = answered(
+            two_steps(kind="unjustified_edge", step="b", dep="a"),
+            "unjustified_edge", step="b", dep="a", outcome="accepted", reading=None,
+            reason="b reads what a writes",
+        )
+        edge = graph["steps"][1]["deps"]
+        self.assertEqual(
+            edge, [{"id": "a", "origin": "answered", "evidence": "b reads what a writes"}]
+        )
+        self.assertEqual(graph["questions"][0]["resolution"]["outcome"], "accepted")
+        self.assertTrue(validate(graph).ok, [str(f) for f in validate(graph).errors])
+
+    def test_an_answered_edge_needs_no_quotation_from_the_documents(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            document = "Two unrelated things.\n"
+            (Path(temporary) / "README.md").write_text(document)
+            digest = hashlib.sha256(document.encode()).hexdigest()
+            graph = two_steps(kind="unjustified_edge", step="b", dep="a")
+            graph["plan"]["sources"] = [{"path": "README.md", "sha256": digest}]
+            result = validate(
+                answered(
+                    graph, "unjustified_edge", step="b", dep="a", outcome="accepted",
+                    reading=None, reason="the author says so",
+                ),
+                source_root=temporary,
+            )
+            self.assertNotIn("evidence_not_in_source", [f.code for f in result.errors])
+
+    def test_a_declined_ambiguous_dependency_takes_the_edge_out(self) -> None:
+        raw = two_steps(kind="ambiguous_dependency", step="b", dep="a")
+        raw["steps"][1]["deps"] = [{"id": "a", "origin": "derived", "evidence": "then b"}]
+        graph = answered(
+            raw, "ambiguous_dependency", step="b", dep="a", outcome="declined",
+            reading=None, reason="b stands alone",
+        )
+        self.assertEqual(graph["steps"][1]["deps"], [])
+        self.assertTrue(validate(graph).ok, [str(f) for f in validate(graph).errors])
+
+    def test_an_accepted_ambiguous_dependency_keeps_the_edge_it_doubted(self) -> None:
+        raw = two_steps(kind="ambiguous_dependency", step="b", dep="a")
+        raw["steps"][1]["deps"] = [{"id": "a", "origin": "derived", "evidence": "then b"}]
+        graph = answered(
+            raw, "ambiguous_dependency", step="b", dep="a", outcome="accepted",
+            reading=None, reason="b does need a",
+        )
+        self.assertEqual(graph["steps"][1]["deps"][0]["origin"], "derived")
+        self.assertTrue(validate(graph).ok, [str(f) for f in validate(graph).errors])
+
+    def test_a_non_convergent_task_is_accepted_edited_or_waived(self) -> None:
+        question = {
+            "kind": "non_convergent_task", "step": "a", "evidence": "Append a line.",
+            "proposed": "Bring the file to a state where it holds the line once.",
+        }
+        accepted = answered(
+            two_steps(**question), "non_convergent_task", step="a", dep=None,
+            outcome="accepted", reading=None, reason=None,
+        )
+        self.assertEqual(accepted["steps"][0]["task"], question["proposed"])
+        edited = answered(
+            two_steps(**question), "non_convergent_task", step="a", dep=None,
+            outcome="edited", reading="Bring the file to hold exactly one line.", reason=None,
+        )
+        self.assertEqual(edited["steps"][0]["task"], "Bring the file to hold exactly one line.")
+        waived = answered(
+            two_steps(**question), "non_convergent_task", step="a", dep=None,
+            outcome="declined", reading=None, reason="a duplicate line is harmless",
+        )
+        self.assertEqual(waived["steps"][0]["task"], "Bring a to its end state.")
+        for graph in (accepted, edited, waived):
+            self.assertTrue(validate(graph).ok, [str(f) for f in validate(graph).errors])
+
+    def test_nothing_proposed_is_nothing_to_accept(self) -> None:
+        with self.assertRaises(ResolutionError):
+            answered(
+                two_steps(kind="non_convergent_task", step="a", evidence="Append."),
+                "non_convergent_task", step="a", dep=None, outcome="accepted",
+                reading=None, reason=None,
+            )
+
+    def test_an_unresolved_reference_is_restated_or_declined_and_never_accepted(self) -> None:
+        raw = two_steps(kind="unresolved_reference", step="a")
+        edited = answered(
+            raw, "unresolved_reference", step="a", dep=None, outcome="edited",
+            reading="Bring the renderer to a state where it uses the theme compiler.",
+            reason=None,
+        )
+        self.assertIn("theme compiler", edited["steps"][0]["task"])
+        with self.assertRaises(ResolutionError):
+            answered(
+                raw, "unresolved_reference", step="a", dep=None, outcome="accepted",
+                reading=None, reason="yes",
+            )
+
+    def test_a_gated_plan_is_only_ever_called_live_and_says_why(self) -> None:
+        raw = two_steps(kind="plan_gated")
+        live = answered(
+            raw, "plan_gated", step=None, dep=None, outcome="accepted", reading=None,
+            reason="the author green-lit it",
+        )
+        self.assertTrue(validate(live).ok, [str(f) for f in validate(live).errors])
+        for outcome, reason in (("accepted", None), ("declined", "not yet")):
+            with self.subTest(outcome=outcome), self.assertRaises(ResolutionError):
+                answered(
+                    raw, "plan_gated", step=None, dep=None, outcome=outcome,
+                    reading=None, reason=reason,
+                )
+
+    def test_a_missing_verify_question_is_answered_on_its_steps_assertion(self) -> None:
+        raw = two_steps(kind="missing_verify", step="a")
+        with self.assertRaises(ResolutionError):
+            answered(
+                raw, "missing_verify", step="a", dep=None, outcome="accepted",
+                reading=None, reason="yes",
+            )
+        raw["questions"][0]["resolution"] = {"outcome": "accepted", "reason": "yes"}
+        self.assertIn("schema", [f.code for f in validate(raw).errors])
+
+    def test_an_answer_cannot_be_given_twice(self) -> None:
+        graph = answered(
+            two_steps(kind="plan_gated"), "plan_gated", step=None, dep=None,
+            outcome="accepted", reading=None, reason="live",
+        )
+        with self.assertRaises(ResolutionError):
+            resolve(
+                graph, "plan_gated", step=None, dep=None, outcome="accepted",
+                reading=None, reason="live again",
+            )
+
+    def test_a_resolution_the_graph_does_not_carry_is_refused(self) -> None:
+        raw = two_steps(kind="unjustified_edge", step="b", dep="a")
+        raw["questions"][0]["resolution"] = {"outcome": "accepted", "reason": "b needs a"}
+        self.assertIn("unapplied_answer", [f.code for f in validate(raw).errors])
+        raw = two_steps(kind="unresolved_reference", step="a")
+        raw["questions"][0]["resolution"] = {"outcome": "edited", "reading": "Restated."}
+        self.assertIn("unapplied_answer", [f.code for f in validate(raw).errors])
+
+    def test_an_answered_edge_no_question_gave_is_refused(self) -> None:
+        raw = two_steps(kind="plan_gated")
+        raw["steps"][1]["deps"] = [{"id": "a", "origin": "answered", "evidence": "trust me"}]
+        self.assertIn("unanswered_edge", [f.code for f in validate(raw).errors])
+
+    def test_an_edge_question_names_both_ends(self) -> None:
+        raw = two_steps(kind="ambiguous_dependency", step="b")
+        self.assertIn("schema", [f.code for f in validate(raw).errors])
+        raw = two_steps(kind="ambiguous_dependency", step="b", dep="ghost")
+        self.assertIn("unknown_question_step", [f.code for f in validate(raw).errors])
+
+    def test_two_questions_about_one_edge_are_refused(self) -> None:
+        raw = two_steps(kind="unjustified_edge", step="b", dep="a")
+        raw["questions"].append(dict(raw["questions"][0]))
+        self.assertIn("duplicate_question", [f.code for f in validate(raw).errors])
+
+    def test_publication_refuses_every_reading_nobody_answered(self) -> None:
+        for name in NAMES:
+            with self.subTest(name):
+                graph = load(name, "graph.json")
+                result = validate_for_publication(graph, os.path.join(FIXTURES, name))
+                open_kinds = [
+                    finding for finding in result.errors
+                    if finding.code == "unresolved_question"
+                ]
+                self.assertEqual(len(open_kinds), len(graph["questions"]))
+
+    def test_every_answered_real_plan_is_publishable(self) -> None:
+        for name in REAL:
+            with self.subTest(name):
+                result = validate_for_publication(
+                    load(name, "answered.json"), os.path.join(FIXTURES, name)
+                )
+                self.assertTrue(result.ok, [str(f) for f in result.errors])
+
+    def test_publication_refuses_a_step_nobody_was_asked_to_assert(self) -> None:
+        graph = minimal()
+        graph["plan"]["sources"] = [{"path": "README.md", "sha256": "0" * 64}]
+        codes = [f.code for f in validate_for_publication(graph, FIXTURES).errors]
+        self.assertIn("unasserted_step", codes)
+
+
+class AnsweringFromTheCommandLine(unittest.TestCase):
+    def setUp(self) -> None:
+        self.directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.directory)
+        self.graph = self.directory / "graph.json"
+        self.graph.write_text(json.dumps(load("all-roots", "graph.json")), encoding="utf-8")
+
+    def run_plan(self, *arguments: str) -> tuple[int, str]:
+        printed = io.StringIO()
+        with redirect_stdout(printed), redirect_stderr(io.StringIO()):
+            code = main(list(arguments))
+        return code, printed.getvalue()
+
+    def test_a_listing_that_holds_work_still_exits_zero(self) -> None:
+        code, printed = self.run_plan("propose", str(self.graph), "--json")
+        self.assertEqual(code, 0)
+        listing = json.loads(printed)
+        self.assertFalse(listing["complete"])
+        self.assertEqual([q["kind"] for q in listing["questions"]], ["unjustified_edge"])
+
+    def test_a_graph_that_cannot_be_read_is_a_failure_not_a_listing(self) -> None:
+        self.graph.write_text("{ nope", encoding="utf-8")
+        self.assertEqual(self.run_plan("propose", str(self.graph), "--json")[0], 2)
+
+    def test_the_worksheet_invocation_closes_the_question(self) -> None:
+        _, worksheet = self.run_plan("propose", str(self.graph))
+        decline = next(
+            line.strip() for line in worksheet.splitlines()
+            if "--decline" in line and "plan answer" in line
+        )
+        arguments = [
+            "because the document says so" if word == "<why>" else word
+            for word in shlex.split(decline)[4:]
+        ]
+        self.assertEqual(self.run_plan(*arguments)[0], 0, decline)
+        code, printed = self.run_plan("propose", str(self.graph), "--json")
+        self.assertEqual(code, 0)
+        self.assertTrue(json.loads(printed)["complete"])
+
+    def test_a_document_spelling_a_non_finite_number_is_refused_as_it_is_read(self) -> None:
+        self.graph.write_text(
+            self.graph.read_text(encoding="utf-8").replace('"timeout": 3600', '"timeout": NaN'),
+            encoding="utf-8",
+        )
+        self.assertEqual(self.run_plan("validate", str(self.graph))[0], 2)
+
+
+class TheVersionAndTheBounds(unittest.TestCase):
+    def test_an_unversioned_graph_is_refused_rather_than_read_as_current(self) -> None:
+        graph = minimal()
+        del graph["cairn_graph_version"]
+        with self.assertRaises(SchemaError):
+            normalise(graph)
+        self.assertIn(
+            "cairn_graph_version",
+            " ".join(f.message for f in validate(graph).errors if f.code == "schema"),
+        )
+
+    def test_a_bound_that_is_not_a_finite_number_is_refused_before_normalising(self) -> None:
+        for field, value in (
+            ("max_budget_usd", float("inf")),
+            ("max_budget_usd", float("nan")),
+            ("max_budget_usd", 10**400),
+            ("timeout", True),
+        ):
+            with self.subTest(field=field, value=value):
+                graph = minimal()
+                graph["steps"][0][field] = value
+                result = validate(graph)
+                self.assertIn(f"steps[0].{field}", " ".join(f.message for f in result.errors))
+
+
+class QuestionsThatCannotBeAnsweredTwice(unittest.TestCase):
+    def test_two_edge_questions_about_one_edge_are_refused_whatever_their_kinds(self) -> None:
+        raw = two_steps(kind="unjustified_edge", step="b", dep="a")
+        raw["questions"].append(
+            {"kind": "ambiguous_dependency", "step": "b", "dep": "a", "question": "Or?"}
+        )
+        self.assertIn("duplicate_question", [f.code for f in validate(raw).errors])
+
+    def test_a_missing_verify_question_on_an_asserted_step_is_refused(self) -> None:
+        raw = two_steps(kind="missing_verify", step="a")
+        raw["steps"][0]["verify"] = "test -f a"
+        self.assertIn("settled_question", [f.code for f in validate(raw).errors])

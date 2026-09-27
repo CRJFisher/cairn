@@ -54,16 +54,20 @@
     {
       "kind": "non_convergent_task",
       "step": "append_a_section_to_changelog_md",
+      "dep": null,
       "question": "Restate this convergently: \"append a section\" adds a second copy of the section on a re-run. State the end state instead \u2014 `CHANGELOG.md` carries exactly one section for this release.",
       "evidence": "**Append a section to `CHANGELOG.md`** describing this release.",
-      "proposed": null
+      "proposed": null,
+      "resolution": null
     },
     {
       "kind": "non_convergent_task",
       "step": "create_a_new_audit_log_file",
+      "dep": null,
       "question": "Restate this convergently: \"create a new audit log file\" leaves a second file on a re-run. State the end state instead \u2014 one audit log exists under `var/audit/` carrying one entry for this release.",
       "evidence": "**Create a new audit log file** under `var/audit/` and add an entry recording the release.",
-      "proposed": null
+      "proposed": null,
+      "resolution": null
     }
   ]
 }

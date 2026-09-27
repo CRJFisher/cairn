@@ -212,7 +212,9 @@ licensed ([03]). So detection is Cairn's.
 
 The stamp lives in two places. In the file's `labels` — measured to accept arbitrary keys and
 to survive both engine checks — it carries the plan's identity and a hash of everything but
-itself. In `<workflow>.stamp.json` beside it, it carries the emitted file's own hash.
+itself. In `<workflow>.stamp.json` beside it, it carries the emitted file's own hash, the
+graph's digest, and the canonical source root every pinned document was re-read beneath — the
+publication's receipt.
 
 Re-authoring reads both and says one of the following, then **proceeds**. It never merges: the
 plan document is the source of truth, and a merge between a generated file and an edited one
@@ -354,11 +356,19 @@ write the one report a failed run always has to leave.
 ## The command line
 
 ```text
-python3 -m cairn workflow author <graph.json> --repository <path>
+python3 -m cairn workflow author <graph.json> --repository <path> --source-root <plan-dir>
                                  [--parent-branch <name>] [--python-path <dir>]
                                  [--out <path>] [--schedule '<cron>']
 python3 -m cairn workflow check  <workflow.yaml>
 ```
+
+`author` publishes only the graph that was reviewed. In the invocation that writes the
+definition it resolves `--source-root` to a canonical directory, re-reads every pinned document
+beneath it — refusing a pin that is absolute, climbs out through `..`, or escapes through a
+symlink — and recomputes every digest and every quotation. It also refuses any question without
+a recorded answer and any step nobody was asked to assert
+([plan-contract.md](plan-contract.md)). Every one of those refusals happens before the existing
+definition or its stamp is touched.
 
 `author` is the only thing in Cairn that writes an engine definition; `check` reads one and
 writes nothing. Both run at authoring time, take no runtime identity and leave no step

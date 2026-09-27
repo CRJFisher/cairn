@@ -60,9 +60,11 @@
     {
       "kind": "unresolved_reference",
       "step": "write_the_renderer",
+      "dep": null,
       "question": "What is the theme compiler? The document names it as a predecessor and defines no step for it.",
       "evidence": "depends on the theme compiler",
-      "proposed": null
+      "proposed": null,
+      "resolution": null
     }
   ]
 }

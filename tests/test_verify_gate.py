@@ -44,6 +44,7 @@ from cairn.plan.cli import main as plan_main
 from cairn.plan.report import render as render_report
 from cairn.plan.schema import (
     ENGINE_NAME_MAX_BYTES,
+    GRAPH_VERSION,
     Assertion,
     Graph,
     has_assertion,
@@ -127,6 +128,7 @@ def plan_graph(
         }
     )
     raw: dict[str, Any] = {
+        "cairn_graph_version": GRAPH_VERSION,
         "plan": {"slug": "p", "title": "P", "source": "README.md"},
         "steps": [
             {
@@ -167,6 +169,15 @@ def run_plan(arguments: list[str]) -> int:
     """Drive the derivation-time command line without its output reaching the suite's."""
     with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
         return plan_main(arguments)
+
+
+def listing(graph_path: Path) -> dict[str, Any]:
+    """What `plan propose --json` says is left to answer; its exit status says only that it ran."""
+    printed = StringIO()
+    with redirect_stdout(printed), redirect_stderr(StringIO()):
+        status = plan_main(["propose", str(graph_path), "--json"])
+    assert status == 0, "a listing that was made exits zero whatever it holds"
+    return json.loads(printed.getvalue())
 
 
 def fixture(name: str) -> Graph:
@@ -1049,7 +1060,7 @@ class TheMissingVerifyConversation(unittest.TestCase):
         for form in ("--command", "--decline"):
             graph_path = directory / f"{form.strip('-')}.json"
             shutil.copy(FIXTURES / "worktree-hydration" / "graph.json", graph_path)
-            self.assertEqual(run_plan(["propose", str(graph_path)]), 1, "steps are unanswered")
+            self.assertTrue(listing(graph_path)["assertions"], "steps are unanswered")
             printed = render(propose(fixture("worktree-hydration")), str(graph_path))
             for line in printed.splitlines():
                 stripped = line.strip()
@@ -1060,7 +1071,7 @@ class TheMissingVerifyConversation(unittest.TestCase):
                     continue
                 self.assertEqual(run_plan(arguments), 0, stripped)
 
-            self.assertEqual(run_plan(["propose", str(graph_path)]), 0, "nothing is left to ask")
+            self.assertEqual(listing(graph_path)["assertions"], [], "nothing is left to ask")
             answered = normalise(json.loads(graph_path.read_text(encoding="utf-8")))
             for step in answered["steps"]:
                 assertion = step["assertion"]
@@ -1084,7 +1095,13 @@ class TheMissingVerifyConversation(unittest.TestCase):
         shutil.copy(FIXTURES / "no-verify" / "graph.json", graph_path)
         step_id = fixture("no-verify")["steps"][0]["id"]
         self.assertEqual(
-            run_plan(["answer", str(graph_path), "--step", step_id, "--decline"]), 2
+            run_plan(
+                [
+                    "answer", str(graph_path), "--kind", "missing_verify",
+                    "--step", step_id, "--decline",
+                ]
+            ),
+            2,
         )
 
     def test_both_real_plans_reach_a_runnable_state_through_their_answers(self) -> None:

@@ -60,16 +60,20 @@
     {
       "kind": "missing_verify",
       "step": "rewrite_the_getting_started_guide",
+      "dep": null,
       "question": "What command asserts that the getting-started guide reached its end state?",
       "evidence": "Neither states a checkable end state, and the plan offers no command.",
-      "proposed": null
+      "proposed": null,
+      "resolution": null
     },
     {
       "kind": "missing_verify",
       "step": "bring_the_architecture_page_into_line_with_the_current_module_layout",
+      "dep": null,
       "question": "What command asserts that the architecture page matches the current module layout?",
       "evidence": "Neither states a checkable end state, and the plan offers no command.",
-      "proposed": null
+      "proposed": null,
+      "resolution": null
     }
   ]
 }

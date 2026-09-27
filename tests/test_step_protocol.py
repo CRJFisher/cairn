@@ -37,7 +37,7 @@ from cairn.marker import (
     read_marker,
     write_marker,
 )
-from cairn.plan.schema import SCOPES, normalise
+from cairn.plan.schema import GRAPH_VERSION, SCOPES, normalise
 from cairn.protocol import PREAMBLE, STEP_REPORT_SCHEMA, compose_prompt
 from cairn.providers import PROVIDER_RUNNERS, hook_settings, run_claude
 from cairn.topology import node_name
@@ -73,6 +73,7 @@ def plan_step(
     reads: list[str] | None = None,
 ) -> Any:
     raw: dict[str, Any] = {
+        "cairn_graph_version": GRAPH_VERSION,
         "plan": {"slug": "p", "title": "P", "source": "README.md"},
         "steps": [
             {

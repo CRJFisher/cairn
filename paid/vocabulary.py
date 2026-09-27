@@ -287,6 +287,7 @@ CAPABILITY_BY_COMMAND: dict[str, str] = {
     "plan normalise": OBSERVED_AUTHOR,
     "plan slug": OBSERVED_AUTHOR,
     "plan ids": OBSERVED_AUTHOR,
+    "plan home": OBSERVED_AUTHOR,
     "workflow author": OBSERVED_AUTHOR,
     "workflow check": CAPABILITY_EXPLAIN,
     "run offer": CAPABILITY_RUN,

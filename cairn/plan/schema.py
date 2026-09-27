@@ -3,6 +3,8 @@
 import re
 from typing import Any, NotRequired, TypedDict, cast
 
+from cairn.bounds import nonnegative_integer, positive_finite, positive_integer
+
 # 2 reads `tools` as deny patterns. A version-1 graph's allow list would silently invert
 # into a denial of exactly the tools its author meant to permit, so it is refused.
 GRAPH_VERSION = 2
@@ -29,7 +31,11 @@ WEEKLY_SCOPE = "weekly"
 PERIOD_SCOPES: tuple[str, ...] = ("hourly", "daily", WEEKLY_SCOPE, "monthly")
 SCOPES: tuple[str, ...] = (ONCE_SCOPE, RUN_SCOPE, INPUTS_SCOPE, *PERIOD_SCOPES)
 
-DEP_ORIGINS: tuple[str, ...] = ("declared", "derived")
+# `answered` is an edge the author supplied in the authoring conversation, in answer to a
+# dependency question. Its evidence is the author's own words rather than a quotation, so it
+# exists only where a resolved question on the same edge says so.
+ANSWERED_ORIGIN = "answered"
+DEP_ORIGINS: tuple[str, ...] = ("declared", "derived", ANSWERED_ORIGIN)
 
 # A command that always exits zero reads as verified in the report while asserting
 # nothing, which is worse than the declared absence its author could have chosen instead.
@@ -49,14 +55,47 @@ ASSERTION_OUTCOMES: tuple[str, ...] = ("accepted", "edited", "authored", "declin
 
 OMISSION_REASONS: tuple[str, ...] = ("deferred", "gated", "already_done", "out_of_scope")
 
+UNJUSTIFIED_EDGE = "unjustified_edge"
+MISSING_VERIFY = "missing_verify"
+NON_CONVERGENT_TASK = "non_convergent_task"
+AMBIGUOUS_DEPENDENCY = "ambiguous_dependency"
+UNRESOLVED_REFERENCE = "unresolved_reference"
+PLAN_GATED = "plan_gated"
 QUESTION_KINDS: tuple[str, ...] = (
-    "unjustified_edge",
-    "missing_verify",
-    "non_convergent_task",
-    "ambiguous_dependency",
-    "unresolved_reference",
-    "plan_gated",
+    UNJUSTIFIED_EDGE,
+    MISSING_VERIFY,
+    NON_CONVERGENT_TASK,
+    AMBIGUOUS_DEPENDENCY,
+    UNRESOLVED_REFERENCE,
+    PLAN_GATED,
 )
+
+# The two kinds that are questions about one edge. Each names the edge's two ends — `step`
+# depends on `dep` — so an answer can put the edge in the graph or take it out.
+EDGE_KINDS: tuple[str, ...] = (UNJUSTIFIED_EDGE, AMBIGUOUS_DEPENDENCY)
+
+# The kinds a derivation may attach an offer to: a command for an unasserted end state, and
+# a convergent restatement of a task that would duplicate on a resumed run.
+PROPOSING_KINDS: tuple[str, ...] = (MISSING_VERIFY, NON_CONVERGENT_TASK)
+
+# How a question other than `missing_verify` was closed. `accepted` adopts the reading on
+# offer — the derivation's proposal, or the edge the question names; `edited` adopts the
+# author's own text instead; `declined` refuses the reading and, where that is a waiver, says
+# why. A `missing_verify` answer is recorded on the step's own `assertion` instead, because
+# that is the fact it settles and a second record could disagree with it.
+RESOLUTION_OUTCOMES: tuple[str, ...] = ("accepted", "edited", "declined")
+
+# Which outcomes each kind admits. The contract permits a waiver only where the graph stays
+# sound without the reading: a plan the author has not called live is never published, so
+# `plan_gated` can only be accepted; an unresolved reference can be restated only on a step.
+RESOLUTIONS_BY_KIND: dict[str, tuple[str, ...]] = {
+    UNJUSTIFIED_EDGE: ("accepted", "declined"),
+    AMBIGUOUS_DEPENDENCY: ("accepted", "declined"),
+    NON_CONVERGENT_TASK: ("accepted", "edited", "declined"),
+    UNRESOLVED_REFERENCE: ("edited", "declined"),
+    PLAN_GATED: ("accepted",),
+    MISSING_VERIFY: (),
+}
 
 # I7 forbids an unbounded step, so a timeout is always present. The engine's own default
 # is none (01), and a 35m agent step ran uninterrupted there, so the agent bound is set
@@ -284,15 +323,30 @@ class Omission(TypedDict):
     evidence: str
 
 
+class Resolution(TypedDict):
+    """One human's answer to one question, kept beside the question it closes."""
+
+    outcome: str
+    # The reading adopted: the proposal on an accept, the author's own text on an edit.
+    reading: str | None
+    # Why — required wherever the answer is the author's word rather than a reading: a
+    # decline, an accepted edge, a plan called live.
+    reason: str | None
+
+
 class Question(TypedDict):
     kind: str
     step: str | None
+    # The other end of the edge an edge question is about: `step` depends on `dep`.
+    dep: str | None
     question: str
     evidence: str | None
-    # The derivation's own reading of an unasserted step's stated end state: the command it
-    # would offer, resting on the sentence `evidence` quotes. Only the agent that read the
-    # plan may write one; code afterwards checks the quote, never the reading.
+    # The derivation's own reading, resting on the sentence `evidence` quotes: the command it
+    # would offer for an unasserted end state, or the convergent restatement of a task. Only
+    # the agent that read the plan may write one; code afterwards checks the quote, never
+    # the reading.
     proposed: str | None
+    resolution: Resolution | None
 
 
 class Graph(TypedDict):
@@ -324,15 +378,20 @@ STEP_FIELDS: Spec = {
     "tools": {"type": list, "default": None, "nullable": True, "item_type": str},
     "scope": {"type": str, "enum": SCOPES, "default": "once"},
     "reads": {"type": list, "default": [], "item_type": str},
+    # Each bound is judged here, before a default or a conversion touches it: a float that
+    # is not finite, or an integer too large to become one, is refused as the value it is
+    # rather than crashing the normalisation that would have converted it ([25]).
     "timeout": {
         "type": int,
         "default_from": "kind",
         "nullable": True,
+        "check": positive_integer,
     },
     "retries": {
         "type": int,
         "default_from": "kind",
         "nullable": True,
+        "check": nonnegative_integer,
     },
     # Both null on a command step, which opens no session; both always resolved on an
     # agent step, whose session cannot be priced without them.
@@ -340,6 +399,7 @@ STEP_FIELDS: Spec = {
         "type": float,
         "default_from": "kind",
         "nullable": True,
+        "check": positive_finite,
     },
     "model": {"type": str, "default_from": "kind", "nullable": True},
 }
@@ -392,13 +452,24 @@ OMISSION_FIELDS: Spec = {
 QUESTION_FIELDS: Spec = {
     "kind": {"type": str, "enum": QUESTION_KINDS, "required": True},
     "step": {"type": str, "default": None, "nullable": True},
+    "dep": {"type": str, "default": None, "nullable": True},
     "question": {"type": str, "required": True},
     "evidence": {"type": str, "default": None, "nullable": True},
     "proposed": {"type": str, "default": None, "nullable": True},
+    # Absent until the author has answered. Publication refuses a graph carrying one.
+    "resolution": {"type": dict, "default": None, "nullable": True},
+}
+
+RESOLUTION_FIELDS: Spec = {
+    "outcome": {"type": str, "enum": RESOLUTION_OUTCOMES, "required": True},
+    "reading": {"type": str, "default": None, "nullable": True},
+    "reason": {"type": str, "default": None, "nullable": True},
 }
 
 GRAPH_FIELDS: Spec = {
-    "cairn_graph_version": {"type": int, "default": GRAPH_VERSION},
+    # Required, never defaulted: a document that does not say which schema it speaks is not
+    # silently read as this one. There is no earlier version Cairn migrates from.
+    "cairn_graph_version": {"type": int, "required": True},
     "plan": {"type": dict, "required": True},
     "steps": {"type": list, "required": True},
     "omissions": {"type": list, "default": []},
@@ -589,12 +660,98 @@ def _check_graph(raw: Any, errors: list[str]) -> None:
         where = f"questions[{index}]"
         _check_fields(question, QUESTION_FIELDS, where, errors)
         if isinstance(question, dict):
-            fields = cast(dict[str, Any], question)
-            if fields.get("proposed") is not None and fields.get("kind") != "missing_verify":
+            _check_question(cast(dict[str, Any], question), where, errors)
+
+
+def _check_question(fields: dict[str, Any], where: str, errors: list[str]) -> None:
+    """A question's shape, and the shape of the answer it carries, agree with its kind.
+
+    Only what can be read off the question itself is judged here. Whether the graph's facts
+    say what the answer said is the validator's, because that needs the steps resolved.
+    """
+    kind = fields.get("kind")
+    if kind not in QUESTION_KINDS:
+        return
+    if fields.get("proposed") is not None and kind not in PROPOSING_KINDS:
+        errors.append(
+            f"{where}: only a {' or '.join(PROPOSING_KINDS)} question can carry a proposed "
+            "reading — on any other question the field answers nothing"
+        )
+    if kind in EDGE_KINDS and (fields.get("step") is None or fields.get("dep") is None):
+        errors.append(
+            f"{where}: a {kind} question is about one edge, so it names both ends — "
+            "'step' and the 'dep' it would depend on"
+        )
+    if kind not in EDGE_KINDS and fields.get("dep") is not None:
+        errors.append(f"{where}: only an edge question names a 'dep'")
+    if kind in (MISSING_VERIFY, NON_CONVERGENT_TASK) and fields.get("step") is None:
+        errors.append(f"{where}: a {kind} question is about one step, so it names it")
+
+    resolution: Any = fields.get("resolution")
+    if resolution is None:
+        return
+    found = len(errors)
+    _check_fields(resolution, RESOLUTION_FIELDS, f"{where}.resolution", errors)
+    # A field that failed its type check is never dereferenced: `.strip()` on a numeric
+    # reason would raise where the contract promises a verdict.
+    if len(errors) > found or not isinstance(resolution, dict):
+        return
+    answer = cast(dict[str, Any], resolution)
+    outcome = answer.get("outcome")
+    if outcome not in RESOLUTION_OUTCOMES:
+        return
+    allowed = RESOLUTIONS_BY_KIND[kind]
+    if kind == MISSING_VERIFY:
+        errors.append(
+            f"{where}: a missing_verify question is answered on its step's 'assertion', and "
+            "the answer clears the question — it never carries a resolution of its own"
+        )
+        return
+    if outcome not in allowed:
+        errors.append(
+            f"{where}.resolution: a {kind} question cannot be {outcome}; it admits "
+            + ", ".join(allowed)
+        )
+        return
+    reading = answer.get("reading")
+    reason = (answer.get("reason") or "").strip()
+    proposed = fields.get("proposed")
+    if outcome == "accepted":
+        if kind in PROPOSING_KINDS:
+            if proposed is None:
                 errors.append(
-                    f"{where}: only a missing_verify question can carry a proposed "
-                    "assertion — on any other question the field answers nothing"
+                    f"{where}.resolution: nothing was proposed, so nothing can be accepted "
+                    "— edit it, or decline it and say why"
                 )
+            elif reading != proposed:
+                errors.append(
+                    f"{where}.resolution: an accepted reading is the one that was proposed"
+                )
+        elif reading is not None:
+            errors.append(
+                f"{where}.resolution: a {kind} question offers no reading, so an accept "
+                "records none"
+            )
+        if kind not in PROPOSING_KINDS and not reason:
+            errors.append(
+                f"{where}.resolution: accepting a {kind} question is the author's word, so "
+                "it says why"
+            )
+    elif outcome == "edited":
+        if not (reading or "").strip():
+            errors.append(f"{where}.resolution: an edit records the author's own reading")
+        elif reading == proposed:
+            errors.append(
+                f"{where}.resolution: an edited reading must differ from the proposal — "
+                "that is an accept"
+            )
+        if fields.get("step") is None:
+            errors.append(f"{where}.resolution: an edit restates a step, so it names one")
+    else:
+        if reading is not None:
+            errors.append(f"{where}.resolution: a declined reading adopts nothing")
+        if not reason:
+            errors.append(f"{where}.resolution: a decline must say why")
 
 
 def _copy(record: dict[str, Any]) -> dict[str, Any]:
@@ -652,10 +809,14 @@ def normalise(raw: Any) -> Graph:
     for item in raw.get("questions", []):
         question = _copy(cast(dict[str, Any], item))
         _apply_defaults(question, QUESTION_FIELDS)
+        if question["resolution"] is not None:
+            resolution = _copy(cast(dict[str, Any], question["resolution"]))
+            _apply_defaults(resolution, RESOLUTION_FIELDS)
+            question["resolution"] = cast(Resolution, resolution)
         questions.append(cast(Question, question))
 
     return {
-        "cairn_graph_version": raw.get("cairn_graph_version", GRAPH_VERSION),
+        "cairn_graph_version": raw["cairn_graph_version"],
         "plan": cast(Plan, plan),
         "steps": steps,
         "omissions": omissions,

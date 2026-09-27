@@ -35,6 +35,7 @@ from cairn.core import CairnError
 from cairn.gitio import git, runs_root, state_directory
 from cairn.layout import reports_directory
 from cairn.plan.cli import main as plan_main
+from cairn.plan.home import GRAPHS_DIRECTORY, graph_path
 from cairn.plan.schema import ASSERTION_OUTCOMES, WORK_PREFIX
 from cairn.record.cli import main as record_main
 from cairn.record.vocabulary import (
@@ -134,10 +135,10 @@ from paid.cases.skill import (
     verdict_cause,
 )
 from paid.cases.skill import (
-    GRAPH_FILE as SKILL_GRAPH_FILE,
+    PLAN_DOCUMENT as SKILL_PLAN_DOCUMENT,
 )
 from paid.cases.skill import (
-    PLAN_DOCUMENT as SKILL_PLAN_DOCUMENT,
+    PLAN_SLUG as SKILL_PLAN_SLUG,
 )
 from paid.cases.skill import (
     PLAN_STEPS as SKILL_PLAN_STEPS,
@@ -2493,11 +2494,14 @@ class TheGraphIsReadFromWhereTheProcedureSaysItGoes(unittest.TestCase):
         procedure = (PACKAGE_ROOT / "capabilities" / "authoring.md").read_text(
             encoding="utf-8"
         )
-        self.assertIn(f".git/cairn/{SKILL_GRAPH_FILE}", procedure)
+        self.assertIn("python3 -m cairn plan home", procedure)
+        self.assertIn(f"cairn/{GRAPHS_DIRECTORY}/<plan>.json", procedure)
 
     def test_the_graph_the_procedure_names_is_the_one_read(self) -> None:
         root = self.repository()
-        (state_directory(root) / SKILL_GRAPH_FILE).write_text(
+        home = graph_path(root, SKILL_PLAN_SLUG)
+        home.parent.mkdir(parents=True, exist_ok=True)
+        home.write_text(
             json.dumps({"steps": [{"id": "a", "verify": None, "assertion": None}]}),
             encoding="utf-8",
         )

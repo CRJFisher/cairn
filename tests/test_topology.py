@@ -9,6 +9,7 @@ from cairn.emitters import emit_node, emit_step, emit_verify, retry_policy
 from cairn.plan.schema import (
     AGENT_REPORT_GRACE,
     ENGINE_NAME_MAX_BYTES,
+    GRAPH_VERSION,
     SUPPORT_TIMEOUT,
     WAIT_REPORT_GRACE,
     Graph,
@@ -79,6 +80,7 @@ def one_step_graph(**overrides: Any) -> Graph:
     step.update(overrides)
     return normalise(
         {
+            "cairn_graph_version": GRAPH_VERSION,
             "plan": {"slug": "solo", "title": "Solo", "source": "solo.md"},
             "steps": [step],
         }
@@ -413,7 +415,11 @@ class Duration(unittest.TestCase):
             for index in range(30)
         ]
         graph = normalise(
-            {"plan": {"slug": "wide", "title": "W", "source": "w.md"}, "steps": steps}
+            {
+                "cairn_graph_version": GRAPH_VERSION,
+                "plan": {"slug": "wide", "title": "W", "source": "w.md"},
+                "steps": steps,
+            }
         )
         derived = derive(graph, repository_root=REPOSITORY, parent_branch=PARENT)
         self.assertGreater(derived["max_seconds"], RUN_CEILING_SECONDS)

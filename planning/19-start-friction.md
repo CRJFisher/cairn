@@ -86,7 +86,7 @@ is the ordinary shape of a plan a person already has, and its name is the whole 
   name off its file name — so the gate judged a name fifteen characters longer than the one
   that would be published, and any slug near the bound was refused under a name nobody
   chose. Bounding the slug alone would not have cleared this wall. The pending file now
-  lives in a unique *directory* under its published name.
+  lives in a unique _directory_ under its published name.
 - The preflight's `engine_validate` refusal carries the engine's own reason line, whole, and the
   path is never truncated in a refusal. A refusal that hides its cause is a refusal the person
   has to reproduce by hand to read.
@@ -209,12 +209,12 @@ passed"_; `mark` and `commit` skipped; the chain halted; the fifteen steps behin
 not one mechanism, and three of the four hold perfectly well under `-p`. Measured against this
 machine's `claude`, with a `Stop` hook capturing what the harness reports at the end of every turn:
 
-| What the session did                    | What `-p` does with it                                                                                     |
-| --------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `Agent` in the background, three at once | the process is held open; the session is re-invoked once per completion and all three results arrive       |
-| `Monitor`                               | it **blocks** — an until-loop waited twelve seconds for a file and the session read it in the same turn     |
-| `Bash` with `run_in_background`         | the process **exits with the shell still running** — an 8-second sleep launched, the session returned at 6s |
-| `ScheduleWakeup`                        | nothing ever fires it                                                                                       |
+| What the session did                     | What `-p` does with it                                                                                      |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `Agent` in the background, three at once | the process is held open; the session is re-invoked once per completion and all three results arrive        |
+| `Monitor`                                | it **blocks** — an until-loop waited twelve seconds for a file and the session read it in the same turn     |
+| `Bash` with `run_in_background`          | the process **exits with the shell still running** — an 8-second sleep launched, the session returned at 6s |
+| `ScheduleWakeup`                         | nothing ever fires it                                                                                       |
 
 So the contract that is false under `-p` is far narrower than it looks: a background **shell** is
 fire-and-forget and a wakeup is never delivered, while a background subagent notifies and a
@@ -229,7 +229,7 @@ and nothing holds the session to it.
   are yours — a background subagent is waited for, and `Monitor` blocks — but anything started with
   `Bash`'s `run_in_background` dies unread. Wait for what you start, and end only by reporting._
 - **The provider denies only what has no blocking form.** `run_claude` passes `--disallowedTools
-  ScheduleWakeup` by default, with the `Cron*` family beside it as the same shape; the plan's
+ScheduleWakeup` by default, with the `Cron*` family beside it as the same shape; the plan's
   `tools` list adds to that, never replaces it. `Monitor` and `Agent` are **not** denied. Denying
   them would take away the two ways a session has of waiting for concurrent work, to prevent a
   leak that neither of them causes.
@@ -247,7 +247,7 @@ and nothing holds the session to it.
   message: _the session is ending; report now through the structured output_. One resume,
   bounded by what is left of the step's own **dollar ceiling** — the offer priced one ceiling
   and a second pass carrying a fresh one would double what was agreed — and recorded in the
-  report's `detail` as `resumed_for_report`. Nothing bounds it in *time* beyond the engine's
+  report's `detail` as `resumed_for_report`. Nothing bounds it in _time_ beyond the engine's
   own per-step timeout, which is still running.
   Measured here, the alternative was discarding $10.89 of work an assertion had just proved.
 - **The cause is named for what it is.** `provider_protocol` is not `reported_failure`: the step
@@ -305,7 +305,7 @@ never designed here and are carried forward.
 | A   | A plan slug longer than the engine's 40-character name limit passes the validator and dies at the gate, with the cause cut out of the message                                                                           | `cairn/plan/cli.py`, `cairn/plan/validate.py`, `cairn/workflow/gate.py`  | done  |
 | B   | `run start` blocks for the whole run; a killed start spends the offer and loses the run id                                                                                                                              | `cairn/skill/trigger.py`, `cairn/skill/cli.py`, `cairn/skill/consent.py` | done  |
 | C   | The engine cannot bind its run socket from a sandboxed shell; the version pin is the only pre-spend engine check                                                                                                        | `cairn/skill/trigger.py`                                                 | done  |
-| D   | `plan propose --json` exits nonzero when steps are unanswered, so a caller cannot tell a listing from a failure by exit status                                                                                          | `cairn/plan/cli.py`                                                      | open  |
+| D   | `plan propose --json` exits nonzero when steps are unanswered, so a caller cannot tell a listing from a failure by exit status                                                                                          | `cairn/plan/cli.py`                                                      |       | done |
 | E   | The offer prices worktrees and merges for a chain-shaped plan whose definition has neither; the disclosure is a fixed sentence, not the topology                                                                        | `cairn/skill/consent.py` (`disclosure`)                                  | done  |
 | F   | A `-p` session that leaves a background shell running ends the process with it unread and reports nothing; $10.89 of assertion-passing work is discarded                                                                | `cairn/protocol.py`, `cairn/providers.py`                                | done  |
 | G   | A `provider_protocol` failure reaches the gate and the report as `reported_failure`, and the divergence says the step "reported failed"                                                                                 | `cairn/verify.py`, `cairn/report/`                                       | done  |
@@ -371,20 +371,20 @@ without denying `Bash`, and denying it by argument would take away a step's para
 document Cairn composes and writes nowhere, refuses to let a turn end while a shell the
 session started is still running, names the command, and is bounded by the harness's own
 `stop_hook_active`. It fails open on every fault, which is the exact inverse of the verify
-gate: it holds a *paid* session, so a bug in it spends money in a loop, and nothing in
+gate: it holds a _paid_ session, so a bug in it spends money in a loop, and nothing in
 Cairn depends on it having run.
 
 ### What each acceptance criterion rests on
 
-| Criterion | Where it holds | What proves it |
-| --- | --- | --- |
-| A long document name derives a bounded slug and reaches a workflow | `plan/ids.py`, `plan/validate.py`, `workflow/cli.py` | the `task-381` fixture; a 40-byte slug authored end to end against the real engine |
-| A refusal carries the engine's own reason | `workflow/gate.py: engine_reason` | the measured refusal stream, and a real gate refusal naming the published path |
-| `run start` prints the identity first and returns when the engine has the run | `skill/trigger.py`, `skill/cli.py` | the launcher reads stdout at launch time; one run id asserted across the print, the argv and the marker |
-| A shell that cannot bind is refused before the spend | `workflow/gate.py: rehearse_start` | a stub emitting the measured bind error; the real engine for the passing case |
-| The price is the definition's topology | `skill/consent.py: node_roles`, `skill/vocabulary.py` | a chain states eight facts, a fan-out ten, and a definition Cairn cannot parse states all ten |
-| A turn is held open for a live background shell | `hooks.py`, `providers.py: hook_settings` | the pinned payload; and a real `claude -p` session held, resumed, and made to read its shell |
-| A silent session is resumed once and recorded as itself | `providers.py`, `verify.py: judge` | scripted streams over all four outcomes; `--resume` measured to keep its session id |
+| Criterion                                                                     | Where it holds                                        | What proves it                                                                                          |
+| ----------------------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| A long document name derives a bounded slug and reaches a workflow            | `plan/ids.py`, `plan/validate.py`, `workflow/cli.py`  | the `task-381` fixture; a 40-byte slug authored end to end against the real engine                      |
+| A refusal carries the engine's own reason                                     | `workflow/gate.py: engine_reason`                     | the measured refusal stream, and a real gate refusal naming the published path                          |
+| `run start` prints the identity first and returns when the engine has the run | `skill/trigger.py`, `skill/cli.py`                    | the launcher reads stdout at launch time; one run id asserted across the print, the argv and the marker |
+| A shell that cannot bind is refused before the spend                          | `workflow/gate.py: rehearse_start`                    | a stub emitting the measured bind error; the real engine for the passing case                           |
+| The price is the definition's topology                                        | `skill/consent.py: node_roles`, `skill/vocabulary.py` | a chain states eight facts, a fan-out ten, and a definition Cairn cannot parse states all ten           |
+| A turn is held open for a live background shell                               | `hooks.py`, `providers.py: hook_settings`             | the pinned payload; and a real `claude -p` session held, resumed, and made to read its shell            |
+| A silent session is resumed once and recorded as itself                       | `providers.py`, `verify.py: judge`                    | scripted streams over all four outcomes; `--resume` measured to keep its session id                     |
 
 ### Decisions worth knowing
 

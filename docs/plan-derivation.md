@@ -8,7 +8,9 @@ A step's `kind`, and what each kind becomes in the engine, is [step-kinds.md](st
 
 Input: a path to a plan document, or to a folder of numbered task documents whose index is
 `README.md`, `WORKLIST.md`, `PLAN.md`, or `index.md`.
-Output: one `graph.json`, a parse report, and a list of questions for the author.
+Output: one graph at the plan's own home — `python3 -m cairn plan home <plan-slug>
+--repository <path>` prints `<git-common-dir>/cairn/graphs/<plan>.json` — a parse report, and a
+list of questions for the author.
 
 ## Pass one — read every document and write the steps
 
@@ -76,9 +78,10 @@ phrased as an action duplicates its work on the way back.
 Whether a task converges is your reading to declare — no code re-reads the sentence. Where
 the document's own action cannot be restated as an end state without changing what it asks
 for — "add the hook to `~/.claude/settings.json`" — keep the document's words and raise a
-`non_convergent_task` question naming the duplication and proposing the end state, with the
-sentence you read quoted verbatim as its `evidence`. The author restates it, not the
-derivation, and a declaration quoting nothing is refused by the validator.
+`non_convergent_task` question naming the duplication, with the sentence you read quoted
+verbatim as its `evidence` and, where you can state one, the convergent restatement as its
+`proposed`. The author accepts, restates or waives it, not the derivation, and a declaration
+quoting nothing is refused by the validator.
 
 ### Leave out what the document defers
 
@@ -106,8 +109,9 @@ against the documents, so a paraphrase is caught and a fabrication cannot land.
   an implementation order, a section that says one thing settles the vocabulary for
   another: all derivable, all quotable.
 - **An edge you cannot justify is not an edge**, whichever origin you would have given it.
-  Drop it and raise an `unjustified_edge` question instead. The validator rejects any edge
-  with empty evidence, so labelling a guess `declared` buys nothing.
+  Drop it and raise an `unjustified_edge` question instead, naming the dependent step as
+  `step` and the step it would depend on as `dep`. The validator rejects any edge with empty
+  evidence, so labelling a guess `declared` buys nothing.
 
 **A dependency is never defaulted to sequential.** Document order is not dependency order.
 Two steps listed one after another with nothing connecting them are two roots, and the
@@ -115,8 +119,9 @@ concurrency that falls out is the plan's own.
 
 Where an edge is defensible but genuinely uncertain — the document gives an implementation
 order but never says one step needs another's output — keep the edge with its evidence and
-raise an `ambiguous_dependency` question. A spurious edge costs only concurrency; a missing
-edge lets a step run against a half-built state and pass.
+raise an `ambiguous_dependency` question naming the edge's two ends as `step` and `dep`. A
+spurious edge costs only concurrency; a missing edge lets a step run against a half-built
+state and pass.
 
 ## Then hand over to the deterministic half
 
@@ -124,19 +129,23 @@ edge lets a step run against a half-built state and pass.
    break it reports in `plan.id_collisions`.
 2. **Derive the plan slug** and confirm it is free:
    `python3 -m cairn plan slug <path> --against <worktree-parent> <workflow-dir> <run-dir>`.
-3. **Pin every document read** in `plan.sources`, each with the SHA-256 of its bytes.
-4. **Validate**:
-   `python3 -m cairn plan validate graph.json --source-root <plan-dir>`. A non-zero exit
+3. **Pin every document read** in `plan.sources`, each by its path relative to the plan's
+   directory and the SHA-256 of its bytes.
+4. **Write the graph** to the path `python3 -m cairn plan home <plan-slug> --repository
+<path>` prints; below, `<graph>` is that path.
+5. **Validate**:
+   `python3 -m cairn plan validate <graph> --source-root <plan-dir>`. A non-zero exit
    means the graph does not go forward. Fix the graph, not the validator.
-5. **Report**: `python3 -m cairn plan report graph.json`, and show it to the author before
+6. **Report**: `python3 -m cairn plan report <graph>`, and show it to the author before
    anything is generated — every step's task in full, every edge with the words behind it,
    everything left out with its cause, and every question needing an answer.
-6. **Answer the assertions**: `python3 -m cairn plan propose graph.json` shows every step
+7. **Answer every question**: `python3 -m cairn plan propose <graph>` shows every step
    whose end state nothing asserts, beside the words the document gives for it and the
-   command you proposed for it in pass one, and prints the
+   command you proposed for it in pass one, and every other open question, and prints the
    `python3 -m cairn plan answer …` invocation that records each answer. The answers are
-   the author's, never yours. A step with no command and no recorded answer never reaches
-   the engine ([verify-gate.md](verify-gate.md)), and no command is ever invented for one.
+   the author's, never yours. A step with no command and no recorded answer, or a question
+   with no recorded answer, never reaches the engine ([plan-contract.md](plan-contract.md)),
+   and no command or reading is ever invented for one.
 
 The author's confirmation of that report, and their answers, are what make the graph the
 plan's and not the derivation's.

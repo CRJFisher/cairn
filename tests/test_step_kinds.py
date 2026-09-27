@@ -28,7 +28,7 @@ from cairn.core import (
 )
 from cairn.emitters import KIND_EMITTERS, emit_step, emit_verify
 from cairn.layout import reports_directory
-from cairn.plan.schema import AGENT_REPORT_GRACE, normalise
+from cairn.plan.schema import AGENT_REPORT_GRACE, GRAPH_VERSION, normalise
 from cairn.protocol import RESUME_FOR_REPORT, compose_prompt
 from cairn.providers import (
     ENDED_WITHOUT_REPORTING,
@@ -140,6 +140,7 @@ def step(
     command_type: str | None = "exec",
 ) -> Any:
     raw: dict[str, Any] = {
+        "cairn_graph_version": GRAPH_VERSION,
         "plan": {"slug": "p", "title": "P", "source": "README.md"},
         "steps": [
             {

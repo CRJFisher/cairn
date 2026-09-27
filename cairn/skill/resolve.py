@@ -168,6 +168,48 @@ def _same_repository(encoded: Path, target: Path) -> bool:
         return encoded.resolve() == target
 
 
+def refuse_foreign_recovery(
+    record: RunRecord, *, run_id: str, plan: str, graph_sha256: str | None
+) -> None:
+    """Refuse a recovery whose run and whose workflow are not one lineage.
+
+    A recovery continues the named run's occasion but prices and executes the workflow it
+    is offered through. Through another plan's workflow, or through this plan's after it was
+    re-authored from different content, the markers that occasion left would be read by
+    steps that are not the steps that wrote them — so the run's own record must name the
+    plan and the graph being offered, and a record that cannot say is refused as one that
+    disagrees.
+    """
+    recorded_plan = record["plan"]
+    if recorded_plan != plan:
+        raise CairnError(
+            "invalid_arguments",
+            f"run {run_id} is a run of plan {recorded_plan!r}, not {plan!r}; recovering it "
+            "through another plan's workflow would continue one occasion with another "
+            f"plan's steps. Recover it with --plan {recorded_plan}"
+            if recorded_plan
+            else f"run {run_id} recorded no plan, so it cannot be established that "
+            f"{plan!r} is the plan it ran; there is nothing to recover it through",
+        )
+    recorded_graph = record["graph_sha256"]
+    if recorded_graph is None:
+        raise CairnError(
+            "invalid_arguments",
+            f"run {run_id} recorded no graph digest, so it cannot be established that the "
+            f"workflow now published for {plan!r} holds the steps that run had; start a "
+            "fresh run instead",
+        )
+    if recorded_graph != graph_sha256:
+        raise CairnError(
+            "invalid_arguments",
+            f"run {run_id} ran plan {plan!r} as graph "
+            f"{recorded_graph[:12]}, and the workflow now published for "
+            f"it was generated from graph {(graph_sha256 or 'unrecorded')[:12]}. A recovery "
+            "continues the run it names with the steps that run had; start a fresh run of "
+            "the re-authored plan instead",
+        )
+
+
 class OccasionSignal(NamedTuple):
     trigger: str
     named_run: str | None = None
@@ -271,5 +313,6 @@ __all__ = [
     "Unresolved",
     "decide_occasion",
     "encoded_repository",
+    "refuse_foreign_recovery",
     "resolve_repository",
 ]

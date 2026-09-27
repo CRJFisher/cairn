@@ -250,6 +250,20 @@ def write_text(path: Path, text: str) -> None:
         raise
 
 
+def _refuse_constant(value: str) -> Any:
+    raise ValueError(f"{value} is not standard JSON")
+
+
+def read_standard_json(text: str) -> Any:
+    """Parse a document Cairn wrote or will act on, refusing `NaN` and `Infinity`.
+
+    Python's reader accepts both by default, and a bound that arrives as one is a number no
+    comparison orders — so every reader of a graph or a workflow refuses them as it reads.
+    Raises `ValueError`, of which `json.JSONDecodeError` is one.
+    """
+    return json.loads(text, parse_constant=_refuse_constant)
+
+
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     """One JSON document, replaced in a single step.
 
@@ -374,6 +388,7 @@ __all__ = [
     "RuntimeContext",
     "cancel_on_termination",
     "launch",
+    "read_standard_json",
     "read_step_report",
     "stop_orphans",
     "survive_termination",

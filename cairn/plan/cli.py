@@ -10,13 +10,22 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
-from cairn.core import write_json
+from cairn.core import CairnError, read_standard_json, write_json
 from cairn.plan.assertions import AnswerError, answer, propose
 from cairn.plan.assertions import render as render_proposals
+from cairn.plan.home import graph_path, settle_singleton
 from cairn.plan.ids import assign_ids, derive_plan_slug, plan_slug_collisions
+from cairn.plan.questions import ResolutionError, resolve
+from cairn.plan.questions import render as render_questions
 from cairn.plan.report import render
-from cairn.plan.schema import Graph, SchemaError, normalise
-from cairn.plan.validate import validate
+from cairn.plan.schema import (
+    MISSING_VERIFY,
+    QUESTION_KINDS,
+    Graph,
+    SchemaError,
+    normalise,
+)
+from cairn.plan.validate import open_questions, validate
 
 
 class UsageError(Exception):
@@ -25,11 +34,10 @@ class UsageError(Exception):
 
 def _load(path: str) -> Any:
     try:
-        with open(path, encoding="utf-8") as handle:
-            return json.load(handle)
+        return read_standard_json(Path(path).read_text(encoding="utf-8"))
     except OSError as exc:
         raise UsageError(f"{path}: {exc.strerror}") from exc
-    except json.JSONDecodeError as exc:
+    except ValueError as exc:
         raise UsageError(f"{path}: not valid JSON — {exc}") from exc
 
 
@@ -84,28 +92,43 @@ def _graph(path: str) -> Graph:
 
 
 def _cmd_propose(args: argparse.Namespace) -> int:
-    """Show what has no assertion, and what could be offered for it.
+    """Show everything the author has still to answer, and how each answer is recorded.
 
     It writes nothing, which is what makes "a step is never given a synthesised command"
-    a property rather than a promise. It exits nonzero while any step is still unanswered,
-    so a derivation script can tell an unfinished conversation from a finished one.
+    a property rather than a promise. Its exit status says whether the listing was made,
+    never what it contains — `complete` is what says whether anything is left to ask.
     """
     graph = _graph(args.graph)
     proposals = propose(graph)
+    questions = [q for q in open_questions(graph) if q["kind"] != MISSING_VERIFY]
     if args.json:
-        json.dump(proposals, sys.stdout, indent=2, sort_keys=True)
+        listing = {
+            "complete": not proposals and not questions,
+            "assertions": proposals,
+            "questions": questions,
+        }
+        json.dump(listing, sys.stdout, indent=2, sort_keys=True)
         sys.stdout.write("\n")
     else:
         sys.stdout.write(render_proposals(proposals, args.graph))
-    return 1 if proposals else 0
+        worksheet = render_questions(questions, args.graph)
+        if worksheet:
+            sys.stdout.write("\n" + worksheet)
+    return 0
 
 
-def _cmd_answer(args: argparse.Namespace) -> int:
-    graph = _graph(args.graph)
+def _answer_missing_verify(args: argparse.Namespace, graph: Graph) -> Graph:
+    if args.step is None or args.dep is not None:
+        raise UsageError("a missing_verify answer names its --step, and no --dep")
+    if args.accept or args.edit is not None:
+        raise UsageError(
+            "a missing_verify answer is --command (the assertion, whether it accepts the "
+            "offer or not) or --decline"
+        )
     if args.decline and not (args.reason or "").strip():
         raise UsageError("--decline needs --reason: an unverified step must say why")
     try:
-        answered = answer(
+        return answer(
             graph,
             args.step,
             command=None if args.decline else args.command,
@@ -113,6 +136,28 @@ def _cmd_answer(args: argparse.Namespace) -> int:
         )
     except AnswerError as exc:
         raise UsageError(str(exc)) from exc
+
+
+def _cmd_answer(args: argparse.Namespace) -> int:
+    graph = _graph(args.graph)
+    if args.kind == MISSING_VERIFY:
+        answered = _answer_missing_verify(args, graph)
+    else:
+        if args.command is not None:
+            raise UsageError(f"--command answers a missing_verify question, not {args.kind}")
+        outcome = "accepted" if args.accept else "edited" if args.edit is not None else "declined"
+        try:
+            answered = resolve(
+                graph,
+                args.kind,
+                step=args.step,
+                dep=args.dep,
+                outcome=outcome,
+                reading=args.edit,
+                reason=args.reason,
+            )
+        except ResolutionError as exc:
+            raise UsageError(str(exc)) from exc
     result = validate(answered)
     if not result.ok:
         for finding in result.errors:
@@ -120,11 +165,27 @@ def _cmd_answer(args: argparse.Namespace) -> int:
         return 1
     if args.out:
         # The graph is the only record of every answer already given, and the conversation
-        # rewrites it once per step, so a half-written file would cost the whole of it.
+        # rewrites it once per answer, so a half-written file would cost the whole of it.
         write_json(Path(args.out), cast(dict[str, Any], answered))
     else:
         json.dump(answered, sys.stdout, indent=2, sort_keys=True, ensure_ascii=False)
         sys.stdout.write("\n")
+    return 0
+
+
+def _cmd_home(args: argparse.Namespace) -> int:
+    repository = Path(args.repository).resolve()
+    try:
+        # The slug is judged first, so a refused invocation moves no file.
+        home = graph_path(repository, args.slug)
+        settled = settle_singleton(repository)
+    except CairnError as exc:
+        raise UsageError(str(exc)) from exc
+    except OSError as exc:
+        raise UsageError(f"the shared graph.json could not be filed: {exc}") from exc
+    if settled is not None:
+        print(f"filed the shared graph.json under its own plan: {settled}", file=sys.stderr)
+    print(home)
     return 0
 
 
@@ -167,13 +228,22 @@ def main(argv: list[str] | None = None) -> int:
 
     child = sub.add_parser("answer")
     child.add_argument("graph")
-    child.add_argument("--step", required=True)
+    child.add_argument("--kind", choices=QUESTION_KINDS, required=True)
+    child.add_argument("--step")
+    child.add_argument("--dep", help="the other end of an edge question: --step depends on it")
     form = child.add_mutually_exclusive_group(required=True)
-    form.add_argument("--command", help="the assertion the author accepted or wrote")
+    form.add_argument("--command", help="missing_verify: the assertion the author gave")
+    form.add_argument("--accept", action="store_true", help="adopt the reading on offer")
+    form.add_argument("--edit", help="the author's own restatement of the step's task")
     form.add_argument("--decline", action="store_true")
-    child.add_argument("--reason", help="required with --decline: why this step has none")
+    child.add_argument("--reason", help="why: required to decline, and to accept an edge")
     child.add_argument("--out")
     child.set_defaults(handler=_cmd_answer)
+
+    child = sub.add_parser("home")
+    child.add_argument("slug")
+    child.add_argument("--repository", required=True)
+    child.set_defaults(handler=_cmd_home)
 
     child = sub.add_parser("normalise")
     child.add_argument("graph")

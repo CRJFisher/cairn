@@ -53,6 +53,8 @@ import shlex
 from pathlib import Path
 from typing import Any, NotRequired, TypedDict, cast
 
+from cairn.core import read_standard_json
+
 # The pin. The DAG format carries no version of its own ([01]), so the pinned engine is the
 # installed binary and nothing else, and the comparison is exact: a range would claim
 # knowledge about versions nothing here has run against.
@@ -369,12 +371,7 @@ def read(path: Path) -> Any:
     The preflight checks this rather than the structure that produced it, so a fault in
     serialisation is inside the blast radius rather than behind it.
     """
-    return json.loads(
-        path.read_text(encoding="utf-8"),
-        parse_constant=lambda value: (_ for _ in ()).throw(
-            ValueError(f"{value} is not standard JSON")
-        ),
-    )
+    return read_standard_json(path.read_text(encoding="utf-8"))
 
 
 __all__ = [

@@ -23,31 +23,40 @@ rather than to prevent it.
    that go wrong most often are that a dependency is never defaulted to sequential, and that
    a verify command is never synthesised.
 
-   **Write it outside the working tree.** The repository's own admin directory —
-   `<repository>/.git/cairn/graph.json` — is its home, beside the definition the generator
-   writes. A run's first act refuses over a dirty tree, so a graph left beside the plan
-   document stops the very run this authoring is for.
+   **Write it to the plan's own home.** `python3 -m cairn plan home <plan-slug> --repository
+<path>` prints it: `<git-common-dir>/cairn/graphs/<plan>.json`, one file per plan, outside
+   the working tree and beside the definition the generator writes. A run's first act refuses
+   over a dirty tree, so a graph left beside the plan document stops the very run this
+   authoring is for — and a graph shared between plans would let authoring one overwrite the
+   answers already given for another. Below, `<graph>` is the path it printed.
 
-2. **Validate it.** `python3 -m cairn plan validate graph.json --source-root <plan-dir>`. A
+2. **Validate it.** `python3 -m cairn plan validate <graph> --source-root <plan-dir>`. A
    nonzero exit means the graph does not go forward. Fix the graph, never the validator.
 
-3. **Show the parse report and wait.** `python3 -m cairn plan report graph.json` prints every
+3. **Show the parse report and wait.** `python3 -m cairn plan report <graph>` prints every
    step's task in full, every edge with the words behind it, everything left out with its
-   cause, and every open question. The author's confirmation of that report is what makes the
-   graph the plan's rather than the derivation's, so it is shown before anything is generated.
+   cause, and every question with its answer or the fact that it has none. The author's
+   confirmation of that report is what makes the graph the plan's rather than the
+   derivation's, so it is shown before anything is generated.
 
-4. **Answer the assertions.** `python3 -m cairn plan propose graph.json` names every step
-   whose end state nothing asserts, beside the command the derivation proposed for it — the
-   reading declared on the graph's own `missing_verify` question, resting on the sentence it
-   quotes ([../docs/plan-derivation.md](../docs/plan-derivation.md)). **The answers are the
-   author's, never yours**: show the offer, and record with `python3 -m cairn plan answer
-… --out graph.json`. A step with no command and no recorded answer never reaches the
-   engine, and that refusal is correct.
+4. **Answer every question.** `python3 -m cairn plan propose <graph>` names every step whose
+   end state nothing asserts, beside the command the derivation proposed for it — the reading
+   declared on the graph's own `missing_verify` question, resting on the sentence it quotes
+   ([../docs/plan-derivation.md](../docs/plan-derivation.md)) — and every other open
+   question, each with the whole `python3 -m cairn plan answer … --out <graph>` invocation
+   that records each answer it admits. **The answers are the author's, never yours**: show
+   the question and the offer, and record exactly what they said. Its exit status says only
+   that the listing was made; `--json` carries `complete`, which says whether anything is
+   left to ask.
 
-5. **Generate.** `python3 -m cairn workflow author <repository>/.git/cairn/graph.json --repository <path>
-[--parent-branch <name>] [--schedule '<cron>']`. It writes into the repository's own admin
-   directory, gates the definition where it cannot be run from, and moves it into place only
-   once it passes.
+5. **Generate.** `python3 -m cairn workflow author <graph> --repository <path> --source-root
+<plan-dir> [--parent-branch <name>] [--schedule '<cron>']`. It re-reads every document the
+   graph pins beneath the plan's directory, rechecks every digest and quotation, and refuses
+   any question without a recorded answer and any step nobody was asked to assert — all
+   before anything on disk is touched, so a refusal leaves the published workflow as it was.
+   It then writes into the repository's own admin directory, gates the definition where it
+   cannot be run from, moves it into place only once it passes, and prints a receipt naming
+   the graph and the directory it was checked against.
 
 6. **Read back what it said it replaced.** Re-authoring always proceeds, and it says which of
    nine states it found: writing it, replacing it unmodified, modified since Cairn wrote it,

@@ -508,9 +508,14 @@ def commit_all(repository: Path, message: str) -> None:
     )
 
 
+def plan_directory(repository: Path, plan: SeededPlan) -> Path:
+    """Where one plan's documents live — the root its graph's pins are relative to."""
+    return repository / ".planning" / plan.slug
+
+
 def write_plan(repository: Path, plan: SeededPlan) -> None:
     """One plan's documents, at the paths its graph pins them at."""
-    directory = repository / ".planning" / plan.slug
+    directory = plan_directory(repository, plan)
     directory.mkdir(parents=True, exist_ok=True)
     for source in plan.sources:
         (directory / source.path).write_text(source.body, encoding="utf-8")
@@ -592,6 +597,7 @@ def seed_definitions(
         )
         authored = run_cairn(
             "workflow", "author", str(path), "--repository", str(repository),
+            "--source-root", str(plan_directory(repository, plan)),
             cwd=repository, variables=variables,
         )
         if authored.returncode != 0:

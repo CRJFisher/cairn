@@ -61,6 +61,9 @@ class Stamp(TypedDict):
     generator: int
     engine: str
     graph_sha256: str
+    # The canonical directory every pin in the graph was re-read beneath at publication, so
+    # the receipt says which documents the published graph was checked against.
+    source_root: str
     body_sha256: str
     workflow_sha256: str
     workflow_path: str
@@ -95,7 +98,12 @@ def file_digest(path: Path) -> str:
 
 
 def write_stamp(
-    workflow: Path, document: Workflow, graph_sha256: str, *, published: Path | None = None
+    workflow: Path,
+    document: Workflow,
+    graph_sha256: str,
+    *,
+    source_root: Path,
+    published: Path | None = None,
 ) -> Stamp:
     """Record what was written, beside the bytes it describes.
 
@@ -108,6 +116,7 @@ def write_stamp(
         "generator": GENERATOR_VERSION,
         "engine": ENGINE_VERSION,
         "graph_sha256": graph_sha256,
+        "source_root": str(source_root),
         "body_sha256": document["labels"][LABEL_BODY_DIGEST],
         "workflow_sha256": file_digest(workflow),
         "workflow_path": str(home),

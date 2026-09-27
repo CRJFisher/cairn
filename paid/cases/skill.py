@@ -66,6 +66,7 @@ from typing import Any, cast
 
 from cairn.core import CairnError
 from cairn.gitio import git, runs_root, state_directory
+from cairn.plan.home import graph_path, graphs_directory
 from cairn.plan.schema import Assertion, Graph
 from cairn.record.model import RunRecord, StepRecord
 from cairn.record.vocabulary import VERDICT_ALL_NO_OP, VERDICT_GREEN
@@ -184,9 +185,6 @@ AUTHORING_ORDER: tuple[str, ...] = (
 RELAY_JUDGE_CEILING_USD = 0.20
 RELAY_JUDGE_BOUNDS = Bounds(turns=2, budget_usd=RELAY_JUDGE_CEILING_USD, seconds=180.0)
 
-# What [capabilities/authoring.md] step 1 names, inside the repository's own admin directory
-# rather than its working tree. A free test holds this to the instruction a session reads.
-GRAPH_FILE = "graph.json"
 
 
 def opening(repository: Path) -> str:
@@ -352,15 +350,20 @@ def verdict_cause(
 def derived_graph(repository: Path) -> Graph | None:
     """The graph the session derived, read from where the procedure says it goes.
 
-    [capabilities/authoring.md] step 1 names `<repository>/.git/cairn/graph.json` and gives
-    the reason: a run's first act refuses over a dirty tree, so a graph left in the working
-    tree stops the very run this authoring is for. Any name in that directory is read, not
-    only the one the instruction spells — the number is about the answers, and a session
-    that called the file something else answered them all the same.
+    [capabilities/authoring.md] step 1 names the plan's own home — `plan home` prints
+    `<git-common-dir>/cairn/graphs/<plan>.json` — and gives the reason: a run's first act
+    refuses over a dirty tree, so a graph left in the working tree stops the very run this
+    authoring is for. Any graph in that directory or in Cairn's state is read, not only the
+    one the instruction spells — the number is about the answers, and a session that called
+    the file something else answered them all the same.
     """
-    admin = state_directory(repository)
-    named = admin / GRAPH_FILE
-    for path in (named, *sorted(one for one in admin.glob("*.json") if one != named)):
+    named = graph_path(repository, PLAN_SLUG)
+    candidates = (
+        named,
+        *sorted(one for one in graphs_directory(repository).glob("*.json") if one != named),
+        *sorted(state_directory(repository).glob("*.json")),
+    )
+    for path in candidates:
         loaded = _loaded(path)
         if loaded is not None and isinstance(loaded.get("steps"), list):
             return cast(Graph, loaded)
@@ -732,7 +735,6 @@ def _only_step(record: RunRecord | None) -> StepRecord | None:
 
 __all__ = [
     "CEILING_USD",
-    "GRAPH_FILE",
     "MEASURED_USD",
     "NAME",
     "acceptance_cause",

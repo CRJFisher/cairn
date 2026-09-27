@@ -108,7 +108,9 @@ def render(raw: Any, result: Result | None = None) -> str:
         any_dep = True
         lines.append(f"- **`{step['id']}`** depends on:")
         for dep in step["deps"]:
-            mark = "**derived**" if dep["origin"] == "derived" else "declared"
+            mark = {"derived": "**derived**", "answered": "**the author's answer**"}.get(
+                dep["origin"], "declared"
+            )
             evidence = _escape(dep.get("evidence") or "(none)")
             lines.append(f"  - `{dep['id']}` — {mark}, on the words: {evidence}")
     if not any_dep:
@@ -186,7 +188,10 @@ def render(raw: Any, result: Result | None = None) -> str:
     lines.append("")
     if graph["questions"]:
         for question in graph["questions"]:
-            where = f" (`{question['step']}`)" if question["step"] else ""
+            if question["dep"] is not None:
+                where = f" (`{question['dep']}` -> `{question['step']}`)"
+            else:
+                where = f" (`{question['step']}`)" if question["step"] else ""
             lines.append(f"- [{question['kind']}]{where} {_escape(question['question'])}")
             evidence = question.get("evidence")
             if evidence:
@@ -194,6 +199,16 @@ def render(raw: Any, result: Result | None = None) -> str:
             proposed = question.get("proposed")
             if proposed:
                 lines.append(f"  - proposed: {_code(proposed)}")
+            resolution = question["resolution"]
+            if resolution is None:
+                lines.append("  - **unanswered** — no workflow is published while it is")
+            else:
+                answered = f"  - answered: **{resolution['outcome']}**"
+                if resolution["reading"]:
+                    answered += f" — {_escape(resolution['reading'])}"
+                if resolution["reason"]:
+                    answered += f" — because {_escape(resolution['reason'])}"
+                lines.append(answered)
     else:
         lines.append("None.")
     lines.append("")

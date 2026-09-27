@@ -54,9 +54,11 @@
     {
       "kind": "unjustified_edge",
       "step": "tighten_the_log_format",
+      "dep": "drop_the_legacy_exporter",
       "question": "Does the log format work need the exporter gone first? Document order is not dependency order, so the edge was dropped rather than kept.",
       "evidence": "The second is listed after the first because it was noticed second, not because it needs it.",
-      "proposed": null
+      "proposed": null,
+      "resolution": null
     }
   ]
 }

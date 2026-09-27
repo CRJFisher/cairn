@@ -95,44 +95,56 @@
     {
       "kind": "plan_gated",
       "step": null,
+      "dep": null,
       "question": "Is this plan green-lit? The document says no unit is on a build worklist yet and gates the build on a choice nobody has recorded.",
       "evidence": "Active plan. No unit is on a build worklist yet \u2014 this folder fixes the decomposition, contracts, and boundaries so the build can start from `review-patterns` when chosen.",
-      "proposed": null
+      "proposed": null,
+      "resolution": null
     },
     {
       "kind": "ambiguous_dependency",
       "step": "enforce_patterns",
+      "dep": "plan_backlog",
       "question": "Does enforce-patterns need plan-backlog, or only review-patterns? The document orders it last and describes it feeding plan-backlog, which is the opposite direction.",
       "evidence": "## Sequencing coupling (when it feeds plan-backlog)",
-      "proposed": null
+      "proposed": null,
+      "resolution": null
     },
     {
       "kind": "unresolved_reference",
       "step": "plan_backlog",
+      "dep": null,
       "question": "Under which name does this step run? The document leaves it undecided, and the name is the step's identity in every worktree, branch, and marker.",
       "evidence": "**Names are provisional.** `plan-backlog` vs `decompose-tasks` vs `taskify`;",
-      "proposed": null
+      "proposed": null,
+      "resolution": null
     },
     {
       "kind": "missing_verify",
       "step": "review_patterns",
+      "dep": null,
       "question": "What command asserts this step's end state? The unit document describes the behaviour and names no command, and one is never invented.",
       "evidence": "Runtime location: `~/.claude/skills/review-patterns/`. User-invocable.",
-      "proposed": "test -d \"$HOME/.claude/skills/review-patterns\""
+      "proposed": "test -d \"$HOME/.claude/skills/review-patterns\"",
+      "resolution": null
     },
     {
       "kind": "missing_verify",
       "step": "plan_backlog",
+      "dep": null,
       "question": "What command asserts this step's end state? The unit document describes the behaviour and names no command, and one is never invented.",
       "evidence": null,
-      "proposed": null
+      "proposed": null,
+      "resolution": null
     },
     {
       "kind": "missing_verify",
       "step": "enforce_patterns",
+      "dep": null,
       "question": "What command asserts this step's end state? The unit document describes the behaviour and names no command, and one is never invented.",
       "evidence": "The command is removed when the skill lands.",
-      "proposed": "test ! -e commands/enforce-pattern.md"
+      "proposed": "test ! -e commands/enforce-pattern.md",
+      "resolution": null
     }
   ]
 }

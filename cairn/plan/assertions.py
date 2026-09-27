@@ -19,6 +19,7 @@ from typing import Any, TypedDict, cast
 
 from cairn.plan.schema import (
     ASSERTION_OUTCOMES,
+    MISSING_VERIFY,
     Assertion,
     Graph,
     Question,
@@ -74,7 +75,7 @@ def _question_of(graph: Graph, step_id: str) -> Question | None:
     on the graph rather than re-derived here.
     """
     for question in graph["questions"]:
-        if question["kind"] == "missing_verify" and question["step"] == step_id:
+        if question["kind"] == MISSING_VERIFY and question["step"] == step_id:
             return question
     return None
 
@@ -134,7 +135,10 @@ def render(proposals: list[Proposal], graph_path: str = "<graph>") -> str:
         # offer itself is not on the line — it lives on the graph's own question, and
         # `answer` records it from there, so no answer can drop or misquote it.
         where = shlex.quote(graph_path)
-        invocation = f"python3 -m cairn plan answer {where} --step {proposal['step']}"
+        invocation = (
+            f"python3 -m cairn plan answer {where} --kind {MISSING_VERIFY} "
+            f"--step {proposal['step']}"
+        )
         lines.append("Accept or edit it with:")
         lines.append(
             f"    {invocation} --command {shlex.quote(offered or '<the command>')}"
@@ -192,7 +196,7 @@ def answer(
         graph["questions"] = [
             question
             for question in graph["questions"]
-            if not (question["kind"] == "missing_verify" and question["step"] == step_id)
+            if not (question["kind"] == MISSING_VERIFY and question["step"] == step_id)
         ]
         return graph
     raise AnswerError(f"{step_id!r} is not a step in this graph")

@@ -43,6 +43,7 @@ from cairn.core import CairnError
 from cairn.enginehome import ENGINE_BINARY
 from cairn.gitio import runs_root
 from cairn.layout import check_run_id
+from cairn.marker import mint_occasion
 from cairn.parameters import refuse_misfiled_records
 from cairn.parameters import repository as declared_repository
 from cairn.record.vocabulary import VERDICT_PRECEDENCE
@@ -102,7 +103,11 @@ from cairn.skill.vocabulary import (
 from cairn.topology import ROLES, worktrees_parent
 from cairn.verify import EXCLUSION_CAUSES
 from cairn.workflow.gate import Admission
-from cairn.workflow.schema import PARENT_BRANCH_PARAM, REPOSITORY_PARAM
+from cairn.workflow.schema import (
+    LABEL_GRAPH_DIGEST,
+    PARENT_BRANCH_PARAM,
+    REPOSITORY_PARAM,
+)
 from cairn.workflow.stamp import workflow_path
 from scripts.measure_surface import block as measure_surface_block
 
@@ -2173,6 +2178,39 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("whitespace", said)
         self.assertFalse(consent.offers_directory(self.repository).exists())
+
+    def _recover(self, plan: str, graph_sha256: str | None) -> tuple[int, str]:
+        """Offer a recovery of a run whose record names `plan` and `graph_sha256`."""
+        record = {
+            "plan": plan,
+            "graph_sha256": graph_sha256,
+            "lineage": {"occasion": mint_occasion()},
+        }
+        with patch("cairn.skill.cli.build_run_record", return_value=record):
+            return self._offer("--trigger", "recovery", "--recovering", "20260810T031500Z-a1b2c3d4")
+
+    def _published_graph(self) -> str:
+        labels = json.loads(self.workflow.read_text(encoding="utf-8"))["labels"]
+        return str(labels[LABEL_GRAPH_DIGEST])
+
+    def test_recovering_a_run_of_another_plan_refuses_before_an_offer_exists(self) -> None:
+        code, said = self._recover("another-plan", self._published_graph())
+        self.assertEqual(code, 1)
+        self.assertIn("another-plan", said)
+        self.assertFalse(consent.offers_directory(self.repository).exists())
+
+    def test_recovering_a_run_the_plan_was_re_authored_since_is_refused(self) -> None:
+        for recorded in ("0" * 64, None):
+            with self.subTest(recorded=recorded):
+                code, said = self._recover("offline-export", recorded)
+                self.assertEqual(code, 1)
+                self.assertIn("start a fresh run", said)
+                self.assertFalse(consent.offers_directory(self.repository).exists())
+
+    def test_recovering_a_run_through_its_own_plan_and_graph_is_offered(self) -> None:
+        code, said = self._recover("offline-export", self._published_graph())
+        self.assertEqual(code, 0, said)
+        self.assertTrue(consent.read_offer(self.repository, self._minted(said)))
 
     def test_a_start_mints_its_own_run_id_rather_than_asking_for_one(self) -> None:
         _, spoken = self._offer()

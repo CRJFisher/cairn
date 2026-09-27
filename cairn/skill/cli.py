@@ -34,6 +34,7 @@ from cairn.skill.resolve import (
     OccasionSignal,
     Resolved,
     decide_occasion,
+    refuse_foreign_recovery,
     refuse_missing_definition,
     resolve_repository,
 )
@@ -53,7 +54,8 @@ from cairn.skill.vocabulary import (
     CONSENT_RELAY_OPEN,
     TRIGGER_SHAPES,
 )
-from cairn.workflow.gate import admit
+from cairn.workflow.gate import Admission, admit
+from cairn.workflow.schema import LABEL_GRAPH_DIGEST
 from cairn.workflow.stamp import workflow_path
 
 EXIT_REFUSED = 1
@@ -101,6 +103,17 @@ def _has_run_before(repository: Path, plan: str) -> bool:
     return False
 
 
+def _admitted_graph(admission: Admission) -> str | None:
+    """The graph digest the admitted bytes carry — the very bytes the offer will price."""
+    try:
+        document: Any = json.loads(admission.body)
+    except ValueError:
+        return None
+    labels: Any = cast(dict[str, Any], document).get("labels") if isinstance(document, dict) else None
+    digest: Any = cast(dict[str, Any], labels).get(LABEL_GRAPH_DIGEST) if isinstance(labels, dict) else None
+    return digest if isinstance(digest, str) else None
+
+
 def _cmd_offer(args: argparse.Namespace) -> int:
     plan = str(args.plan)
     workflow = workflow_path(Path(str(args.repository)).resolve(), plan)
@@ -124,6 +137,12 @@ def _cmd_offer(args: argparse.Namespace) -> int:
                 f"no record of run {args.recovering} against {repository}, so there is "
                 "nothing to continue",
             )
+        refuse_foreign_recovery(
+            record,
+            run_id=str(args.recovering),
+            plan=plan,
+            graph_sha256=_admitted_graph(admission),
+        )
     reading = decide_occasion(
         OccasionSignal(
             trigger=str(args.trigger),

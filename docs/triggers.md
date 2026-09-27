@@ -158,7 +158,8 @@ The cron expression goes into the file at authoring time, because a workflow is 
 and never hand-maintained:
 
 ```text
-python3 -m cairn workflow author <graph.json> --repository <path> --schedule '0 3 * * *'
+python3 -m cairn workflow author <graph.json> --repository <path> --source-root <plan-dir> \
+  --schedule '0 3 * * *'
 ```
 
 Whose 3am it is is the engine's answer, not Cairn's — it evaluates the expression against

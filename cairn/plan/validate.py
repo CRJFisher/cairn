@@ -3,17 +3,23 @@
 import hashlib
 import os
 import re
+from pathlib import PurePosixPath
 from typing import Any
 
-from cairn.bounds import nonnegative_integer, positive_finite, positive_integer
 from cairn.plan.ids import is_engine_id, is_plan_slug
 from cairn.plan.schema import (
     AGENT_FAMILY,
+    ANSWERED_ORIGIN,
+    EDGE_KINDS,
     ENGINE_NAME_MAX_BYTES,
     GRAPH_VERSION,
+    MISSING_VERIFY,
+    NON_CONVERGENT_TASK,
     RESERVED_ID_PREFIXES,
     STEP_ID_PATTERN,
+    UNRESOLVED_REFERENCE,
     Graph,
+    Question,
     SchemaError,
     Step,
     cannot_fail,
@@ -124,11 +130,42 @@ def _flatten(text: str) -> str:
     return _WHITESPACE.sub(" ", text).strip()
 
 
+def _source_path_fault(path: str) -> str | None:
+    """Why a pinned path cannot name a document beneath the plan's root, or None.
+
+    Judged on the text alone, so a graph that could only ever be checked against a file
+    outside its own plan is refused whether or not a root is supplied.
+    """
+    if not path.strip():
+        return "is empty"
+    if os.path.isabs(path) or PurePosixPath(path).is_absolute():
+        return "is absolute"
+    if ".." in PurePosixPath(path).parts:
+        return "climbs out of the plan's directory"
+    return None
+
+
 def _read_sources(graph: Graph, root: str, errors: list[Finding]) -> str:
-    """Return every source document as one flattened corpus, checking each pin."""
+    """Return every source document as one flattened corpus, checking each pin.
+
+    Each document is read once, and its digest and the corpus every quotation is checked
+    against come from those same bytes, so no check describes a file the others did not.
+    """
+    canonical = os.path.realpath(root)
     corpus: list[str] = []
     for source in graph["plan"]["sources"]:
-        path = os.path.join(root, source["path"])
+        if _source_path_fault(source["path"]) is not None:
+            continue
+        path = os.path.realpath(os.path.join(canonical, source["path"]))
+        if os.path.commonpath((canonical, path)) != canonical:
+            errors.append(
+                Finding(
+                    "source_escape",
+                    f"the graph pins {source['path']!r}, which resolves to {path} — outside "
+                    f"the plan's root {canonical}",
+                )
+            )
+            continue
         if not os.path.isfile(path):
             errors.append(
                 Finding("missing_source", f"the graph pins {source['path']!r}, which is not there")
@@ -146,6 +183,83 @@ def _read_sources(graph: Graph, root: str, errors: list[Finding]) -> str:
             )
         corpus.append(_flatten(raw.decode("utf-8", errors="replace")))
     return "\n".join(corpus)
+
+
+def _question_key(question: Question) -> tuple[str, str | None, str | None]:
+    """What one question is about. Both edge kinds ask about the edge itself, so they share
+    a key: an edge dropped as unjustified and kept as ambiguous is two readings of one fact,
+    and two answers to it could each say the opposite."""
+    kind = "edge" if question["kind"] in EDGE_KINDS else question["kind"]
+    return (kind, question["step"], question["dep"])
+
+
+def _check_answers(
+    graph: Graph, by_id: dict[str, Step], errors: list[Finding]
+) -> None:
+    """Every recorded answer is the graph's fact, and every answered fact has its answer.
+
+    A resolution that says one thing while the step or edge it settled says another is two
+    records of one decision, and whichever a reader reached first would win.
+    """
+    accepted_edges: dict[tuple[str, str], str] = {}
+    for question in graph["questions"]:
+        resolution = question["resolution"]
+        step_id = question["step"]
+        step = by_id.get(step_id) if step_id is not None else None
+        dep_id = question["dep"]
+        if dep_id is not None and dep_id not in by_id:
+            errors.append(
+                Finding(
+                    "unknown_question_step",
+                    f"a {question['kind']} question names {dep_id!r} as the edge's other "
+                    "end, which is not a step in this graph",
+                    step_id,
+                )
+            )
+        if resolution is None or step is None and step_id is not None:
+            continue
+        outcome = resolution["outcome"]
+        if question["kind"] in EDGE_KINDS and step is not None and dep_id is not None:
+            present = any(dep["id"] == dep_id for dep in step["deps"])
+            if outcome == "accepted":
+                accepted_edges[(step_id or "", dep_id)] = resolution["reason"] or ""
+            if present != (outcome == "accepted"):
+                errors.append(
+                    Finding(
+                        "unapplied_answer",
+                        f"the {question['kind']} question on {dep_id} -> {step_id} was "
+                        f"{outcome}, but the edge is {'in' if present else 'not in'} the graph",
+                        step_id,
+                    )
+                )
+        if (
+            question["kind"] in (NON_CONVERGENT_TASK, UNRESOLVED_REFERENCE)
+            and step is not None
+            and outcome in ("accepted", "edited")
+            and step["task"] != resolution["reading"]
+        ):
+            errors.append(
+                Finding(
+                    "unapplied_answer",
+                    f"the {question['kind']} question on {step_id!r} was {outcome} with a "
+                    "restated task, and the step does not carry it",
+                    step_id,
+                )
+            )
+    for step in graph["steps"]:
+        for dep in step["deps"]:
+            if dep["origin"] != ANSWERED_ORIGIN:
+                continue
+            reason = accepted_edges.get((step["id"], dep["id"]))
+            if reason is None or (dep["evidence"] or "") != reason:
+                errors.append(
+                    Finding(
+                        "unanswered_edge",
+                        f"the edge {dep['id']} -> {step['id']} is recorded as the author's "
+                        "answer, and no accepted question on that edge gives it those words",
+                        step["id"],
+                    )
+                )
 
 
 def validate(raw: Any, source_root: str | None = None) -> Result:
@@ -202,6 +316,16 @@ def validate(raw: Any, source_root: str | None = None) -> Result:
         )
     if len(set(pinned)) != len(pinned):
         errors.append(Finding("duplicate_source", "the same document is pinned more than once"))
+    for path in pinned:
+        fault = _source_path_fault(path)
+        if fault is not None:
+            errors.append(
+                Finding(
+                    "source_path",
+                    f"the pinned path {path!r} {fault}; a source is named relative to the "
+                    "plan's own root",
+                )
+            )
 
     corpus = _read_sources(graph, source_root, errors) if source_root else None
 
@@ -294,7 +418,13 @@ def validate(raw: Any, source_root: str | None = None) -> Result:
                         step_id,
                     )
                 )
-            elif corpus is not None and _flatten(evidence) not in corpus:
+            elif (
+                # An answered edge rests on the author's words, not the documents', and
+                # `_check_answers` holds it to the question that recorded them instead.
+                dep["origin"] != ANSWERED_ORIGIN
+                and corpus is not None
+                and _flatten(evidence) not in corpus
+            ):
                 errors.append(
                     Finding(
                         "evidence_not_in_source",
@@ -334,25 +464,7 @@ def validate(raw: Any, source_root: str | None = None) -> Result:
 
     for step in steps:
         step_id = step["id"]
-        if not positive_integer(step["timeout"]):
-            errors.append(
-                Finding("timeout", f"step {step_id!r} has a non-positive timeout", step_id)
-            )
-        if not nonnegative_integer(step["retries"]):
-            errors.append(
-                Finding("retries", f"step {step_id!r} has a negative retry count", step_id)
-            )
         if step["kind"].startswith(AGENT_FAMILY):
-            budget = step["max_budget_usd"]
-            if not positive_finite(budget):
-                errors.append(
-                    Finding(
-                        "budget",
-                        f"step {step_id!r} has no positive dollar ceiling, so the session "
-                        "it opens could not be priced",
-                        step_id,
-                    )
-                )
             model = step["model"]
             if model is None or not model.strip():
                 errors.append(
@@ -459,6 +571,7 @@ def validate(raw: Any, source_root: str | None = None) -> Result:
                 )
             )
 
+    seen_questions: set[tuple[str, str | None, str | None]] = set()
     for question in graph["questions"]:
         if question["step"] and question["step"] not in by_id:
             errors.append(
@@ -467,12 +580,41 @@ def validate(raw: Any, source_root: str | None = None) -> Result:
                     f"a question names step {question['step']!r}, which is not in this graph",
                 )
             )
+        key = _question_key(question)
+        if key in seen_questions:
+            errors.append(
+                Finding(
+                    "duplicate_question",
+                    f"two {'edge' if question['dep'] else question['kind']} questions ask "
+                    "about the same "
+                    + ("edge" if question["dep"] else "step" if question["step"] else "plan")
+                    + ", so one answer could not say which it closed",
+                    question["step"],
+                )
+            )
+        seen_questions.add(key)
+        asked_of = by_id.get(question["step"] or "")
+        if (
+            question["kind"] == MISSING_VERIFY
+            and asked_of is not None
+            and not is_unasserted(asked_of)
+        ):
+            # Its answer is already on the step, and the answer clears the question — so one
+            # still standing is a question nothing lists and publication would refuse.
+            errors.append(
+                Finding(
+                    "settled_question",
+                    f"a missing_verify question stands on step {asked_of['id']!r}, which "
+                    "already has a verify command or a recorded answer",
+                    asked_of["id"],
+                )
+            )
         # The two readings the derivation declares — a task that will duplicate on a
         # resumed run, and a proposed assertion for an end state the plan states in prose —
         # must each quote the sentence they rest on. The quote is what code can check
         # without reading it: a declaration is present and verbatim, or it is refused.
-        declares = question["kind"] == "non_convergent_task" or (
-            question["kind"] == "missing_verify" and question["proposed"] is not None
+        declares = question["kind"] == NON_CONVERGENT_TASK or (
+            question["kind"] == MISSING_VERIFY and question["proposed"] is not None
         )
         evidence = (question.get("evidence") or "").strip()
         if declares and not evidence:
@@ -495,7 +637,11 @@ def validate(raw: Any, source_root: str | None = None) -> Result:
                 )
             )
         proposed = question["proposed"]
-        if proposed is not None and cannot_fail(proposed):
+        if (
+            question["kind"] == MISSING_VERIFY
+            and proposed is not None
+            and cannot_fail(proposed)
+        ):
             errors.append(
                 Finding(
                     "unassertable_proposal",
@@ -504,13 +650,64 @@ def validate(raw: Any, source_root: str | None = None) -> Result:
                     question["step"],
                 )
             )
-    if graph["questions"]:
+    _check_answers(graph, by_id, errors)
+    unresolved = open_questions(graph)
+    if unresolved:
         warnings.append(
             Finding(
                 "open_questions",
-                f"{len(graph['questions'])} question(s) are unanswered and must be put "
+                f"{len(unresolved)} question(s) are unanswered and must be put "
                 f"to the author",
             )
         )
 
     return Result(graph, errors, warnings)
+
+
+def open_questions(graph: Graph) -> list[Question]:
+    """Every question the author has not yet answered.
+
+    A `missing_verify` question is cleared by its answer, so standing at all is what makes
+    one open; every other kind stays on the graph with the answer beside it.
+    """
+    return [question for question in graph["questions"] if question["resolution"] is None]
+
+
+def validate_for_publication(raw: Any, source_root: str) -> Result:
+    """The verdict a graph must pass to become a workflow, against its documents as they are.
+
+    Everything `validate` refuses, with every pin and quotation rechecked in this one
+    invocation — plus every reading nobody has answered. During derivation an open question
+    is work still to do; at publication it is a reading the workflow would silently adopt.
+    """
+    result = validate(raw, source_root=source_root)
+    graph = result.graph
+    if graph is None:
+        return result
+    errors = list(result.errors)
+    asked = {
+        question["step"]
+        for question in graph["questions"]
+        if question["kind"] == MISSING_VERIFY
+    }
+    for question in open_questions(graph):
+        where = f" on {question['step']!r}" if question["step"] else ""
+        errors.append(
+            Finding(
+                "unresolved_question",
+                f"the {question['kind']} question{where} has no recorded answer: "
+                f"{_flatten(question['question'])}",
+                question["step"],
+            )
+        )
+    for step in graph["steps"]:
+        if is_unasserted(step) and step["id"] not in asked:
+            errors.append(
+                Finding(
+                    "unasserted_step",
+                    f"step {step['id']!r} has no verify command and nobody has been asked "
+                    "for one",
+                    step["id"],
+                )
+            )
+    return Result(graph, errors, result.warnings)

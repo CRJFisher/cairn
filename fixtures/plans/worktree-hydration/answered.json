@@ -107,7 +107,7 @@
       "id": "global_wiring",
       "slug": "04-global-wiring",
       "title": "Global settings wiring",
-      "task": "Wire the generic hook into user-level settings so it applies across all repos.",
+      "task": "Bring `~/.claude/settings.json` to a state where it carries exactly one entry for the hydration hook on each trigger.",
       "deps": [
         {
           "id": "hydration_hook",
@@ -193,9 +193,15 @@
     {
       "kind": "non_convergent_task",
       "step": "global_wiring",
+      "dep": null,
       "question": "Restate this convergently: adding the hook to `~/.claude/settings.json` leaves a second identical entry on a re-run. State the end state instead \u2014 the settings file carries exactly one entry for this hook on each trigger.",
       "evidence": "Add to `~/.claude/settings.json`:",
-      "proposed": null
+      "proposed": null,
+      "resolution": {
+        "outcome": "edited",
+        "reading": "Bring `~/.claude/settings.json` to a state where it carries exactly one entry for the hydration hook on each trigger.",
+        "reason": null
+      }
     }
   ]
 }

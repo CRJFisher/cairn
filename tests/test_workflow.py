@@ -27,8 +27,12 @@ from typing import Any, ClassVar, cast
 from unittest.mock import patch
 
 from cairn.core import CairnError, RuntimeContext
+from cairn.gitio import state_directory
 from cairn.parameters import parameter
-from cairn.plan.schema import ENGINE_NAME_MAX_BYTES
+from cairn.plan.cli import main as plan_main
+from cairn.plan.home import SINGLETON_GRAPH, graph_path
+from cairn.plan.schema import ENGINE_NAME_MAX_BYTES, normalise
+from cairn.plan.validate import validate
 from cairn.topology import ROLES, parse_node_name, worktrees_root_for
 from cairn.wave import run_join
 from cairn.workflow.build import (
@@ -76,6 +80,7 @@ from cairn.workflow.stamp import (
     UNSTAMPED,
     describe,
     file_digest,
+    read_stamp,
     stamp_path,
     workflow_path,
     write_stamp,
@@ -632,7 +637,12 @@ class Provenance(unittest.TestCase):
         self.path = self.root / "multi-wave.yaml"
         self.built = document()
         self.path.write_text(serialise(self.built), encoding="utf-8")
-        write_stamp(self.path, self.built, graph_digest(plan_graph("multi-wave")))
+        write_stamp(
+            self.path,
+            self.built,
+            graph_digest(plan_graph("multi-wave")),
+            source_root=PLANS / "multi-wave",
+        )
 
     def test_the_stamp_records_the_plan_and_the_bytes_it_was_written_from(self) -> None:
         recorded = json.loads(stamp_path(self.path).read_text(encoding="utf-8"))
@@ -694,7 +704,12 @@ class Provenance(unittest.TestCase):
         document_ = json.loads(self.path.read_text(encoding="utf-8"))
         edit(document_)
         self.path.write_text(json.dumps(document_, indent=2), encoding="utf-8")
-        write_stamp(self.path, cast(Workflow, document_), graph_digest(plan_graph("multi-wave")))
+        write_stamp(
+            self.path,
+            cast(Workflow, document_),
+            graph_digest(plan_graph("multi-wave")),
+            source_root=PLANS / "multi-wave",
+        )
         return document_
 
     def test_a_workflow_an_earlier_generator_wrote_is_named_as_such(self) -> None:
@@ -762,6 +777,8 @@ class Authoring(unittest.TestCase):
                 str(PLANS / plan / "graph.json"),
                 "--repository",
                 str(self.repository),
+                "--source-root",
+                str(PLANS / plan),
             ]
         )
 
@@ -780,7 +797,10 @@ class Authoring(unittest.TestCase):
         at_the_bound = self.root / "at-the-bound.json"
         at_the_bound.write_text(json.dumps(graph), encoding="utf-8")
         return workflow_main(
-            ["author", str(at_the_bound), "--repository", str(self.repository)]
+            [
+                "author", str(at_the_bound), "--repository", str(self.repository),
+                "--source-root", str(PLANS / "linear-chain"),
+            ]
         )
 
     def test_a_slug_at_the_engines_bound_authors_without_touching_the_gate(self) -> None:
@@ -823,6 +843,8 @@ class Authoring(unittest.TestCase):
                     str(PLANS / "linear-chain" / "graph.json"),
                     "--repository",
                     str(self.repository),
+                    "--source-root",
+                    str(PLANS / "linear-chain"),
                     "--python-path",
                     "/nowhere/at/all",
                 ]
@@ -849,6 +871,209 @@ class Authoring(unittest.TestCase):
         with self.assertRaises(SystemExit):
             workflow_main(["install", "somewhere.yaml"])
         self.assertEqual(workflow_verbs(), {"author", "check"})
+
+
+class PublishingOnlyTheReviewedGraph(unittest.TestCase):
+    """A graph is published only from the documents it was reviewed against, as they are now."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        self.repository = self.root / "repo"
+        self.repository.mkdir()
+        for command in (
+            ("init", "--initial-branch=main", "--quiet", "."),
+            ("config", "user.email", "cairn@test"),
+            ("config", "user.name", "Cairn Test"),
+        ):
+            subprocess.run(("git", *command), cwd=self.repository, check=True)
+        (self.repository / "README.md").write_text("start\n", encoding="utf-8")
+        subprocess.run(("git", "add", "--all"), cwd=self.repository, check=True)
+        subprocess.run(
+            ("git", "commit", "--quiet", "-m", "init"), cwd=self.repository, check=True
+        )
+        self.plan = self.root / "plan"
+        shutil.copytree(PLANS / "linear-chain", self.plan)
+        self.graph = json.loads((self.plan / "graph.json").read_text(encoding="utf-8"))
+
+    def author(self, graph: dict[str, Any] | None = None, root: Path | None = None) -> int:
+        path = self.root / "graph.json"
+        path.write_text(json.dumps(graph or self.graph), encoding="utf-8")
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            return workflow_main(
+                [
+                    "author", str(path), "--repository", str(self.repository),
+                    "--source-root", str(root or self.plan),
+                ]
+            )
+
+    def published(self) -> tuple[bytes, bytes]:
+        target = workflow_path(self.repository, "linear-chain")
+        return target.read_bytes(), stamp_path(target).read_bytes()
+
+    def assert_refused_leaving_the_published_workflow(
+        self, graph: dict[str, Any] | None = None, root: Path | None = None
+    ) -> None:
+        self.assertEqual(self.author(), 0)
+        before = self.published()
+        self.assertEqual(self.author(graph, root), 1)
+        self.assertEqual(self.published(), before)
+
+    def test_the_receipt_names_the_graph_and_the_canonical_root(self) -> None:
+        spelled = self.root / "spelled"
+        spelled.symlink_to(self.plan)
+        self.assertEqual(self.author(root=spelled), 0)
+        stamp = read_stamp(workflow_path(self.repository, "linear-chain"))
+        assert stamp is not None
+        self.assertEqual(stamp["source_root"], str(self.plan))
+        self.assertEqual(stamp["graph_sha256"], graph_digest(normalise(self.graph)))
+
+    def test_a_document_changed_since_review_refuses_without_replacing_anything(self) -> None:
+        self.assertEqual(self.author(), 0)
+        before = self.published()
+        document = self.plan / self.graph["plan"]["source"]
+        document.write_text(document.read_text(encoding="utf-8") + "\nMoved on.\n")
+        self.assertEqual(self.author(), 1)
+        self.assertEqual(self.published(), before)
+
+    def test_a_pin_that_climbs_out_of_the_root_is_refused(self) -> None:
+        graph = copy.deepcopy(self.graph)
+        graph["plan"]["sources"][0]["path"] = "../plan/" + graph["plan"]["source"]
+        graph["plan"]["source"] = graph["plan"]["sources"][0]["path"]
+        self.assert_refused_leaving_the_published_workflow(graph)
+
+    def test_an_absolute_pin_is_refused(self) -> None:
+        graph = copy.deepcopy(self.graph)
+        absolute = str(self.plan / graph["plan"]["source"])
+        graph["plan"]["sources"][0]["path"] = absolute
+        graph["plan"]["source"] = absolute
+        self.assert_refused_leaving_the_published_workflow(graph)
+
+    def test_a_pin_that_escapes_through_a_symlink_is_refused(self) -> None:
+        outside = self.root / "outside"
+        outside.mkdir()
+        name = self.graph["plan"]["source"]
+        (outside / name).write_bytes((self.plan / name).read_bytes())
+        escaping = self.root / "escaping"
+        shutil.copytree(self.plan, escaping)
+        (escaping / name).unlink()
+        (escaping / name).symlink_to(outside / name)
+        self.assert_refused_leaving_the_published_workflow(root=escaping)
+        result = validate(self.graph, source_root=str(escaping))
+        self.assertIn("source_escape", [finding.code for finding in result.errors])
+
+    def test_a_graph_with_an_unanswered_question_is_never_published(self) -> None:
+        graph = json.loads((PLANS / "all-roots" / "graph.json").read_text(encoding="utf-8"))
+        path = self.root / "open.json"
+        path.write_text(json.dumps(graph), encoding="utf-8")
+        refused = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(refused):
+            code = workflow_main(
+                [
+                    "author", str(path), "--repository", str(self.repository),
+                    "--source-root", str(PLANS / "all-roots"),
+                ]
+            )
+        self.assertEqual(code, 1)
+        self.assertIn("unresolved_question", refused.getvalue())
+        self.assertFalse(workflow_path(self.repository, "all-roots").exists())
+
+    def test_authoring_without_a_source_root_is_a_usage_error(self) -> None:
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                workflow_main(
+                    ["author", str(self.plan / "graph.json"), "--repository", str(self.repository)]
+                )
+
+
+class EachPlanKeepsItsOwnGraph(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.repository = Path(self.temporary.name).resolve() / "repo"
+        self.repository.mkdir()
+        for command in (
+            ("init", "--initial-branch=main", "--quiet", "."),
+            ("config", "user.email", "cairn@test"),
+            ("config", "user.name", "Cairn Test"),
+        ):
+            subprocess.run(("git", *command), cwd=self.repository, check=True)
+        (self.repository / "README.md").write_text("start\n", encoding="utf-8")
+        subprocess.run(("git", "add", "--all"), cwd=self.repository, check=True)
+        subprocess.run(
+            ("git", "commit", "--quiet", "-m", "init"), cwd=self.repository, check=True
+        )
+
+    def home(self, plan: str) -> Path:
+        printed = io.StringIO()
+        with redirect_stdout(printed), redirect_stderr(io.StringIO()):
+            self.assertEqual(
+                plan_main(["home", plan, "--repository", str(self.repository)]), 0
+            )
+        return Path(printed.getvalue().strip())
+
+    def author(self, plan: str) -> int:
+        home = self.home(plan)
+        if not home.exists():
+            home.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(PLANS / plan / "graph.json", home)
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            return workflow_main(
+                [
+                    "author", str(home), "--repository", str(self.repository),
+                    "--source-root", str(PLANS / plan),
+                ]
+            )
+
+    def test_two_plans_are_addressed_by_their_own_slugs(self) -> None:
+        first, second = self.home("linear-chain"), self.home("fan-out")
+        self.assertNotEqual(first, second)
+        self.assertEqual(first, graph_path(self.repository, "linear-chain"))
+        self.assertIn(".git", first.parts)
+
+    def test_two_plans_author_in_either_order_and_keep_their_graphs(self) -> None:
+        for order in (("linear-chain", "fan-out"), ("fan-out", "linear-chain")):
+            with self.subTest(order=order):
+                for plan in order:
+                    self.assertEqual(self.author(plan), 0, plan)
+                for plan in order:
+                    graph = json.loads(self.home(plan).read_text(encoding="utf-8"))
+                    self.assertEqual(graph["plan"]["slug"], plan)
+                    self.assertTrue(workflow_path(self.repository, plan).exists())
+
+    def singleton(self, content: str) -> Path:
+        path = state_directory(self.repository) / SINGLETON_GRAPH
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def test_a_shared_graph_is_filed_under_the_plan_it_names_not_the_one_asked(self) -> None:
+        shared = (PLANS / "fan-out" / "graph.json").read_text(encoding="utf-8")
+        singleton = self.singleton(shared)
+        asked = self.home("linear-chain")
+        self.assertFalse(singleton.exists())
+        self.assertFalse(asked.exists())
+        self.assertEqual(
+            graph_path(self.repository, "fan-out").read_text(encoding="utf-8"), shared
+        )
+
+    def test_a_shared_graph_that_disagrees_with_its_plans_own_is_refused(self) -> None:
+        home = graph_path(self.repository, "fan-out")
+        home.parent.mkdir(parents=True)
+        home.write_text("{}", encoding="utf-8")
+        singleton = self.singleton((PLANS / "fan-out" / "graph.json").read_text("utf-8"))
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            code = plan_main(["home", "linear-chain", "--repository", str(self.repository)])
+        self.assertEqual(code, 2)
+        self.assertTrue(singleton.exists())
+        self.assertEqual(home.read_text(encoding="utf-8"), "{}")
+
+    def test_a_shared_graph_naming_no_plan_is_refused_and_left_alone(self) -> None:
+        singleton = self.singleton('{"steps": []}')
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            code = plan_main(["home", "linear-chain", "--repository", str(self.repository)])
+        self.assertEqual(code, 2)
+        self.assertTrue(singleton.exists())
 
 
 class TheEngineIsWhatDecidesTheShape(unittest.TestCase):
