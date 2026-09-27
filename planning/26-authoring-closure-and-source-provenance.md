@@ -45,8 +45,8 @@ while workflows, offers, and records are plan-scoped. Authoring a second plan ov
 first plan's reviewed graph.
 
 Store graphs under a plan-scoped namespace such as
-`<git-common-dir>/cairn/graphs/<plan>.json`. Migration must identify an existing singleton graph
-by its own plan slug, refuse ambiguity, and never silently assign it to the plan being authored.
+`<git-common-dir>/cairn/graphs/<plan>.json`. There is no migration: a leftover shared
+`graph.json` is refused by name, and the reviewer moves or deletes it.
 
 ## D — Make the schema discriminator and scalar contract explicit
 
@@ -101,8 +101,7 @@ closed by A.
   `unasserted_step` — all before anything is written. The stamp records `source_root` beside
   `graph_sha256`.
 - **C.** `plan home <slug> --repository <path>` prints `<git-common-dir>/cairn/graphs/<plan>.json`,
-  first filing a shared `graph.json` under the slug it names, refusing an unreadable one or one
-  that disagrees with the plan's existing graph.
+  and refuses, naming the file, while a shared `graph.json` remains; nothing migrates it.
 - **D.** `cairn_graph_version` is required; there is no legacy reader. `timeout`, `retries` and
   `max_budget_usd` are judged in the schema before normalisation, and `plan` reads refuse
   `NaN`/`Infinity`.

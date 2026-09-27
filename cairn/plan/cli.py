@@ -13,7 +13,7 @@ from typing import Any, cast
 from cairn.core import CairnError, read_standard_json, write_json
 from cairn.plan.assertions import AnswerError, answer, propose
 from cairn.plan.assertions import render as render_proposals
-from cairn.plan.home import graph_path, settle_singleton
+from cairn.plan.home import graph_path, refuse_shared_graph
 from cairn.plan.ids import assign_ids, derive_plan_slug, plan_slug_collisions
 from cairn.plan.questions import ResolutionError, resolve
 from cairn.plan.questions import render as render_questions
@@ -176,15 +176,10 @@ def _cmd_answer(args: argparse.Namespace) -> int:
 def _cmd_home(args: argparse.Namespace) -> int:
     repository = Path(args.repository).resolve()
     try:
-        # The slug is judged first, so a refused invocation moves no file.
         home = graph_path(repository, args.slug)
-        settled = settle_singleton(repository)
+        refuse_shared_graph(repository)
     except CairnError as exc:
         raise UsageError(str(exc)) from exc
-    except OSError as exc:
-        raise UsageError(f"the shared graph.json could not be filed: {exc}") from exc
-    if settled is not None:
-        print(f"filed the shared graph.json under its own plan: {settled}", file=sys.stderr)
     print(home)
     return 0
 

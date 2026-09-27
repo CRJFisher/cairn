@@ -756,7 +756,7 @@ class AStepTheEngineKilledIsTimedOut(unittest.TestCase):
         """One level of the node graph holds several steps' nodes, and those nodes sort by
         role before subject: `commit_zulu` precedes `work_alpha`. The order a reader is
         given is the steps', so it is taken after the collapse, not before."""
-        nodes = {
+        nodes: dict[str, Any] = {
             "work_alpha": {"step": {"name": "work_alpha", "depends": []}},
             "work_zulu": {"step": {"name": "work_zulu", "depends": []}},
             "commit_zulu": {"step": {"name": "commit_zulu", "depends": ["work_zulu"]}},

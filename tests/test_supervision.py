@@ -1678,14 +1678,21 @@ class WorktreeConvergence(RepositoryCase):
         # else left the branch behind the parent, which is what this arm exists to clear.
         self.setup()
         advance(self.repository, "moved.txt")
-        with patch(
-            "cairn.worktrees.git",
-            side_effect=lambda directory, arguments, **kwargs: (
-                GitOutcome(1, "", "fatal: Unable to create index.lock: File exists")
-                if tuple(arguments)[:2] == ("merge", "--ff-only")
-                else git(directory, arguments, **kwargs)
-            ),
-        ), self.assertRaises(CairnError) as caught:
+
+        def locked_merge(
+            directory: Path,
+            arguments: Sequence[str],
+            *,
+            check: bool = True,
+            stdin: str | None = None,
+        ) -> GitOutcome:
+            if tuple(arguments)[:2] == ("merge", "--ff-only"):
+                return GitOutcome(1, "", "fatal: Unable to create index.lock: File exists")
+            return git(directory, arguments, check=check, stdin=stdin)
+
+        with patch("cairn.worktrees.git", side_effect=locked_merge), self.assertRaises(
+            CairnError
+        ) as caught:
             self.setup()
         self.assertEqual(caught.exception.cause, "worktree_unusable")
 

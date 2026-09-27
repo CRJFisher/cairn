@@ -30,7 +30,7 @@ from cairn.core import CairnError, RuntimeContext
 from cairn.gitio import state_directory
 from cairn.parameters import parameter
 from cairn.plan.cli import main as plan_main
-from cairn.plan.home import SINGLETON_GRAPH, graph_path
+from cairn.plan.home import SHARED_GRAPH, graph_path
 from cairn.plan.schema import ENGINE_NAME_MAX_BYTES, normalise
 from cairn.plan.validate import validate
 from cairn.topology import ROLES, parse_node_name, worktrees_root_for
@@ -1042,38 +1042,17 @@ class EachPlanKeepsItsOwnGraph(unittest.TestCase):
                     self.assertEqual(graph["plan"]["slug"], plan)
                     self.assertTrue(workflow_path(self.repository, plan).exists())
 
-    def singleton(self, content: str) -> Path:
-        path = state_directory(self.repository) / SINGLETON_GRAPH
-        path.write_text(content, encoding="utf-8")
-        return path
-
-    def test_a_shared_graph_is_filed_under_the_plan_it_names_not_the_one_asked(self) -> None:
-        shared = (PLANS / "fan-out" / "graph.json").read_text(encoding="utf-8")
-        singleton = self.singleton(shared)
-        asked = self.home("linear-chain")
-        self.assertFalse(singleton.exists())
-        self.assertFalse(asked.exists())
-        self.assertEqual(
-            graph_path(self.repository, "fan-out").read_text(encoding="utf-8"), shared
-        )
-
-    def test_a_shared_graph_that_disagrees_with_its_plans_own_is_refused(self) -> None:
-        home = graph_path(self.repository, "fan-out")
-        home.parent.mkdir(parents=True)
-        home.write_text("{}", encoding="utf-8")
-        singleton = self.singleton((PLANS / "fan-out" / "graph.json").read_text("utf-8"))
-        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-            code = plan_main(["home", "linear-chain", "--repository", str(self.repository)])
+    def test_a_leftover_shared_graph_is_refused_and_left_alone(self) -> None:
+        shared = state_directory(self.repository) / SHARED_GRAPH
+        content = (PLANS / "fan-out" / "graph.json").read_text(encoding="utf-8")
+        shared.write_text(content, encoding="utf-8")
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            code = plan_main(["home", "fan-out", "--repository", str(self.repository)])
         self.assertEqual(code, 2)
-        self.assertTrue(singleton.exists())
-        self.assertEqual(home.read_text(encoding="utf-8"), "{}")
-
-    def test_a_shared_graph_naming_no_plan_is_refused_and_left_alone(self) -> None:
-        singleton = self.singleton('{"steps": []}')
-        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-            code = plan_main(["home", "linear-chain", "--repository", str(self.repository)])
-        self.assertEqual(code, 2)
-        self.assertTrue(singleton.exists())
+        self.assertIn(str(shared), err.getvalue())
+        self.assertEqual(shared.read_text(encoding="utf-8"), content)
+        self.assertFalse(graph_path(self.repository, "fan-out").exists())
 
 
 class TheEngineIsWhatDecidesTheShape(unittest.TestCase):

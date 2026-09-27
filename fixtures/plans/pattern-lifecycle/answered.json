@@ -108,7 +108,7 @@
       "resolution": {
         "outcome": "accepted",
         "reading": null,
-        "reason": "The author confirmed the plan is live, with the build starting from review-patterns."
+        "reason": "SYNTHETIC: made up for the test suite; no author gave this answer. Assumes the plan is live, with the build starting from review-patterns."
       }
     },
     {
@@ -121,7 +121,7 @@
       "resolution": {
         "outcome": "declined",
         "reading": null,
-        "reason": "enforce-patterns feeds plan-backlog rather than needing it; review-patterns is its only predecessor."
+        "reason": "SYNTHETIC: made up for the test suite; no author gave this answer. enforce-patterns feeds plan-backlog rather than needing it; review-patterns is its only predecessor."
       }
     },
     {
@@ -134,7 +134,7 @@
       "resolution": {
         "outcome": "declined",
         "reading": null,
-        "reason": "The step runs as plan-backlog, the name the index gives it; a rename is a later re-derivation."
+        "reason": "SYNTHETIC: made up for the test suite; no author gave this answer. The step runs as plan-backlog, the name the index gives it; a rename is a later re-derivation."
       }
     }
   ]

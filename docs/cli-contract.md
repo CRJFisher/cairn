@@ -194,8 +194,8 @@ against the offer the graph's own question carries, so an accept, an edit and a 
 unaided are derived rather than declared. Every other kind is `--accept`, `--edit` or
 `--decline` as its kind admits; an accept adopts the question's own proposal, never an
 argument, so no invocation can drop or misquote the offer. `plan home` prints the plan's own
-graph path, `<git-common-dir>/cairn/graphs/<plan>.json`, and first files a shared `graph.json`
-under the plan that graph itself names.
+graph path, `<git-common-dir>/cairn/graphs/<plan>.json`, and refuses, naming the file, while
+the shared `graph.json` of the old one-graph-per-repository layout remains; nothing migrates it.
 
 `lock acquire` is the run's first act and does eight things before its first spend: assert
 the engine's DAG-level retry is off, **judge every parameter a caller varied**

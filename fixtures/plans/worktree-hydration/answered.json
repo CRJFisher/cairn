@@ -200,7 +200,7 @@
       "resolution": {
         "outcome": "edited",
         "reading": "Bring `~/.claude/settings.json` to a state where it carries exactly one entry for the hydration hook on each trigger.",
-        "reason": null
+        "reason": "SYNTHETIC: made up for the test suite; no author gave this answer."
       }
     }
   ]
