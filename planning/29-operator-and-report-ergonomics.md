@@ -32,8 +32,8 @@ several plans are interleaved.
 Carry the original step title/slug into the run record and render it beside the stable engine id,
 so sanitisation and collision suffixes do not make a report require a graph lookup.
 
-This complements, rather than duplicates, [18](18-first-run-friction.md)'s repository inference
-and [20](20-visibility-and-follow-on.md)'s live breadcrumbs and follow-on drafting.
+This complements, rather than duplicates, [18](18-first-run-friction.md)'s repository inference,
+[20](20-watching-a-live-session.md)'s live breadcrumbs, and [34](34-follow-on-runs.md)'s follow-on drafting.
 
 ## C — Scheduling status answers operational status
 

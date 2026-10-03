@@ -16,9 +16,9 @@ the fix, before they find out in a browser.
   `DAGU_HOST`/`DAGU_PORT`, then `127.0.0.1:8080`. `trigger.address` prints it, and the run
   record stores it as `view_url`. Nothing checks that anything is listening there.
 - Cairn deliberately starts no server. [docs/triggers.md](../docs/triggers.md) says "Cairn
-  neither starts nor manages the process", and [20](20-visibility-and-follow-on.md) says "no
-  engine server is required … and Cairn still starts none". This document reverses that for
-  the view server only. The scheduler is unaffected.
+  neither starts nor manages the process", and [20](20-watching-a-live-session.md) says "no
+  engine server is required for the `where` line". This document starts the view server, and
+  only the view server. The scheduler is unaffected.
 
 ## The change
 
@@ -98,7 +98,7 @@ reading starts nothing.
 - `SKILL.md`: _The engine, and where it is the better answer_ says Cairn serves the view on
   request.
 - `docs/triggers.md`: _Opening the view_ and _There are two daemons_.
-- [20](20-visibility-and-follow-on.md): its "Cairn still starts none" sentence.
+- [20](20-watching-a-live-session.md): its "no engine server is required" sentence.
 - `cairn/report/compose.py`: the link line.
 - `tests/test_triggers.py`, `tests/test_the_skill.py`, and a `view` fixture family for
   `serving`, `absent` and `foreign`.

@@ -80,8 +80,8 @@ release path.
 [29](29-operator-and-report-ergonomics.md) adds plan-filtered/latest-run discovery,
 plan-facing step names, truthful scheduler liveness and transactional installation, accurate
 launch language, lossless diagnostics, accessible HTML, and display-width-aware terminal output.
-Then [20](20-visibility-and-follow-on.md) adds live session breadcrumbs and follow-on plan
-drafting on top of records now safe to trust.
+Then [20](20-watching-a-live-session.md) adds live session breadcrumbs, and
+[34](34-follow-on-runs.md) adds follow-on plan drafting, on top of records now safe to trust.
 
 ## Original 21–24 themes
 
