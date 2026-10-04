@@ -1103,6 +1103,79 @@ class TheHeadlineNamesTheFault(unittest.TestCase):
         before = unremedied["budget"]["cost_usd"] or 0.0
         self.assertAlmostEqual((record["budget"]["cost_usd"] or 0.0) - before, 0.5)
 
+    def test_a_remedied_steps_tail_follows_the_recheck_not_the_remedied_failure(
+        self,
+    ) -> None:
+        """A remedy that fixed the step must not leave the record quoting the failure it
+        fixed: the tail follows the same swap to the recheck as `assertion_exit` does."""
+        with tempfile.TemporaryDirectory() as temporary:
+            first_log = Path(temporary) / "verify_b.out"
+            first_log.write_text("FAIL first attempt\n", encoding="utf-8")
+            second_log = Path(temporary) / "recheck_b.out"
+            second_log.write_text("FAIL second attempt\n", encoding="utf-8")
+            state, reports = halted_chain(
+                ("a", "b"), fails_at="b", assertion_log=str(first_log)
+            )
+            state["nodes"].append(
+                {
+                    "step": {"name": "recheck_b", "depends": ["verify_b"]},
+                    "status": engine.NODE_STATUS_FAILED,
+                    "error": "exit status 3",
+                    "stdout": str(second_log),
+                }
+            )
+            common: dict[str, Any] = {"run_id": "run-halt", "needs_user_decision": False}
+            reports["verify_b"] = {
+                **common, "step_id": "verify_b", "status": "failed", "summary": "exited 1",
+                "detail": {"decision": "run", "exit": 1, "source": "executed", "backed_by": "b"},
+            }
+            reports["remedy_b"] = {
+                **common, "step_id": "remedy_b", "status": "done", "summary": "fixed it",
+                "detail": {"total_cost_usd": 0.5, "resumed_session": "session-7"},
+            }
+            reports["recheck_b"] = {
+                **common, "step_id": "recheck_b", "status": "failed", "summary": "exited 3",
+                "detail": {"decision": "run", "exit": 3, "source": "executed", "backed_by": "b"},
+            }
+            record = extract(state, reports, run_id="run-halt")
+        step = next(step for step in record["steps"] if step["step_id"] == "b")
+        self.assertEqual(step["assertion_exit"], 3)
+        assert step["assertion_tail"] is not None
+        self.assertTrue(step["assertion_tail"].endswith("FAIL second attempt"))
+        self.assertNotIn("FAIL first attempt", step["assertion_tail"])
+
+    def test_a_remedied_steps_tail_clears_once_the_recheck_passes(self) -> None:
+        """The remedied failure's tail must not survive into a step the recheck verified."""
+        with tempfile.TemporaryDirectory() as temporary:
+            first_log = Path(temporary) / "verify_b.out"
+            first_log.write_text("FAIL first attempt\n", encoding="utf-8")
+            state, reports = halted_chain(
+                ("a", "b"), fails_at="b", assertion_log=str(first_log)
+            )
+            state["nodes"].append(
+                {
+                    "step": {"name": "recheck_b", "depends": ["verify_b"]},
+                    "status": engine.NODE_STATUS_SUCCEEDED,
+                }
+            )
+            common: dict[str, Any] = {"run_id": "run-halt", "needs_user_decision": False}
+            reports["verify_b"] = {
+                **common, "step_id": "verify_b", "status": "failed", "summary": "exited 1",
+                "detail": {"decision": "run", "exit": 1, "source": "executed", "backed_by": "b"},
+            }
+            reports["remedy_b"] = {
+                **common, "step_id": "remedy_b", "status": "done", "summary": "fixed it",
+                "detail": {"total_cost_usd": 0.5, "resumed_session": "session-7"},
+            }
+            reports["recheck_b"] = {
+                **common, "step_id": "recheck_b", "status": "done", "summary": "exited 0",
+                "detail": {"decision": "run", "exit": 0, "source": "executed", "backed_by": "b"},
+            }
+            record = extract(state, reports, run_id="run-halt")
+        step = next(step for step in record["steps"] if step["step_id"] == "b")
+        self.assertEqual(step["assertion_exit"], 0)
+        self.assertIsNone(step["assertion_tail"])
+
     def test_the_subject_is_first_in_dependency_order_and_never_first_by_name(self) -> None:
         state, reports = halted_chain(("zulu", "alpha", "mike"), fails_at="zulu")
         record = extract(state, reports, run_id="run-halt")

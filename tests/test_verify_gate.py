@@ -41,6 +41,7 @@ from cairn.emitters import (
     assertion_gate,
     emit_commit,
     emit_marker,
+    emit_remedy,
     emit_step,
     emit_verify,
     verify_gate,
@@ -125,6 +126,7 @@ def plan_graph(
     step_id: str = "a",
     deps: list[str] | None = None,
     kind: str = "command",
+    remediate: bool = False,
 ) -> Any:
     step: dict[str, Any] = (
         {"kind": kind}
@@ -147,6 +149,7 @@ def plan_graph(
                 **step,
                 "verify": verify,
                 "assertion": assertion,
+                "remediate": remediate,
                 "deps": [
                     {"id": dep, "origin": "declared", "evidence": "stated"}
                     for dep in deps or []
@@ -684,6 +687,15 @@ class ARemedyIsOneSessionOverAnAssertionThatRanAndFailed(unittest.TestCase):
         verdict, detail = run_verify_gate("a", CHAIN, "1", self._context("mark_a"), "2")
         self.assertEqual(verdict["cause"], "verify_failed")
         self.assertEqual(detail["verify_exit"], 2)
+
+    def test_a_dash_led_assertion_still_reaches_the_remedy_as_its_value(self) -> None:
+        """`--assertion` is `=`-joined, so a verify command that is itself a single
+        dash-led token (`-e built.txt`) reaches the remedy rather than being read by
+        argparse as a flag of its own ([workflow/schema.py]'s generator 8)."""
+        step = one_step(kind="agent.claude", verify="-e built.txt", remediate=True)
+        emitted = emit_remedy(step, "/repo")
+        words = shlex.split(emitted["run"])
+        self.assertIn("--assertion=-e built.txt", words)
 
     def _decision(self) -> dict[str, Any] | None:
         return assertion_report(reports_of(self.root), "a", "run-1")

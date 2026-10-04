@@ -564,12 +564,15 @@ def record_executed(
     )
     with survive_termination():
         write_report_for(context, f"{prefix}{step_id}", completed, duration)
-        tree = detail.get(TREE_KEY)
-        command = detail.get(COMMAND_KEY)
-        # An assertion a signal ended decided nothing, so it is no proof to share: filed,
-        # its failure would dominate and close every later gate quoting the command.
-        if exit_code != SIGNALLED_EXIT and isinstance(tree, str) and isinstance(command, str):
-            _publish(context, step_id, command, tree, exit_code)
+    tree = detail.get(TREE_KEY)
+    command = detail.get(COMMAND_KEY)
+    # Outside the uninterruptible section: the step's own report is already safe, and
+    # `_publish` can wait up to `PUBLICATION_WAIT_SECONDS` on another writer's lock — a
+    # stretch a cancel must still be able to interrupt, not the brief write this guards.
+    # An assertion a signal ended decided nothing, so it is no proof to share: filed,
+    # its failure would dominate and close every later gate quoting the command.
+    if exit_code != SIGNALLED_EXIT and isinstance(tree, str) and isinstance(command, str):
+        _publish(context, step_id, command, tree, exit_code)
 
 
 def _account(exit_code: int, duration: float, bound: Any) -> str:

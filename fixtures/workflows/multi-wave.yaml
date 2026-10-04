@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "multi-wave",
-    "cairn_generator": "7",
+    "cairn_generator": "8",
     "cairn_engine": "2.11.0",
     "cairn_graph_sha256": "d145b17462d001b4cbd0356905c525901e92df5b119e0fd13ddb7334cd12c7d2",
-    "cairn_body_sha256": "6c3c544e3d618adad6332e7f50a2bc95b0009966ea707c7d333e9c3cf42f3e37"
+    "cairn_body_sha256": "2581186c10a59c0a67ede9627ad6c24b0e2850517c9be054d8886da0b1cdba6b"
   },
   "params": [
     {
@@ -524,7 +524,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/sync/reconcile.py` to a state where an imported archive merges into the live workspace, newest revision winning per item.' --model sonnet --max-budget-usd 5.0 --timeout 3600 --remedy-of reconcile --assertion 'python3 -m pytest tests/sync/test_reconcile.py -q'",
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/sync/reconcile.py` to a state where an imported archive merges into the live workspace, newest revision winning per item.' --model sonnet --max-budget-usd 5.0 --timeout 3600 --remedy-of reconcile '--assertion=python3 -m pytest tests/sync/test_reconcile.py -q'",
       "preconditions": [
         {
           "condition": "python3 -m cairn verify remedy --step reconcile --verify-exit '${verify_reconcile.exit_code}'"

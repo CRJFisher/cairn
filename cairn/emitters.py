@@ -174,8 +174,11 @@ def emit_remedy(step: Step, working_directory: str) -> EngineStep:
     )
     emitted = emit_agent(step, working_directory)
     emitted["name"] = remedy_name(step["id"])
+    # `=`-joined: the command is the plan author's own shell line and a leading `-`
+    # (`-e file`, `-n`) would otherwise read to argparse as a new flag rather than this
+    # one's value.
     emitted["run"] = shlex.join(
-        [*_agent_arguments(step), "--remedy-of", step["id"], "--assertion", command]
+        [*_agent_arguments(step), "--remedy-of", step["id"], f"--assertion={command}"]
     )
     emitted["preconditions"] = [{"condition": gate}]
     emitted["continue_on"] = {"failure": True, "skipped": True}

@@ -98,7 +98,11 @@ ENGINE_VERSION = "2.11.0"
 # 7: every assertion is bounded by its step's `verify_timeout`, and its gate is handed that
 # bound so an assertion's account can tell the engine's kill at it from any other signal.
 # Definitions written by 6 bound every assertion at 600 s whatever the plan says.
-GENERATOR_VERSION = 7
+# 8: a remedy's `--assertion` is `=`-joined to its value, so a verify command that is itself
+# a single dash-led token reaches the remedy as its assertion rather than as a second flag
+# argparse cannot place. A remedy body written by 7 fails `invalid_arguments` before opening
+# a session wherever a plan's assertion takes that shape.
+GENERATOR_VERSION = 8
 
 # The one execution type. The alternative reading serialises the graph, which is the defect
 # Cairn exists to avoid — and `type: chain` without `depends` validates clean and silently

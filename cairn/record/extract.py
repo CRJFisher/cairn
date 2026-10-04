@@ -771,14 +771,18 @@ def _step_record(
     mark_report = reports.get(f"{MARK_ROLE}_{step_id}")
     commit_report = reports.get(f"{COMMIT_ROLE}_{step_id}")
     assertion_account = _detail(reports.get(f"verify_{step_id}"))
+    assertion_tail_node = assertion
     remedy_report = reports.get(f"remedy_{step_id}")
     recheck_account = _detail(reports.get(f"recheck_{step_id}"))
     if remedy_report is not None and remedy_report.get("status") == "done" and (
         recheck_account.get(SOURCE_KEY) is not None
     ):
         # The step's verdict is the assertion run after the remedy, so that is the one the
-        # record names as the step's; the first one survives inside `remedy`.
+        # record names as the step's; the first one survives inside `remedy`. Its tail
+        # follows the same swap, or a step the remedy fixed would quote the pre-remedy
+        # failure forever, under a verdict that now reads as verified.
         assertion_account = recheck_account
+        assertion_tail_node = nodes.get(f"recheck_{step_id}")
 
     killed = None if work is None else engine.parse_timeout(work.get("error"))
     outcome, overlays, cause = classify_step(
@@ -793,8 +797,9 @@ def _step_record(
     )
     divergence = _divergence(mark_report)
     assertion_tail = (
-        _assertion_tail(assertion)
-        if assertion is not None and _status(assertion) == engine.NODE_STATUS_FAILED
+        _assertion_tail(assertion_tail_node)
+        if assertion_tail_node is not None
+        and _status(assertion_tail_node) == engine.NODE_STATUS_FAILED
         else None
     )
     divergence_is_derived = False
