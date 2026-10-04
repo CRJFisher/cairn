@@ -1,0 +1,7 @@
+{
+  "key": "once",
+  "run_id": "20261004T221101Z-c070a88a",
+  "scope": "once",
+  "step_id": "implement_24",
+  "summary": "Every acceptance criterion in planning/24-recovery-economics.md for sections A, B and C already holds in the tree; I changed nothing. A: `cairn verify needed` (cairn/assertions.py) fronts each assert\u2026"
+}
