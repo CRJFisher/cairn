@@ -170,7 +170,9 @@ exit status, and the divergence when there is one. It also names the exclusion o
 because an exclusion is never silent. Where the assertion ran, the gate completes the
 assertion node's own report too — the one its gate opened with its decision — with the exit
 it read, and files that exit as the proof later gates share; the assertion runs bare and can
-write nothing itself.
+write nothing itself. That report is timed from the moment the assertion's gate released it.
+An exit of `-1` is how the engine hands on a process a signal ended, and the report says so
+("ended by a signal after N s") rather than calling it an exit.
 
 **A divergence is recorded and never resolved.** Both accounts stand side by side, and
 nothing names a winner.

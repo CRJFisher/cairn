@@ -87,6 +87,10 @@ def run_echo(
 READY_SECONDS = 5.0
 GONE_SECONDS = 5.0
 POLL_SECONDS = 0.01
+# A step subprocess imports Cairn from here but stands in its own temporary root, never this
+# checkout: a step reads the run lock of the repository it stands in, and inside a live
+# Cairn run that lock is held by a run whose id the test step's is not.
+CAIRN_ROOT = Path(__file__).resolve().parent.parent
 
 
 def wait_for_file(path: Path, *, seconds: float = READY_SECONDS) -> bool:
@@ -400,7 +404,7 @@ class ExecAndWait(unittest.TestCase):
     def test_interrupted_wait_stops_condition_and_records_cancellation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            env = {**os.environ, **runtime_env(root)}
+            env = {**os.environ, **runtime_env(root), "PYTHONPATH": str(CAIRN_ROOT)}
             pid_path = root / "condition.pid"
             condition = (
                 f"{shlex.quote(sys.executable)} -c "
@@ -421,7 +425,7 @@ class ExecAndWait(unittest.TestCase):
                     "--timeout",
                     "30",
                 ],
-                cwd=Path(__file__).parents[1],
+                cwd=root,
                 env=env,
                 start_new_session=True,
             )
@@ -442,7 +446,7 @@ class ExecAndWait(unittest.TestCase):
     def test_interrupted_exec_stops_its_child_and_records_cancellation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            env = {**os.environ, **runtime_env(root)}
+            env = {**os.environ, **runtime_env(root), "PYTHONPATH": str(CAIRN_ROOT)}
             pid_path = root / "child.pid"
             body = (
                 f"{shlex.quote(sys.executable)} -c "
@@ -454,7 +458,7 @@ class ExecAndWait(unittest.TestCase):
             )
             process = subprocess.Popen(
                 [sys.executable, "-m", "cairn", "exec", "--command", body],
-                cwd=Path(__file__).parents[1],
+                cwd=root,
                 env=env,
                 start_new_session=True,
             )
@@ -492,7 +496,7 @@ class ExecAndWait(unittest.TestCase):
     def test_a_timed_out_wait_leaves_no_orphan_behind(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            env = {**os.environ, **runtime_env(root)}
+            env = {**os.environ, **runtime_env(root), "PYTHONPATH": str(CAIRN_ROOT)}
             pid_path = root / "helpers"
             # A condition that backgrounds a helper and then fails: every poll would
             # otherwise leave one more sleeper behind, and the step exits on its own, so
@@ -511,7 +515,7 @@ class ExecAndWait(unittest.TestCase):
                     "--interval",
                     "0.1",
                 ],
-                cwd=Path(__file__).parents[1],
+                cwd=root,
                 env=env,
                 start_new_session=True,
             )
@@ -757,7 +761,7 @@ class ExecAndWait(unittest.TestCase):
     def test_cancellation_reaches_a_grandchild_the_shell_left_behind(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            env = {**os.environ, **runtime_env(root)}
+            env = {**os.environ, **runtime_env(root), "PYTHONPATH": str(CAIRN_ROOT)}
             pid_path = root / "grandchild.pid"
             inner = (
                 f"{shlex.quote(sys.executable)} -c "
@@ -771,7 +775,7 @@ class ExecAndWait(unittest.TestCase):
             # sleeper is a grandchild rather than the direct child cairn holds.
             process = subprocess.Popen(
                 [sys.executable, "-m", "cairn", "exec", "--command", f"{inner}; true"],
-                cwd=Path(__file__).parents[1],
+                cwd=root,
                 env=env,
                 start_new_session=True,
             )
@@ -785,6 +789,42 @@ class ExecAndWait(unittest.TestCase):
             if not wait_for_exit(grandchild):
                 os.kill(grandchild, signal.SIGKILL)
                 self.fail(f"grandchild {grandchild} survived cancellation")
+
+
+class TheGroupSweepBelongsToAStep(unittest.TestCase):
+    """A process that leads its group is not thereby a step.
+
+    Dagu starts a bare assertion as `sh -c`, which execs it, so a test suite run as a
+    plan's assertion leads its own group exactly as a step does. A sweep keyed on the group
+    alone terminated that suite from inside its own timeout tests.
+    """
+
+    def _lead_a_group_and(self, body: str) -> subprocess.CompletedProcess[str]:
+        script = f"import cairn.core as core\n{body}\nprint('survived')"
+        return subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=CAIRN_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            start_new_session=True,
+        )
+
+    def test_a_group_leader_outside_a_step_is_not_swept(self) -> None:
+        finished = self._lead_a_group_and("core.stop_orphans()")
+        self.assertEqual(finished.returncode, 0, finished.stderr)
+        self.assertIn("survived", finished.stdout)
+
+    def test_a_step_still_sweeps_its_group_and_survives_its_own_signal(self) -> None:
+        finished = self._lead_a_group_and(
+            "import subprocess, sys\n"
+            "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+            "with core.cancel_on_termination():\n"
+            "    core.stop_orphans()\n"
+            "assert child.wait(timeout=10) == -15, child.returncode"
+        )
+        self.assertEqual(finished.returncode, 0, finished.stderr)
+        self.assertIn("survived", finished.stdout)
 
 
 class FakeInput:

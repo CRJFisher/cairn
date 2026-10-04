@@ -101,6 +101,14 @@ SOURCE_KEY = "source"
 BACKED_BY_KEY = "backed_by"
 COMMAND_KEY = "command_sha256"
 TREE_KEY = "tree_sha256"
+# Wall-clock time the gate let the assertion run. The assertion writes nothing, so this is
+# the only start the mark gate can time it from; the gate's own duration is milliseconds.
+RELEASED_AT_KEY = "released_at"
+
+# The exit status Dagu 2.11.0 hands on for a process a signal ended: Go's `ExitCode()`
+# answers -1 there, and the signal itself does not reach `${<id>.exit_code}`. Read as an
+# exit it says the assertion failed, when it never got to say anything.
+SIGNALLED_EXIT = -1
 
 
 def command_digest(command: str) -> str:
@@ -242,6 +250,7 @@ def _decide(
             None,
             detail,
         )
+    detail[RELEASED_AT_KEY] = time.time()
     return NEEDED_RUN_IT, CommandResult(
         NEEDED_RUN_IT, "done", "the assertion runs", [], False, None, detail
     )
@@ -354,23 +363,25 @@ def record_executed(
         SOURCE_KEY: ASSERTION_EXECUTED,
         BACKED_BY_KEY: step_id,
     }
+    released = detail.get(RELEASED_AT_KEY)
+    duration = (
+        max(0.0, time.time() - released)
+        if isinstance(released, (int, float)) and not isinstance(released, bool)
+        else 0.0
+    )
     completed = CommandResult(
         exit_code,
         "done" if exit_code == 0 else "failed",
-        f"the assertion exited {exit_code}",
+        f"the assertion was ended by a signal after {duration:.0f}s, before it exited"
+        if exit_code == SIGNALLED_EXIT
+        else f"the assertion exited {exit_code}",
         [],
         False,
         None,
         detail,
     )
-    duration = report.get("duration")
     with survive_termination():
-        write_report_for(
-            context,
-            f"{VERIFY_PREFIX}{step_id}",
-            completed,
-            float(duration) if isinstance(duration, (int, float)) else 0.0,
-        )
+        write_report_for(context, f"{VERIFY_PREFIX}{step_id}", completed, duration)
         tree = detail.get(TREE_KEY)
         command = detail.get(COMMAND_KEY)
         if isinstance(tree, str) and isinstance(command, str):
@@ -394,6 +405,8 @@ __all__ = [
     "NEEDED_VERB",
     "PROOF_LOCK_UNAVAILABLE",
     "PUBLICATION_WAIT_SECONDS",
+    "RELEASED_AT_KEY",
+    "SIGNALLED_EXIT",
     "SOURCE_KEY",
     "TREE_KEY",
     "assertion_report",

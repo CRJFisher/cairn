@@ -24,6 +24,8 @@ from cairn.assertions import (
     EXIT_KEY,
     NEEDED_RUN_IT,
     NEEDED_SKIP_IT,
+    RELEASED_AT_KEY,
+    SIGNALLED_EXIT,
     SOURCE_KEY,
     assertion_report,
     command_digest,
@@ -499,6 +501,28 @@ class TheAssertionsOwnGateFailsOpen(unittest.TestCase):
         self.assertTrue(run_verify_gate("a", CHAIN, "0", context)[0]["record"])
         verdict, _ = run_verify_gate("a", CHAIN, "3", context)
         self.assertEqual(verdict["cause"], "verify_failed")
+
+    def test_an_assertion_a_signal_ended_is_said_to_be_one_and_timed_from_its_release(
+        self,
+    ) -> None:
+        """An eight-minute suite SIGTERMed mid-run was recorded as `the assertion exited -1`
+        over the gate's own 0.03 seconds."""
+        work_report(self.root, "a", status="done")
+        self._needed()
+        report = self._decision()
+        assert report is not None
+        report["detail"][RELEASED_AT_KEY] -= 473
+        (reports_of(self.root) / f"{verify_name('a')}.json").write_text(json.dumps(report))
+        context = RuntimeContext(
+            run_id="run-1", step_id=mark_name("a"), working_directory=self.root,
+            report_path=reports_of(self.root) / f"{mark_name('a')}.json", runs_root=self.root / "runs",
+        )
+        verdict, _ = run_verify_gate("a", CHAIN, str(SIGNALLED_EXIT), context)
+        self.assertEqual(verdict["cause"], "verify_failed")
+        account = self._decision()
+        assert account is not None
+        self.assertIn("ended by a signal after 473s", account["summary"])
+        self.assertGreaterEqual(account["duration"], 473)
 
     def test_a_missing_work_report_is_a_halt_whatever_the_reference_reads(self) -> None:
         context = RuntimeContext(

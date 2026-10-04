@@ -93,13 +93,27 @@ def _sigterm(
         signal.signal(signal.SIGTERM, previous)
 
 
-def cancel_on_termination() -> Any:
-    """Turn a step-directed SIGTERM into an exception the subcommand can unwind from.
+# Set while this process is running as an engine step: `main` claims it once the step's
+# identity has resolved. Leading a process group is not that identity — a test runner the
+# engine started leads its group too — so a sweep that keyed on the group alone would
+# terminate whatever process imported Cairn and reached a timeout path.
+_STEP = threading.Event()
+
+
+@contextmanager
+def cancel_on_termination() -> Generator[None]:
+    """Run as an engine step: turn a step-directed SIGTERM into an exception to unwind from.
 
     Every subcommand runs inside this, so a cancelled step stops its own children and
-    records a cause instead of dying silently mid-work.
+    records a cause instead of dying silently mid-work. It is also the claim
+    `stop_orphans` requires before it signals the group.
     """
-    return _sigterm(_raise_cancelled)
+    _STEP.set()
+    try:
+        with _sigterm(_raise_cancelled):
+            yield
+    finally:
+        _STEP.clear()
 
 
 def survive_termination() -> Any:
@@ -114,15 +128,16 @@ def survive_termination() -> Any:
 def stop_orphans() -> None:
     """Signal descendants a direct child left behind, without leaving the engine's group.
 
-    Reached only after Dagu's identity resolved, and only when this process leads its own
-    group — which the engine guarantees for a step, and which bounds the group to this
-    process and its descendants. SIGTERM is where it stops: escalating to SIGKILL across
+    Acts only inside `cancel_on_termination`, which `main` enters once Dagu's identity has
+    resolved, and only when this process leads its own group — which the engine guarantees
+    for a step, and which bounds the group to this process and its descendants. Anywhere
+    else, such as a test suite calling a subcommand in-process, it does nothing. SIGTERM is where it stops: escalating to SIGKILL across
     the group would kill this process before it writes its report, so a descendant that
     ignores SIGTERM stays for the engine's own reaping.
 
     Callable from any thread, which is what the step's own deadline needs ([providers.py]).
     """
-    if os.getpgrp() != os.getpid():
+    if not _STEP.is_set() or os.getpgrp() != os.getpid():
         return
     _SWEEPING.set()
     try:
