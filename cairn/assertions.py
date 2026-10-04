@@ -22,6 +22,12 @@ what passes. The state is what git reports, so a step whose whole effect lands i
 ignores moves neither the tree nor the digest, and a later gate quoting the same command
 shares its proof.
 
+**Publishing a proof is a concurrent decision**, so it happens in a critical section keyed
+by the proof: two steps quoting one command run it at the same moment, each having asked
+before either filed, and an unlocked read/check/write would let whichever finished last
+decide what every later gate reads. Failure's dominance is what that lock protects, and it
+holds whatever order the two writers arrive in ([_publish]).
+
 **It fails open, like the marker gate.** Running an assertion that need not run costs
 minutes; skipping one that must run costs the step its record. Every fault, argument skew
 included, exits zero — which is also why this verb has its own routing arm rather than a
@@ -60,10 +66,17 @@ from cairn.core import (
     write_report_for,
 )
 from cairn.gitio import digest_states, git, tree_entries
-from cairn.layout import MARKER_DIRECTORY, assertion_result_path
+from cairn.layout import MARKER_DIRECTORY, assertion_lock_path, assertion_result_path
+from cairn.locks import exclusive_lock
 from cairn.plan.schema import VERIFY_PREFIX, WORK_PREFIX
 
 NEEDED_VERB = "needed"
+
+# How long publishing one proof waits for the key's lock. The critical section is a read of
+# one small file and a replace of another, so a wait this long is already pathological
+# rather than busy — and the fallback is only a spared execution, never a weaker proof.
+PUBLICATION_WAIT_SECONDS = 30.0
+PROOF_LOCK_UNAVAILABLE = "proof_lock_unavailable"
 
 # The precondition's two answers, named for what the engine does with them.
 NEEDED_RUN_IT = EXIT_OK
@@ -265,6 +278,65 @@ def needed_main(arguments: list[str]) -> int:
         return NEEDED_RUN_IT
 
 
+def _standing_failure(standing: dict[str, Any] | None, command: str, tree: str) -> bool:
+    """Whether a failure for this command against this tree is already filed."""
+    if standing is None:
+        return False
+    exit_code = standing.get(EXIT_KEY)
+    return (
+        standing.get(COMMAND_KEY) == command
+        and standing.get(TREE_KEY) == tree
+        and isinstance(exit_code, int)
+        and not isinstance(exit_code, bool)
+        and exit_code != 0
+    )
+
+
+def _publish(
+    context: RuntimeContext, step_id: str, command: str, tree: str, exit_code: int
+) -> None:
+    """File this execution as the proof every later gate quoting the command may share.
+
+    **Publication is a critical section, keyed by the proof.** Two steps quoting one
+    command execute it concurrently, each having asked before either filed, so both can
+    find no standing proof — and whichever writes last would decide what every later gate
+    reads. So the key is locked, the standing result is re-read inside the lock, and
+    failure is dominant: a filed failure for this command against this tree is never
+    replaced by a pass, in either arrival order. Sharing never widens what passes.
+
+    The proof is replaced in one step, so a gate reading it concurrently sees the whole of
+    one result or none ([core.write_text]), and the lock is one the kernel drops when its
+    holder dies — a writer killed mid-publication leaves the key free and no proof it did
+    not finish writing.
+
+    A lock that cannot be taken publishes nothing, which is the one safe way to be without
+    one: an absent proof costs the next gate quoting this command its own execution, while
+    a write outside the critical section would cost a failure its dominance.
+    """
+    path = assertion_result_path(context.runs_root, context.run_id, command)
+    try:
+        with exclusive_lock(
+            assertion_lock_path(context.runs_root, context.run_id, command),
+            wait_seconds=PUBLICATION_WAIT_SECONDS,
+            cause=PROOF_LOCK_UNAVAILABLE,
+            subject=f"the proof of assertion command {command[:12]}",
+        ):
+            if _standing_failure(_read_shared(path), command, tree):
+                return
+            write_json(
+                path,
+                {
+                    COMMAND_KEY: command,
+                    TREE_KEY: tree,
+                    EXIT_KEY: exit_code,
+                    "step_id": step_id,
+                    "run_id": context.run_id,
+                },
+            )
+    except CairnError as exc:
+        print(f"assertion proof [{step_id}]: {exc}; nothing published", file=sys.stderr)
+
+
 def record_executed(
     context: RuntimeContext, step_id: str, report: dict[str, Any], exit_code: int
 ) -> None:
@@ -275,11 +347,6 @@ def record_executed(
     took before the assertion ran — never recomputed here, where the assertion may already
     have changed what it read. A proof against a tree git would not digest is filed
     nowhere: nothing may be shared against it.
-
-    A failing proof already filed for the same command against the same tree is left
-    standing. Two steps quoting one command can execute it concurrently — each missing the
-    other's proof — and a pass written over a failure would reopen every gate the failure
-    closed. Sharing never widens what passes.
     """
     detail = {
         **_detail(report),
@@ -307,25 +374,7 @@ def record_executed(
         tree = detail.get(TREE_KEY)
         command = detail.get(COMMAND_KEY)
         if isinstance(tree, str) and isinstance(command, str):
-            path = assertion_result_path(context.runs_root, context.run_id, command)
-            standing = _read_shared(path)
-            if (
-                standing is not None
-                and standing.get(COMMAND_KEY) == command
-                and standing.get(TREE_KEY) == tree
-                and standing.get(EXIT_KEY) not in (0, None)
-            ):
-                return
-            write_json(
-                path,
-                {
-                    COMMAND_KEY: command,
-                    TREE_KEY: tree,
-                    EXIT_KEY: exit_code,
-                    "step_id": step_id,
-                    "run_id": context.run_id,
-                },
-            )
+            _publish(context, step_id, command, tree, exit_code)
 
 
 __all__ = [
@@ -343,6 +392,8 @@ __all__ = [
     "NEEDED_RUN_IT",
     "NEEDED_SKIP_IT",
     "NEEDED_VERB",
+    "PROOF_LOCK_UNAVAILABLE",
+    "PUBLICATION_WAIT_SECONDS",
     "SOURCE_KEY",
     "TREE_KEY",
     "assertion_report",

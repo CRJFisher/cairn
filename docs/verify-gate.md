@@ -84,10 +84,20 @@ fresh run id — proves everything again against the tree it finds. A shared fai
 every gate quoting it: sharing never widens what passes. A step-specific command shares
 nothing, because its bytes are its own. The assertion node's report says which it was —
 `executed` by this step, or `shared` from the step whose execution backed it — and the run
-record carries the exit and the execution that backed it for every step. A proof already
-filed as a failure for the same command against the same tree is never replaced by a
-passing one: two steps can execute one command concurrently, each missing the other's
-proof, and a pass written over a failure would reopen every gate the failure closed.
+record carries the exit and the execution that backed it for every step.
+
+**Publishing a proof is a critical section, keyed by the proof.** Two steps quoting one
+command execute it at the same moment, each having asked before either filed, so both find
+no standing proof — and whichever wrote last would otherwise decide what every later gate
+reads. Each writer takes an advisory lock on the key, re-reads the standing result inside
+it, and declines to write where a failure for the same command against the same tree is
+already filed: **failure is dominant**, in either arrival order, because a pass written
+over a failure would reopen every gate the failure closed. The proof is replaced in one
+step, so a gate reading it concurrently sees the whole of one result or none, and the lock
+is one the kernel drops when its holder dies — a writer killed inside the section leaves
+the key free and no result it never finished writing. A lock that cannot be taken publishes
+nothing, which costs the next gate quoting that command its own execution and costs a
+failure nothing.
 
 **The marker write is a separate step.** Verification decides; a step gated on that decision
 records. `cairn marker write` is the only writer of `.steps/<id>.done`, so a marker means

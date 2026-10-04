@@ -1,12 +1,14 @@
-"""The git write mutex and the repository run lock.
+"""The advisory file lock, the git write mutex built on it, and the repository run lock.
 
-Two locks with two different lifetimes, and the difference is the whole design.
+Two kinds of lock with two different lifetimes, and the difference is the whole design.
 
-The **mutex** serialises the git writes of one moment. It is an advisory file lock the
-kernel drops the instant its holder dies, which is what a mutex wants: a crashed writer
-must never keep the next one out. Agent subprocesses are deliberately outside it — they
-write their own worktree's index and their own branch's ref, neither of which any other
-step touches, and they are where the wall-clock is.
+An **advisory file lock** serialises the writes of one moment. The kernel drops it the
+instant its holder dies, which is what a critical section wants: a crashed writer must
+never keep the next one out. `exclusive_lock` is the one implementation, and Cairn takes it
+twice — as the git write mutex here, and over an assertion proof's publication
+([assertions.py]). Agent subprocesses are deliberately outside the mutex — they write their
+own worktree's index and their own branch's ref, neither of which any other step touches,
+and they are where the wall-clock is.
 
 The **run lock** outlives every process that touches it. One step takes it, a different
 step gives it back, and a crash between them leaves it held with nobody running. So it
@@ -50,7 +52,7 @@ MUTEX_FILE = "git-write.lock"
 # invocation's own timeout fits inside a support step's budget with room to write the
 # report, so a jammed mutex reports itself rather than being killed with nothing recorded.
 MUTEX_WAIT_SECONDS = float(MUTEX_WAIT)
-MUTEX_POLL_SECONDS = 0.05
+LOCK_POLL_SECONDS = 0.05
 
 # A git lock file younger than this may belong to a live git process — an agent's own
 # commit runs outside the mutex by design — so only an older one is treated as debris a
@@ -252,8 +254,58 @@ def refuse_unresolved_merge(directory: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# The git write mutex
+# The advisory file lock, and the git write mutex
 # ---------------------------------------------------------------------------
+
+
+@contextmanager
+def exclusive_lock(
+    path: Path, *, wait_seconds: float, cause: str, subject: str
+) -> Generator[None]:
+    """Hold `path`, so one process at a time is inside the body that follows.
+
+    Contention that outlasts the wait and a filesystem that cannot lock at all are both
+    raised as `cause`, never returned as the lock being free: a caller that proceeds
+    without the lock has to say so in its own words, and none may do it by accident. A
+    filesystem that cannot lock is not contention, which is why it is raised at once rather
+    than waited out — the wait is measured for a busy lock and would burn most of a step's
+    bound before reporting.
+
+    The holder's identity is written into the file for a person reading the directory. It is
+    never read back: the kernel owns who holds this lock, and a second source for that
+    answer could only disagree with it.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    deadline = time.monotonic() + wait_seconds
+    try:
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise CairnError(
+                        cause,
+                        f"waited {wait_seconds:g} seconds for {subject} and it never "
+                        "came free",
+                        detail={"lock": str(path)},
+                    ) from None
+                time.sleep(LOCK_POLL_SECONDS)
+            except OSError as exc:
+                raise CairnError(
+                    cause,
+                    f"{subject} cannot be locked: {exc}",
+                    detail={"lock": str(path), "errno": exc.errno},
+                ) from exc
+        os.ftruncate(descriptor, 0)
+        os.write(descriptor, f"{os.getpid()} {socket.gethostname()}\n".encode())
+        yield
+    finally:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
 
 
 @contextmanager
@@ -269,42 +321,16 @@ def git_write_mutex(
     however the step was invoked — the engine's own `flock` guards only its own worktree
     add and remove, and nothing an agent does ([research-dagu.md]).
     """
-    path = state_directory(directory) / MUTEX_FILE
-    descriptor = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
-    deadline = time.monotonic() + wait_seconds
-    try:
-        while True:
-            try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.monotonic() >= deadline:
-                    raise CairnError(
-                        "git_mutex_timeout",
-                        f"waited {wait_seconds:g} seconds for the git write mutex on "
-                        f"{directory} and it never came free",
-                        detail={"mutex": str(path)},
-                    ) from None
-                time.sleep(MUTEX_POLL_SECONDS)
-            except OSError as exc:
-                # A filesystem that cannot lock at all is not contention, and waiting five
-                # minutes to say so would burn most of the step's budget before reporting.
-                raise CairnError(
-                    "git_mutex_timeout",
-                    f"the git write mutex on {directory} cannot be locked: {exc}",
-                    detail={"mutex": str(path), "errno": exc.errno},
-                ) from exc
-        os.ftruncate(descriptor, 0)
-        os.write(descriptor, f"{os.getpid()} {socket.gethostname()}\n".encode())
+    with exclusive_lock(
+        state_directory(directory) / MUTEX_FILE,
+        wait_seconds=wait_seconds,
+        cause="git_mutex_timeout",
+        subject=f"the git write mutex on {directory}",
+    ):
         # Debris is cleared under the mutex rather than before it, so two writers can
         # never both decide a lock file is stale and race to unlink it.
         clear_stale_git_locks(directory, older_than_seconds=stale_after_seconds)
         yield
-    finally:
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
-        finally:
-            os.close(descriptor)
 
 
 # ---------------------------------------------------------------------------
@@ -611,6 +637,7 @@ __all__ = [
     "acquire_run_lock",
     "clear_stale_git_locks",
     "describe_holder",
+    "exclusive_lock",
     "git_write_mutex",
     "holder_liveness",
     "read_run_lock",

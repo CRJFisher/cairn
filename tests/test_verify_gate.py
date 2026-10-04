@@ -4,6 +4,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -38,7 +39,8 @@ from cairn.emitters import (
     emit_verify,
     verify_gate,
 )
-from cairn.layout import assertion_result_path, reports_directory
+from cairn.layout import assertion_lock_path, assertion_result_path, reports_directory
+from cairn.locks import exclusive_lock
 from cairn.plan.assertions import AnswerError, answer, propose, render, tally
 from cairn.plan.cli import main as plan_main
 from cairn.plan.report import render as render_report
@@ -602,9 +604,10 @@ class OneProofPerCommandPerTree(unittest.TestCase):
         self.assertEqual(self._account("b")["detail"][DECISION_KEY], DECISION_RUN)
 
     def test_a_passing_proof_never_replaces_a_failing_one(self) -> None:
-        """Two steps quoting one command can execute it concurrently, each having asked
-        before either filed. A pass written over the failure would reopen every gate the
-        failure closed, which is sharing widening what passes."""
+        """Both steps asked before either filed, so each publishes over the other's key.
+        A pass written over the failure would reopen every gate the failure closed, which
+        is sharing widening what passes. The write order the two reach the key in is the
+        subject of `PublishingAProofIsOneDecision`; this pins the rule itself."""
         work_report(self.root, "a", status="noop")
         work_report(self.root, "b", status="noop")
         self.assertEqual(self._needed("a"), NEEDED_RUN_IT)
@@ -649,6 +652,149 @@ class OneProofPerCommandPerTree(unittest.TestCase):
     def test_a_tree_git_will_not_digest_shares_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as bare:
             self.assertIsNone(tree_digest(Path(bare)))
+
+
+class PublishingAProofIsOneDecision(unittest.TestCase):
+    """[24 A]: publication is a critical section keyed by the proof, exercised across
+    processes. Two steps quoting one command execute it at the same moment, so the order
+    they reach the decision in belongs to the machine — and failure stands in all of them.
+    """
+
+    PUBLISH = (
+        "import sys, time\n"
+        "from pathlib import Path\n"
+        "from cairn.assertions import assertion_report, record_executed\n"
+        "from cairn.core import RuntimeContext\n"
+        "step, code = sys.argv[1], int(sys.argv[2])\n"
+        "barrier, writers = Path(sys.argv[3]), int(sys.argv[4])\n"
+        "context = RuntimeContext.from_env()\n"
+        "account = assertion_report(context.report_path.parent, step, context.run_id)\n"
+        "barrier.mkdir(parents=True, exist_ok=True)\n"
+        "(barrier / step).write_text('', encoding='utf-8')\n"
+        "deadline = time.monotonic() + 30\n"
+        "while len(list(barrier.iterdir())) < writers and time.monotonic() < deadline:\n"
+        "    pass\n"
+        "record_executed(context, step, account, code)\n"
+    )
+
+    HOLD = (
+        "import sys, time\n"
+        "from pathlib import Path\n"
+        "from cairn.locks import exclusive_lock\n"
+        "with exclusive_lock(\n"
+        "    Path(sys.argv[1]), wait_seconds=30, cause='held', subject='the proof'\n"
+        "):\n"
+        "    print('held', flush=True)\n"
+        "    time.sleep(float(sys.argv[2]))\n"
+    )
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        for arguments in (
+            ("init", "-b", "main"),
+            ("config", "user.email", "cairn@example.invalid"),
+            ("config", "user.name", "cairn"),
+            ("commit", "--allow-empty", "-m", "root"),
+        ):
+            subprocess.run(("git", *arguments), cwd=self.root, check=True, capture_output=True)
+        self.runs = self.root / "runs"
+
+    def _asked(self, step_id: str, digest: str) -> None:
+        """The assertion's own gate, run where the emitted pattern runs it: it takes the
+        tree digest the proof is keyed on, before the assertion touches the tree."""
+        work_report(self.root, step_id, status="noop")
+        self.assertEqual(
+            run_cli(
+                ["verify", "needed", "--step", step_id, "--command-digest", digest],
+                runtime_env(self.root, step_id=verify_name(step_id)),
+                self.root,
+            )[0],
+            NEEDED_RUN_IT,
+        )
+
+    def _gate(self, step_id: str, exit_text: str) -> Any:
+        context = RuntimeContext(
+            run_id="run-1", step_id=mark_name(step_id), working_directory=self.root,
+            report_path=reports_of(self.root) / f"{mark_name(step_id)}.json",
+            runs_root=self.runs,
+        )
+        return run_verify_gate(step_id, CHAIN, exit_text, context)[0]
+
+    def _child(self, script: str, *arguments: str, step_id: str) -> subprocess.Popen[str]:
+        child = subprocess.Popen(
+            [sys.executable, "-c", script, *arguments],
+            env={
+                **os.environ,
+                **runtime_env(self.root, step_id=verify_name(step_id)),
+                "PYTHONPATH": str(CAIRN_ROOT),
+            },
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.addCleanup(child.kill)
+        return child
+
+    def _race(self, round_index: int, exits: tuple[int, ...]) -> dict[str, Any]:
+        digest = command_digest(f"npx vitest run --round {round_index}")
+        barrier = self.root / "barriers" / str(round_index)
+        steps = [f"s{round_index}_{place}" for place in range(len(exits))]
+        for step_id in steps:
+            self._asked(step_id, digest)
+        children = [
+            self._child(
+                self.PUBLISH, step_id, str(code), str(barrier), str(len(exits)),
+                step_id=step_id,
+            )
+            for step_id, code in zip(steps, exits, strict=True)
+        ]
+        for child in children:
+            self.assertEqual(child.wait(timeout=60), 0, child.communicate()[1])
+        filed: Any = json.loads(
+            assertion_result_path(self.runs, "run-1", digest).read_text(encoding="utf-8")
+        )
+        return cast(dict[str, Any], filed)
+
+    def test_a_failure_stands_whichever_writer_reaches_the_key_last(self) -> None:
+        for index, exits in enumerate(((1, 0, 0), (0, 1, 0), (0, 0, 1), (0, 1, 0, 0))):
+            with self.subTest(exits=exits):
+                self.assertEqual(self._race(index, exits)[EXIT_KEY], 1)
+
+    def test_a_writer_killed_holding_the_key_leaves_it_free_and_files_no_proof(self) -> None:
+        """The kernel owns this lock, so a dead holder releases it rather than keeping the
+        next publication out until a timeout — and the proof is replaced in one step, so a
+        writer killed inside the section leaves no result it never finished writing."""
+        digest = command_digest("npx vitest run --killed")
+        proof = assertion_result_path(self.runs, "run-1", digest)
+        child = self._child(
+            self.HOLD, str(assertion_lock_path(self.runs, "run-1", digest)), "60",
+            step_id="killed",
+        )
+        assert child.stdout is not None
+        self.assertEqual(child.stdout.readline().strip(), "held")
+        self.assertFalse(proof.exists())
+        child.kill()
+        self.assertIsNotNone(child.wait(timeout=30))
+        self._asked("after", digest)
+        self.assertTrue(self._gate("after", "0")["record"])
+        filed: Any = json.loads(proof.read_text(encoding="utf-8"))
+        self.assertEqual(filed[EXIT_KEY], 0)
+
+    def test_a_key_nobody_can_take_publishes_nothing(self) -> None:
+        """Failure's dominance is what the lock protects, so a publication that cannot
+        enter the section files nothing rather than writing outside it: the next gate
+        quoting the command proves it again, and this step's own verdict is untouched."""
+        digest = command_digest("npx vitest run --locked")
+        self._asked("held_out", digest)
+        held = exclusive_lock(
+            assertion_lock_path(self.runs, "run-1", digest),
+            wait_seconds=5, cause="held", subject="the proof",
+        )
+        with held, patch("cairn.assertions.PUBLICATION_WAIT_SECONDS", 0.2):
+            self.assertTrue(self._gate("held_out", "0")["record"])
+        self.assertFalse(assertion_result_path(self.runs, "run-1", digest).exists())
 
 
 class TheGateFailsClosed(unittest.TestCase):

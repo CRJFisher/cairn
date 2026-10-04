@@ -19,14 +19,12 @@ provenance says which execution backed it. Nothing changes across runs.
 
 **What must not change.** A step-specific assertion (the `grep`-shaped clauses) still runs per step; only byte-identical commands coalesce. A shared result that failed closes every gate that would have read it — sharing never widens what passes.
 
-### Release blocker — publishing a shared proof is a concurrent decision
+### Publishing a shared proof is a concurrent decision
 
-The first implementation uses an atomic file replacement but an unlocked read/check/write.
-Two assertion processes can both observe no standing proof; a failure can publish first and a
-pass can then replace it. The existing test named for concurrency invokes the two gates
-sequentially and therefore cannot exercise the race.
-
-Publication is an interprocess critical section keyed by the proof path:
+Two assertion processes quoting one command both observe no standing proof, so an unlocked
+read/check/write lets whichever finishes last decide what every later gate reads — a pass
+replacing a failure, which is sharing widening what passes. Publication is an interprocess
+critical section keyed by the proof path:
 
 - lock, then re-read the standing result before deciding what to write;
 - failure is dominant for one command/tree key and can never be replaced by success;
@@ -34,10 +32,10 @@ Publication is an interprocess critical section keyed by the proof path:
 - a crashed writer leaves a reclaimable lock and no invented result;
 - the multiprocess test uses a barrier so both writers reach the decision concurrently.
 
-Until this is true, shared proof caching is less safe than proving each assertion independently
-and must not be treated as a performance-only repair.
+Shared proof caching is a safety property before it is a performance one. A sequential test
+cannot exercise the race, so the concurrent one is what the sharing stands on.
 
-**Touches.** `cairn/verify.py`, `cairn/emitters.py` (the verify node body or a result cache keyed on command bytes under the run directory), `docs/verify-gate.md`, `tests/test_verify_gate.py`.
+**Touches.** `cairn/assertions.py` (the assertion's own precondition and its proof), `cairn/verify.py`, `cairn/emitters.py`, `cairn/locks.py`, `cairn/layout.py`, `docs/verify-gate.md`, `tests/test_verify_gate.py`.
 
 ## B — After a gate closes, the run spends half an hour proving nothing
 
@@ -79,3 +77,45 @@ and must not be treated as a performance-only repair.
 - A run whose chain breaks at step k runs no assertion for steps after k that were skipped for the upstream cause, and its wall clock past the fault is seconds, not minutes; a marker no-op's assertion still runs.
 - `run start` over a dirty tree refuses before the offer is spent, names the paths, and the same acceptance starts the run once the tree is clean.
 - The verify-retry question is answered in [plan-contract.md](../docs/plan-contract.md) one way or the other, with the reasoning recorded beside `retries`.
+
+## Implementation Notes
+
+**Status: done.** Sections A, B and C are built. D landed with them, before
+[32](32-no-cost.md) decided there is no acceptance left to lose; it stays as built until
+that purge takes it.
+
+A recovery of the seventeen-step chain waits on one execution of its shared assertion
+command instead of fourteen, and a run whose chain breaks stops spending wall clock the
+moment the verdict is decided. Nothing about what a verdict means moved: every step's record
+still names an assertion and its exit status, and a step nobody asserted still never records.
+
+- **A.** A step's assertion is fronted by its own precondition, `cairn verify needed`, which
+  declines an assertion whose exact command has already been proven in this run against
+  exactly this tree. The key is the command's bytes plus the commit the tree stands on plus
+  every dirty path's content, with `.steps/` and the runs root left out because Cairn writes
+  to both on every step ([cairn/assertions.py](../cairn/assertions.py)). The mark gate
+  completes the assertion node's report with the exit it read and files that exit as the
+  proof later gates share, so the record says for every step whether its verdict was
+  `executed` or `shared` and which step's execution backed it. Publication happens inside an
+  advisory lock on the proof's own key, re-reads the standing result there, and never
+  replaces a failure with a pass; `exclusive_lock`
+  ([cairn/locks.py](../cairn/locks.py)) is the one implementation of that lock, shared with
+  the git write mutex, and the kernel drops it when its holder dies. A key that cannot be
+  taken publishes nothing, so the fallback is a spared execution rather than a weaker proof.
+  `PublishingAProofIsOneDecision` releases three and four writers through a file barrier in
+  separate processes and asserts the failure stands whichever of them arrives last.
+- **B.** The same precondition declines an assertion whose work node left no report of this
+  run, which is what an upstream halt leaves behind: the gate would close `not_reached`
+  regardless, so the assertion is skipped with the work and the run's wall clock past a
+  fault is seconds. A marker no-op leaves a `noop` report and keeps its assertion, which is
+  the recovery guarantee. The mark gate reads the precondition's recorded decision rather
+  than the engine's exit-status reference, because `${<id>.exit_code}` reads `0` for a node
+  its precondition skipped and a gate trusting it would record a marker over an assertion
+  that never ran.
+- **C.** Answered in [plan-contract.md](../docs/plan-contract.md) beside `retries`: an
+  assertion never retries, whatever the step's own value. The engine records no per-node
+  retry count, so a retried pass would read exactly like a first-try pass in the run record,
+  and an assertion that passes on its second asking has asserted less while looking like
+  more. The remedy for one that flakes is the plan stating an assertion that does not, and
+  the price of leaving one in is stated there: one proof is shared by every gate quoting a
+  command, so one flaky execution closes every one of them.

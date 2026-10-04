@@ -1,16 +1,30 @@
-# 35 — Human in the loop: a step that waits for a person
+# 35 — Human in the loop: a run asks a person, and carries on
 
-**Status: rough idea, not a plan.** Nothing here is decided. It records what the engine offers,
-where Cairn's invariants meet it, and the questions a real plan would have to answer.
+**North star ([principle 3](../PRINCIPLES.md)).** A person is asked for a decision or a missing
+fact at the moment the work needs it, answers, and the work carries on with that answer — without
+re-running the plan by hand. Software is complex: no plan anticipates every decision, so asking is
+an expected part of a run, not a failure.
 
-Some steps genuinely need a person — a choice between options, a sign-off, a missing fact. Today a
-run can only stop at such a step (`user_decision_required`, [08](08-verify-gate.md)) and a person
-re-runs the plan afterwards. The idea: let a run **pause at a named point, take a typed answer from
-a person, and carry that answer into later steps**, without ending the run.
+**Status: idea, not a plan.** Seeing what sessions are doing is a separate capability,
+[36](36-keeping-tabs.md); one surface for both is [37](37-one-plane-for-watching-and-answering.md).
 
-**Serves** the capability surface of **Run** (a run can wait and resume) and **Author** (a plan can
-declare a decision point and consume its answer). It would be the first runtime path by which a
-human supplies data mid-run.
+## Two kinds of question
+
+- **Known in advance** — the plan author knows a decision is coming ("pick the schema after the
+  spike"). Declared in the plan, so it fits the static graph: Dagu's human task or approval gate
+  (below).
+- **Surfaced mid-session** — the agent hits something the plan did not foresee. This is the common
+  case in complex work, and the one that causes today's friction. A static graph cannot declare
+  it, so it needs a different mechanism. Candidates:
+  - **Park and resume.** The session ends with a `needs_input` outcome and a written question; its
+    branch parks, independent branches continue; the answer seeds a follow-on run
+    ([34](34-follow-on-runs.md)). Fits every current invariant; loses the session's context.
+  - **Block in place.** The session gets an `ask_human` tool (a small MCP server) that writes the
+    question to a store and blocks until an answer appears. Keeps the full context and is the most
+    natural for the agent; costs a held session, a held lock, and needs a timeout.
+  - Likely both: block for a bounded time, then park.
+
+Where the answer lands decides question 3 below, and is shared with [37](37-one-plane-for-watching-and-answering.md).
 
 ## What the engine offers (Dagu, docs.dagu.sh; unverified against the pinned 2.11.0)
 
@@ -62,8 +76,8 @@ Invariants any version must keep:
 4. **Timeout.** Human tasks cannot carry one. A stalled wait needs a bound
    ([13](13-triggers-and-schedules.md) holds that bounds are stated up front); is that an external
    reaper, or a reason to prefer the approval gate?
-5. **Relation to `user_decision_required`.** Does this replace stop-and-rerun for that outcome, or
-   sit beside it for decisions known in advance?
+5. **Relation to `user_decision_required`.** This idea should replace stop-and-rerun for that
+   outcome (no backwards compatibility); confirm nothing else depends on it.
 6. **Who answers.** Web UI, CLI, REST are all available; an agent can complete a task too. Cairn
    must decide whether an agent may answer a human task, since that would defeat its purpose.
 7. **Passing state.** Is per-step typed output enough, or does any plan need a shared document
@@ -73,4 +87,5 @@ Invariants any version must keep:
 
 Verify the above against the pinned engine version with a throwaway workflow (does `waiting`
 survive a restart, does completion resume on a worker, what does the record show), then answer
-questions 1–3 before drafting a real plan.
+questions 1–3 before drafting a real plan. Separately, spike `ask_human` as an MCP tool under
+`claude -p`: does a blocking tool call survive tens of minutes, and what does the transcript show?

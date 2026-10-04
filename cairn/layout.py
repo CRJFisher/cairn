@@ -96,6 +96,15 @@ def assertion_result_path(runs_root: Path, run_id: str, command_sha256: str) -> 
     return assertions_directory(runs_root, run_id) / f"{command_sha256}.json"
 
 
+def assertion_lock_path(runs_root: Path, run_id: str, command_sha256: str) -> Path:
+    """The critical section publishing one command's proof is keyed by the proof itself.
+
+    Two steps quoting one command publish to the same path and must not both decide what
+    it holds; two steps quoting different commands never contend ([assertions.py]).
+    """
+    return assertions_directory(runs_root, run_id) / f"{command_sha256}.lock"
+
+
 def record_path(runs_root: Path, run_id: str) -> Path:
     return run_directory(runs_root, run_id) / RECORD_FILE
 
@@ -187,6 +196,7 @@ __all__ = [
     "RUN_ID",
     "VIEW_BASE_DEFAULT",
     "VIEW_BASE_ENV",
+    "assertion_lock_path",
     "assertion_result_path",
     "assertions_directory",
     "check_run_id",
