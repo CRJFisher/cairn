@@ -44,6 +44,7 @@ from cairn.record.model import (
     Infrastructure,
     Lineage,
     NextAction,
+    Remedy,
     RunRecord,
     StepRecord,
     Trigger,
@@ -62,6 +63,7 @@ from cairn.record.vocabulary import (
     EDGE_STEP,
     EDGE_WAVE,
     NEXT_DECIDE,
+    NEXT_FIX_ASSERTION,
     NEXT_NOTHING,
     NEXT_RERUN,
     NEXT_SETTLE_MERGE,
@@ -109,6 +111,7 @@ from cairn.topology import (
     node_name,
 )
 from cairn.verify import (
+    ASSERTION_INTERRUPTED,
     EXCLUSION_CAUSES,
     GATE_INDETERMINATE,
     NOT_REACHED,
@@ -674,7 +677,7 @@ def derive_next_action(
             None,
         )
         return NextAction(
-            action=NEXT_RERUN,
+            action=_rerun_or_fix(by_id.get(subject) if subject else None),
             subject=subject,
             command=_recovery_command(run_id, plan, repository),
         )
@@ -692,11 +695,18 @@ def derive_next_action(
         if has_merge:
             return NextAction(action=NEXT_SETTLE_MERGE, subject=excluded, command=None)
         return NextAction(
-            action=NEXT_RERUN,
+            action=_rerun_or_fix(by_id.get(excluded) if excluded else None),
             subject=excluded,
             command=_recovery_command(run_id, plan, repository),
         )
     return NextAction(action=NEXT_NOTHING, subject=None, command=None)
+
+
+def _rerun_or_fix(subject: StepRecord | None) -> str:
+    """A re-run is the remedy unless the step's assertion never got to decide anything."""
+    if subject is not None and subject["cause"] == ASSERTION_INTERRUPTED:
+        return NEXT_FIX_ASSERTION
+    return NEXT_RERUN
 
 
 def _recovery_command(run_id: str, plan: str | None, repository: str | None) -> str | None:
@@ -761,6 +771,14 @@ def _step_record(
     mark_report = reports.get(f"{MARK_ROLE}_{step_id}")
     commit_report = reports.get(f"{COMMIT_ROLE}_{step_id}")
     assertion_account = _detail(reports.get(f"verify_{step_id}"))
+    remedy_report = reports.get(f"remedy_{step_id}")
+    recheck_account = _detail(reports.get(f"recheck_{step_id}"))
+    if remedy_report is not None and remedy_report.get("status") == "done" and (
+        recheck_account.get(SOURCE_KEY) is not None
+    ):
+        # The step's verdict is the assertion run after the remedy, so that is the one the
+        # record names as the step's; the first one survives inside `remedy`.
+        assertion_account = recheck_account
 
     killed = None if work is None else engine.parse_timeout(work.get("error"))
     outcome, overlays, cause = classify_step(
@@ -837,6 +855,7 @@ def _step_record(
         "timeout_seconds": None if killed is None else killed.bound_seconds,
         "elapsed_seconds": None if killed is None else killed.elapsed_seconds,
         "assertion_tail": assertion_tail,
+        "remedy": _remedy(remedy_report, reports.get(f"verify_{step_id}")),
         "divergence": divergence,
     }
     return StepRecord(
@@ -863,6 +882,23 @@ def _step_record(
             ),
         ),
         **cast(Any, fields),
+    )
+
+
+def _remedy(
+    report: dict[str, Any] | None, first: dict[str, Any] | None
+) -> Remedy | None:
+    """A remedy node's account, bounded like every other string an agent wrote."""
+    if report is None:
+        return None
+    detail = _detail(report)
+    said = report.get("summary")
+    return Remedy(
+        status=str(report.get("status")),
+        said=None if not isinstance(said, str) else normalise(said, limit=LINE_LIMIT),
+        cost_usd=as_money(detail.get("total_cost_usd")),
+        first_exit=as_count(_detail(first).get(EXIT_KEY)),
+        resumed_session=_reported_text(detail.get("resumed_session")),
     )
 
 
@@ -1277,10 +1313,17 @@ def _budget(
         for resolution in resolutions
         if (cost := as_money(resolution.get("total_cost_usd"))) is not None
     ]
+    # A remedy is a second paid session of its step, so it is spent like one.
+    remedy_costs = [
+        cost
+        for step in steps
+        if (remedy := step["remedy"]) is not None and (cost := remedy["cost_usd"]) is not None
+    ]
     total = (
         sum(cast(float, step["cost_usd"]) for step in priced)
         + sum(resolution_costs)
-        if priced or resolution_costs
+        + sum(remedy_costs)
+        if priced or resolution_costs or remedy_costs
         else None
     )
     fields: dict[str, object] = {

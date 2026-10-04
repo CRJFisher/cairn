@@ -15,7 +15,13 @@ import traceback
 from collections.abc import Callable
 from pathlib import Path
 
-from cairn.assertions import NEEDED_VERB, needed_main
+from cairn.assertions import (
+    NEEDED_VERB,
+    REMEDY_VERB,
+    needed_main,
+    remedy_brief,
+    remedy_main,
+)
 from cairn.baseconfig import (
     assert_dag_retry_disabled,
     base_config_path,
@@ -60,6 +66,7 @@ from cairn.parameters import parent_branch, refuse_misfiled_records
 from cairn.parameters import repository as declared_repository
 from cairn.plan.cli import main as plan_main
 from cairn.plan.schema import AGENT_BUDGET_USD, AGENT_MODEL, SCOPES
+from cairn.protocol import compose_remedy_task
 from cairn.providers import run_provider
 from cairn.record.cli import main as record_main
 from cairn.record.store import build_run_record, write_record
@@ -140,20 +147,35 @@ def _agent(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
             "invalid_arguments",
             "an agent session requires a positive finite timeout and budget and a model",
         )
+    prompt: str = args.prompt
+    resume: str | None = None
+    remedy: dict[str, object] = {}
+    if args.remedy_of is not None:
+        if not args.assertion:
+            raise CairnError("invalid_arguments", "a remedy needs the assertion it answers")
+        brief = remedy_brief(context, args.remedy_of)
+        prompt = compose_remedy_task(args.prompt, args.assertion, brief.exit_code, brief.said)
+        resume = brief.resume_session
+        remedy = {
+            "remedy_of": args.remedy_of,
+            "first_exit": brief.exit_code,
+            "resumed_session": resume,
+        }
     before = tree_state(context.working_directory)
-    return _with_dirty_before(
-        run_provider(
-            args.provider,
-            args.prompt,
-            context.working_directory,
-            "auto",
-            args.model,
-            args.max_budget_usd,
-            args.tool or [],
-            deadline_seconds=args.timeout,
-        ),
-        before,
+    result = run_provider(
+        args.provider,
+        prompt,
+        context.working_directory,
+        "auto",
+        args.model,
+        args.max_budget_usd,
+        args.tool or [],
+        deadline_seconds=args.timeout,
+        resume_session=resume,
     )
+    if remedy:
+        result = result._replace(detail={**result.detail, **remedy})
+    return _with_dirty_before(result, before)
 
 
 def _marker(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
@@ -431,6 +453,9 @@ def _parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     child.add_argument("--max-budget-usd", type=float, default=AGENT_BUDGET_USD)
     child.add_argument("--timeout", type=float, required=True)
     child.add_argument("--tool", action="append")
+    # A remedy: the same session, resumed over the assertion it failed ([protocol.py]).
+    child.add_argument("--remedy-of", dest="remedy_of")
+    child.add_argument("--assertion")
 
     # `marker absent` is the precondition and is deliberately absent from this parser: it
     # runs before a step starts rather than as one, so it never reaches this dispatch.
@@ -660,6 +685,10 @@ def main(argv: list[str] | None = None) -> int:
     # hand the mark gate a `0` for it ([assertions.py]).
     if arguments[:2] == ["verify", NEEDED_VERB]:
         return needed_main(arguments[2:])
+    # The remedy gate fails closed in its own direction — a fault opens no paid session —
+    # and writes its own decline, so it is routed ahead of the mark gate's parser too.
+    if arguments[:2] == ["verify", REMEDY_VERB]:
+        return remedy_main(arguments[2:])
     # The verify gate is a precondition too, and it is the fail-open gate's exact inverse:
     # `marker absent` runs the work again whenever it cannot tell, and this one records
     # nothing whenever it cannot tell. Redoing convergent work is cheap; a marker over

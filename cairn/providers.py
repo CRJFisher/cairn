@@ -44,6 +44,7 @@ ProviderRunner = Callable[
         list[str],
         PopenFactory,
         float | None,
+        str | None,
     ],
     CommandResult,
 ]
@@ -457,6 +458,7 @@ def run_claude(
     tools: list[str],
     popen_factory: PopenFactory = subprocess.Popen,
     deadline_seconds: float | None = None,
+    resume_session: str | None = None,
 ) -> CommandResult:
     """Run the selected plain-CLI path and translate its two status channels.
 
@@ -464,8 +466,11 @@ def run_claude(
     resumed once, under what is left of the report grace, to ask for the account it owes;
     a session that has done its work answers in a turn. Either way a report reaches the
     run directory before the engine's own bound, which lands the grace later.
+
+    `resume_session` continues an earlier session instead of opening one: a remedy, asked
+    to fix what its own step's assertion found, in the tree only that step has touched.
     """
-    session_id = str(uuid.uuid4())
+    session_id = resume_session or str(uuid.uuid4())
     started = time.monotonic()
     # The plan's own list **adds** to Cairn's; it never replaces it. A plan cannot hand a
     # step back a tool whose contract the session cannot keep.
@@ -504,7 +509,7 @@ def run_claude(
 
     try:
         return_code, result, rate_limits, api_key_source, exited_on_its_own = _session_in(
-            invocation(budget_usd=budget, resuming=False),
+            invocation(budget_usd=budget, resuming=resume_session is not None),
             prompt,
             working_directory,
             popen_factory,
@@ -784,6 +789,7 @@ def run_provider(
     runners: dict[str, ProviderRunner] = PROVIDER_RUNNERS,
     popen_factory: PopenFactory = subprocess.Popen,
     deadline_seconds: float | None = None,
+    resume_session: str | None = None,
 ) -> CommandResult:
     try:
         runner = runners[provider]
@@ -798,4 +804,5 @@ def run_provider(
         tools,
         popen_factory,
         deadline_seconds,
+        resume_session,
     )

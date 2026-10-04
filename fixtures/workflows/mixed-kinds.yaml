@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "mixed-kinds",
-    "cairn_generator": "6",
+    "cairn_generator": "7",
     "cairn_engine": "2.11.0",
-    "cairn_graph_sha256": "f86117b75b6850768a2ca72e2f8375b3a8d304ba21fdc11c3527783fcdf21be8",
-    "cairn_body_sha256": "2bc7e6a7823bd1a2526ef0003f45335dd8be48c1f83839e756703ff494bcc8e4"
+    "cairn_graph_sha256": "c2e357a3dd5c145d3eac41c45025a156dd07ad0ec261c6c65f12e70f7db7b326",
+    "cairn_body_sha256": "f0ec974e7a75e789f670fd7ea97f23525aa24d99a450cabb63ab7c4a0f2fad8a"
   },
   "params": [
     {
@@ -90,7 +90,7 @@
       },
       "preconditions": [
         {
-          "condition": "python3 -m cairn verify needed --step refresh_the_corpus --command-digest a5532c5c828a8be61cd51484ea721b3e24fcc061053041fb311f7bc919d0777d"
+          "condition": "python3 -m cairn verify needed --step refresh_the_corpus --command-digest a5532c5c828a8be61cd51484ea721b3e24fcc061053041fb311f7bc919d0777d --bound 600"
         }
       ],
       "continue_on": {
@@ -166,7 +166,7 @@
       },
       "preconditions": [
         {
-          "condition": "python3 -m cairn verify needed --step rebuild_the_index --command-digest 022c1ed35777dbee39ad13ace8693496a9ac65341a4c52b22d723c33bbcd3d92"
+          "condition": "python3 -m cairn verify needed --step rebuild_the_index --command-digest 022c1ed35777dbee39ad13ace8693496a9ac65341a4c52b22d723c33bbcd3d92 --bound 600"
         }
       ],
       "continue_on": {
@@ -242,7 +242,7 @@
       },
       "preconditions": [
         {
-          "condition": "python3 -m cairn verify needed --step wait_for_the_index_to_settle --command-digest a1d256f2db4a930e25548d72890ba5b63d85e288b5cc0c1a40747f4310ce3927"
+          "condition": "python3 -m cairn verify needed --step wait_for_the_index_to_settle --command-digest a1d256f2db4a930e25548d72890ba5b63d85e288b5cc0c1a40747f4310ce3927 --bound 600"
         }
       ],
       "continue_on": {

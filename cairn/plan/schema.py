@@ -134,6 +134,11 @@ RETRY_INTERVAL = 1
 SUPPORT_TIMEOUT = 600
 SUPPORT_RETRIES = 0
 
+# A step's assertion is the plan's own command, so its bound is the plan's to state, and a
+# plan that says nothing gets the support bound. Measured: a whole-suite assertion took
+# 844 s against this default, so a plan asserting with a slow suite has to say so.
+VERIFY_TIMEOUT = SUPPORT_TIMEOUT
+
 # A support step's budget has to cover waiting for the git write mutex and then doing the
 # git work, and still leave room to write a report. These three are stated together
 # because that sum is the whole of the relation; separately they would drift until a
@@ -191,11 +196,21 @@ WORK_PREFIX = "work_"
 VERIFY_PREFIX = "verify_"
 MARK_PREFIX = "mark_"
 MERGE_PREFIX = "merge_"
+# A step that declares `remediate` gains two nodes between its assertion and its marker:
+# one paid session that may fix what the assertion found, and the same assertion again.
+REMEDY_PREFIX = "remedy_"
+RECHECK_PREFIX = "recheck_"
 # `work_` is not reserved: a node name is `<role>_<subject>` and the role is the text before
 # the first underscore, so a step called `work_config` yields `work_work_config` and still
 # round-trips. The three below are reserved because a step taking one of those names would
 # collide with the node another step's name derives.
-RESERVED_ID_PREFIXES: tuple[str, ...] = (VERIFY_PREFIX, MARK_PREFIX, MERGE_PREFIX)
+RESERVED_ID_PREFIXES: tuple[str, ...] = (
+    VERIFY_PREFIX,
+    MARK_PREFIX,
+    MERGE_PREFIX,
+    REMEDY_PREFIX,
+    RECHECK_PREFIX,
+)
 
 # The engine rejects a hyphenated step id with a `use '_' instead of '-'` hint and
 # enforces ^[a-zA-Z][a-zA-Z0-9_]*$ (01). Cairn narrows it to lower case so sanitisation
@@ -295,9 +310,11 @@ class Step(TypedDict):
     scope: str
     reads: list[str]
     timeout: int
+    verify_timeout: int
     retries: int
     max_budget_usd: float | None
     model: str | None
+    remediate: bool
 
 
 class Collision(TypedDict):
@@ -387,6 +404,11 @@ STEP_FIELDS: Spec = {
         "nullable": True,
         "check": positive_integer,
     },
+    "verify_timeout": {
+        "type": int,
+        "default": VERIFY_TIMEOUT,
+        "check": positive_integer,
+    },
     "retries": {
         "type": int,
         "default_from": "kind",
@@ -402,6 +424,10 @@ STEP_FIELDS: Spec = {
         "check": positive_finite,
     },
     "model": {"type": str, "default_from": "kind", "nullable": True},
+    # One paid session, after an assertion that ran and exited nonzero, resuming the step's
+    # own session to fix what it found; then the same assertion again. Never after an
+    # assertion a signal ended, which decided nothing a session could fix.
+    "remediate": {"type": bool, "default": False},
 }
 
 ASSERTION_FIELDS: Spec = {

@@ -55,9 +55,10 @@ def run_echo(
     tools: list[str],
     popen_factory: PopenFactory = subprocess.Popen,
     deadline_seconds: float | None = None,
+    resume_session: str | None = None,
 ) -> CommandResult:
     """A whole second provider: doc 05's seam claim is that this is all one costs."""
-    del popen_factory, deadline_seconds
+    del popen_factory, deadline_seconds, resume_session
     return CommandResult(
         EXIT_OK,
         "done",
@@ -617,7 +618,9 @@ class ExecAndWait(unittest.TestCase):
             tools: list[str],
             *,
             deadline_seconds: float | None = None,
+            resume_session: str | None = None,
         ) -> CommandResult:
+            self.assertIsNone(resume_session)
             seen.append((provider, working_directory, model, budget, tools))
             bounds.append(deadline_seconds)
             return CommandResult(0, "done", "", [], False, None, {})
@@ -664,6 +667,67 @@ class ExecAndWait(unittest.TestCase):
             ],
         )
         self.assertEqual(bounds, [600.0])
+
+    def test_a_remedy_resumes_the_steps_own_session_over_the_assertion_it_failed(
+        self,
+    ) -> None:
+        asked: list[tuple[str, str | None]] = []
+
+        def record(
+            _provider: str,
+            prompt: str,
+            _working_directory: Path,
+            _permission_mode: str,
+            _model: str | None,
+            _budget: float | None,
+            _tools: list[str],
+            *,
+            deadline_seconds: float | None = None,
+            resume_session: str | None = None,
+        ) -> CommandResult:
+            del deadline_seconds
+            asked.append((prompt, resume_session))
+            return CommandResult(0, "done", "fixed it", [], False, None, {})
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            env = {**runtime_env(root), "DAG_RUN_STEP_NAME": "remedy_a"}
+            reports = reports_directory(root / "runs", "run-1")
+            reports.mkdir(parents=True)
+            common: dict[str, Any] = {
+                "run_id": "run-1", "needs_user_decision": False, "follow_up_work": [],
+                "cause": None, "duration": 1.0, "working_directory": str(root),
+            }
+            (reports / "work_a.json").write_text(json.dumps({
+                **common, "step_id": "work_a", "status": "done",
+                "summary": "wrote the parser", "detail": {"session_id": "session-7"},
+            }))
+            (reports / "verify_a.json").write_text(json.dumps({
+                **common, "step_id": "verify_a", "status": "failed",
+                "summary": "the assertion exited 1",
+                "detail": {"decision": "run", "exit": 1, "source": "executed"},
+            }))
+            with (
+                engine_step(root, env),
+                patch("cairn.__main__.run_provider", record),
+            ):
+                code = main([
+                    "agent", "run", "--provider", "claude", "--prompt", "Write the parser.",
+                    "--model", "sonnet", "--max-budget-usd", "5", "--timeout", "600",
+                    "--remedy-of", "a", "--assertion", "pytest tests/test_parser.py",
+                ])
+            self.assertEqual(code, 0)
+            report = json.loads((reports / "remedy_a.json").read_text())
+        [(prompt, resumed)] = asked
+        self.assertEqual(resumed, "session-7")
+        self.assertIn("`pytest tests/test_parser.py`", prompt)
+        self.assertIn("exited 1", prompt)
+        self.assertIn("fix the work, never the assertion", prompt)
+        self.assertIn("Write the parser.", prompt)
+        self.assertIn("wrote the parser", prompt)
+        self.assertEqual(report["detail"]["remedy_of"], "a")
+        self.assertEqual(report["detail"]["resumed_session"], "session-7")
+        self.assertEqual(report["detail"]["first_exit"], 1)
 
     def test_argument_skew_is_a_report_not_a_usage_message(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -808,6 +872,7 @@ class TheGroupSweepBelongsToAStep(unittest.TestCase):
             text=True,
             timeout=30,
             start_new_session=True,
+            check=False,
         )
 
     def test_a_group_leader_outside_a_step_is_not_swept(self) -> None:
@@ -939,6 +1004,23 @@ class ProviderBehavior(unittest.TestCase):
         self.assertEqual(
             result.detail["deny_patterns"], [*NEVER_DELIVERED, "Bash(rm:*)"]
         )
+
+    def test_a_remedy_continues_the_session_it_names_rather_than_opening_one(self) -> None:
+        made: list[FakeProcess] = []
+
+        def factory(command: list[str], **kwargs: object) -> FakeProcess:
+            process = FakeProcess(command, **kwargs)
+            made.append(process)
+            return process
+
+        with redirect_stdout(io.StringIO()):
+            result = run_claude(
+                "fix it", Path("/tmp"), "auto", "sonnet", 5.0, [], factory, None, "session-7"
+            )
+        command = made[0].command
+        self.assertEqual(command[command.index("--resume") + 1], "session-7")
+        self.assertNotIn("--session-id", command)
+        self.assertEqual(result.status, "done")
 
     def test_plain_invocation_and_optional_flags(self) -> None:
         made: list[FakeProcess] = []

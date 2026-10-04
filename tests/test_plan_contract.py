@@ -253,6 +253,14 @@ class ValidatorMessages(unittest.TestCase):
         )
         self.assertNotIn("derived_timeout", [f.code for f in validate(load("linear-chain", "graph.json")).warnings])
 
+    def test_an_assertion_bound_the_document_did_not_state_is_a_warning_too(self) -> None:
+        graph = minimal()
+        graph["steps"][0]["verify_timeout"] = 1800
+        result = validate(graph)
+        self.assertTrue(result.ok)
+        messages = [f.message for f in result.warnings if f.code == "derived_timeout"]
+        self.assertTrue(any("assertion at 1800 s" in message for message in messages), messages)
+
     def test_an_unresolved_dependency_names_both_ends(self) -> None:
         finding = self._first("dangling-dependency", "unresolved_dependency")
         self.assertIn("write_the_renderer", finding.message)
@@ -390,6 +398,20 @@ class UncoveredCodes(unittest.TestCase):
         messages = [f.message for f in validate(graph).errors if f.code == "schema"]
         self.assertTrue(any("steps[0].timeout" in message for message in messages), messages)
         self.assertTrue(any("steps[0].retries" in message for message in messages), messages)
+
+    def test_a_remedy_needs_an_agent_session_to_resume_and_an_assertion_to_rerun(self) -> None:
+        graph = minimal()
+        graph["steps"][0]["remediate"] = True
+        graph["steps"][0]["kind"] = "command"
+        graph["steps"][0]["command"] = "true"
+        graph["steps"][0]["command_type"] = "exec"
+        self.assertIn("unremediable_step", [f.code for f in validate(graph).errors])
+
+    def test_a_non_positive_assertion_bound_is_refused(self) -> None:
+        graph = minimal()
+        graph["steps"][0]["verify_timeout"] = 0
+        messages = [f.message for f in validate(graph).errors if f.code == "schema"]
+        self.assertTrue(any("steps[0].verify_timeout" in message for message in messages), messages)
 
     def test_a_name_that_is_both_a_step_and_an_omission_is_refused(self) -> None:
         graph = minimal()

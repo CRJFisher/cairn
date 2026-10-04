@@ -292,7 +292,12 @@ class TheSessionIsHeldOpenForWhatItLeftRunning(unittest.TestCase):
                 "DAG_RUN_WORK_DIR": temporary,
                 "CAIRN_RUNS_DIR": str(Path(temporary) / "runs"),
             }
-            with patch.dict(os.environ, environment, clear=False):
+            # The hook reads its event from stdin, and a suite run with stdin left open would
+            # otherwise wait on it for ever.
+            with (
+                patch.dict(os.environ, environment, clear=False),
+                patch("sys.stdin", io.StringIO("")),
+            ):
                 code = main([HOOK_VERB, "stop"])
             self.assertEqual(code, LET_IT_END)
             self.assertEqual(list(reports.iterdir()), [])

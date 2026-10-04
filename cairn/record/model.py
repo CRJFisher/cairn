@@ -39,6 +39,20 @@ class Freshness(TypedDict):
     recorded_key: str
 
 
+class Remedy(TypedDict):
+    """What a remedied step's remedy node did: declined, with why, or ran, with its cost.
+
+    `first_exit` is the assertion's exit before the remedy; the step's own
+    `assertion_exit` is then the exit of the assertion run again after it.
+    """
+
+    status: str
+    said: str | None
+    cost_usd: float | None
+    first_exit: int | None
+    resumed_session: str | None
+
+
 class StepRecord(TypedDict):
     """One step of the plan, and everything this run knows about it."""
 
@@ -86,6 +100,8 @@ class StepRecord(TypedDict):
     # The end of what a failed assertion printed, read from the engine's own log for it,
     # so the report can quote why the gate closed rather than name a log path ([23 B]).
     assertion_tail: str | None
+    # Present only on a step that declared `remediate` and whose remedy gate left an account.
+    remedy: Remedy | None
     nodes: list[str]
     provenance: dict[str, str]
 
@@ -278,6 +294,7 @@ __all__ = [
     "Infrastructure",
     "Lineage",
     "NextAction",
+    "Remedy",
     "RunRecord",
     "StepRecord",
     "Trigger",

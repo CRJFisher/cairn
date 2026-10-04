@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "linear-chain",
-    "cairn_generator": "6",
+    "cairn_generator": "7",
     "cairn_engine": "2.11.0",
-    "cairn_graph_sha256": "e3d65104c52813021d28bd72bdf4067ac79e2b61e575c0982a5f94147997b9ce",
-    "cairn_body_sha256": "d15a70edf854c270e440e5453cd0f264bdddd0764d35423cd3d34437ee449c71"
+    "cairn_graph_sha256": "030b1390f1b9cf318d90bfc9fdfb2426ae94f7a381cb0ad4cdffa10591d2dbd1",
+    "cairn_body_sha256": "3e69c947a902f7eb7b2814e5b40e4df01970f0595e6fecc819ca0615a1658f3b"
   },
   "params": [
     {
@@ -90,7 +90,7 @@
       },
       "preconditions": [
         {
-          "condition": "python3 -m cairn verify needed --step bucket_store --command-digest fc407600d14f1fd89c687048366f9726d92feea77a0c5e9d329f5e70f9e42e20"
+          "condition": "python3 -m cairn verify needed --step bucket_store --command-digest fc407600d14f1fd89c687048366f9726d92feea77a0c5e9d329f5e70f9e42e20 --bound 600"
         }
       ],
       "continue_on": {
@@ -166,7 +166,7 @@
       },
       "preconditions": [
         {
-          "condition": "python3 -m cairn verify needed --step middleware --command-digest 2e071b922d3e65350ad048b40eddd6d7ea18affc691f22d7acc78363a2d638a3"
+          "condition": "python3 -m cairn verify needed --step middleware --command-digest 2e071b922d3e65350ad048b40eddd6d7ea18affc691f22d7acc78363a2d638a3 --bound 600"
         }
       ],
       "continue_on": {
@@ -242,7 +242,7 @@
       },
       "preconditions": [
         {
-          "condition": "python3 -m cairn verify needed --step gateway_wiring --command-digest e6c4d28754106354e33fb3510f4f2e62d38a8c4e3d6a3ecbf25ad1ada1f603c8"
+          "condition": "python3 -m cairn verify needed --step gateway_wiring --command-digest e6c4d28754106354e33fb3510f4f2e62d38a8c4e3d6a3ecbf25ad1ada1f603c8 --bound 600"
         }
       ],
       "continue_on": {

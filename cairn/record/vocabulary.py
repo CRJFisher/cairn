@@ -12,7 +12,7 @@ Two structures — an enumeration and a separate ranking — drift.
 
 from __future__ import annotations
 
-RECORD_VERSION = 3
+RECORD_VERSION = 4
 
 # --- the run verdict -----------------------------------------------------------------
 #
@@ -136,6 +136,9 @@ EDGE_KINDS: tuple[str, ...] = (EDGE_STEP, EDGE_DEPENDENCY, EDGE_WAVE, EDGE_RUN)
 NEXT_DECIDE = "decide"
 NEXT_SETTLE_MERGE = "settle_merge"
 NEXT_RERUN = "rerun"
+# The run halted at an assertion a signal ended. A re-run as it stands meets the same end,
+# so the cause of the signal is the thing to change first.
+NEXT_FIX_ASSERTION = "fix_assertion"
 NEXT_START_SCHEDULER = "start_scheduler"
 NEXT_WAIT = "wait"
 NEXT_NOTHING = "nothing"
@@ -143,6 +146,7 @@ NEXT_ACTIONS: tuple[str, ...] = (
     NEXT_DECIDE,
     NEXT_SETTLE_MERGE,
     NEXT_RERUN,
+    NEXT_FIX_ASSERTION,
     NEXT_START_SCHEDULER,
     NEXT_WAIT,
     NEXT_NOTHING,
@@ -170,6 +174,7 @@ __all__ = [
     "EXIT_UNFINISHED",
     "NEXT_ACTIONS",
     "NEXT_DECIDE",
+    "NEXT_FIX_ASSERTION",
     "NEXT_NOTHING",
     "NEXT_RERUN",
     "NEXT_SETTLE_MERGE",

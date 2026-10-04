@@ -30,7 +30,7 @@
       "id": "review_patterns",
       "slug": "review-patterns",
       "title": "review-patterns",
-      "task": "Audit a codebase against a set of patterns using a tiered micro\u2192macro fan-out, and emit findings a human can read and a downstream skill can task out. Pin the findings artifact contract the other two units consume.",
+      "task": "Audit a codebase against a set of patterns using a tiered micro→macro fan-out, and emit findings a human can read and a downstream skill can task out. Pin the findings artifact contract the other two units consume.",
       "deps": [],
       "verify": null,
       "assertion": null,
@@ -40,14 +40,16 @@
       "retries": 0,
       "kind": "agent.claude",
       "timeout": 3600,
+      "verify_timeout": 600,
       "max_budget_usd": 5.0,
-      "model": "sonnet"
+      "model": "sonnet",
+      "remediate": false
     },
     {
       "id": "plan_backlog",
       "slug": "plan-backlog",
       "title": "plan-backlog",
-      "task": "Turn a body of findings into a dependency-ordered backlog epic \u2014 an epic task plus sub-tasks, sequenced into waves by their implicit dependencies and natural implementation order.",
+      "task": "Turn a body of findings into a dependency-ordered backlog epic — an epic task plus sub-tasks, sequenced into waves by their implicit dependencies and natural implementation order.",
       "deps": [
         {
           "id": "review_patterns",
@@ -63,8 +65,10 @@
       "retries": 0,
       "kind": "agent.claude",
       "timeout": 3600,
+      "verify_timeout": 600,
       "max_budget_usd": 5.0,
-      "model": "sonnet"
+      "model": "sonnet",
+      "remediate": false
     },
     {
       "id": "enforce_patterns",
@@ -86,8 +90,10 @@
       "retries": 0,
       "kind": "agent.claude",
       "timeout": 3600,
+      "verify_timeout": 600,
       "max_budget_usd": 5.0,
-      "model": "sonnet"
+      "model": "sonnet",
+      "remediate": false
     }
   ],
   "omissions": [],
@@ -97,7 +103,7 @@
       "step": null,
       "dep": null,
       "question": "Is this plan green-lit? The document says no unit is on a build worklist yet and gates the build on a choice nobody has recorded.",
-      "evidence": "Active plan. No unit is on a build worklist yet \u2014 this folder fixes the decomposition, contracts, and boundaries so the build can start from `review-patterns` when chosen.",
+      "evidence": "Active plan. No unit is on a build worklist yet — this folder fixes the decomposition, contracts, and boundaries so the build can start from `review-patterns` when chosen.",
       "proposed": null,
       "resolution": null
     },

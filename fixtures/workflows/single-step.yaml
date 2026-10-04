@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "single-step",
-    "cairn_generator": "6",
+    "cairn_generator": "7",
     "cairn_engine": "2.11.0",
-    "cairn_graph_sha256": "2de07876c148d4e7548342ce0306d3c9f2412d5f20ce131def8dcda8e9fd7cdb",
-    "cairn_body_sha256": "177c92ec1b27d80949b8fd330878864099e04bedbe81d5dfd9e7bdd98469b95a"
+    "cairn_graph_sha256": "9c788b50aa042768ab69a6b4977a5586b45c10b5fa756781b9fb66037a19b7e3",
+    "cairn_body_sha256": "85e64b7b71e0add00a09ea433d9b8842f99918c8329687b96c2c609bfc6bc123"
   },
   "params": [
     {
@@ -90,7 +90,7 @@
       },
       "preconditions": [
         {
-          "condition": "python3 -m cairn verify needed --step manifest_writer --command-digest d9a648049bb8864206510aeb29814968bafe91bafa866e62a6b6d1edd60dff28"
+          "condition": "python3 -m cairn verify needed --step manifest_writer --command-digest d9a648049bb8864206510aeb29814968bafe91bafa866e62a6b6d1edd60dff28 --bound 600"
         }
       ],
       "continue_on": {

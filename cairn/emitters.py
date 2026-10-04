@@ -17,7 +17,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from cairn.assertions import NEEDED_VERB, command_digest
+from cairn.assertions import NEEDED_VERB, REMEDY_VERB, command_digest
 from cairn.bounds import nonnegative_integer, positive_finite, positive_integer
 from cairn.plan.schema import (
     AGENT_FAMILY,
@@ -43,6 +43,10 @@ from cairn.verify import (
     POSITIONS,
     exit_status_reference,
     mark_name,
+    recheck_exit_reference,
+    recheck_handle,
+    recheck_name,
+    remedy_name,
     verify_handle,
     verify_name,
 )
@@ -108,6 +112,13 @@ def emit_agent(step: Step, working_directory: str) -> EngineStep:
     definition is what an offer prices: a bound the environment supplied would let a person
     accept a run whose price and model nobody had stated ([17.3]).
     """
+    emitted = _base(step, working_directory)
+    emitted["timeout_sec"] = step["timeout"] + AGENT_REPORT_GRACE
+    emitted["run"] = shlex.join(_agent_arguments(step))
+    return emitted
+
+
+def _agent_arguments(step: Step) -> list[str]:
     provider = step["kind"][len(AGENT_FAMILY) :]
     model = step.get("model")
     budget = step.get("max_budget_usd")
@@ -136,9 +147,49 @@ def emit_agent(step: Step, working_directory: str) -> EngineStep:
     ]
     for deny_pattern in step["tools"] or []:
         arguments.extend(("--tool", deny_pattern))
-    emitted = _base(step, working_directory)
-    emitted["timeout_sec"] = step["timeout"] + AGENT_REPORT_GRACE
-    emitted["run"] = shlex.join(arguments)
+    return arguments
+
+
+def emit_remedy(step: Step, working_directory: str) -> EngineStep:
+    """The step's own session, resumed once to fix what its assertion found.
+
+    The same body as the work, bounded and priced the same, so an offer counts it as the
+    paid session it is; the two flags make it a remedy. Its gate opens it only over an
+    assertion that ran and exited nonzero, and both flags absorb: a remedy that fails or is
+    declined still lets the second assertion's gate and the marker's gate run.
+    """
+    command = step["verify"]
+    if not step["remediate"] or command is None:
+        raise ValueError(f"step {step['id']!r} declares no remedy to emit")
+    gate = shlex.join(
+        [
+            *CAIRN_INVOCATION,
+            "verify",
+            REMEDY_VERB,
+            "--step",
+            step["id"],
+            "--verify-exit",
+            exit_status_reference(step["id"]),
+        ]
+    )
+    emitted = emit_agent(step, working_directory)
+    emitted["name"] = remedy_name(step["id"])
+    emitted["run"] = shlex.join(
+        [*_agent_arguments(step), "--remedy-of", step["id"], "--assertion", command]
+    )
+    emitted["preconditions"] = [{"condition": gate}]
+    emitted["continue_on"] = {"failure": True, "skipped": True}
+    return emitted
+
+
+def emit_recheck(step: Step, working_directory: str) -> EngineStep:
+    """The step's assertion again, verbatim, run only after a remedy reported its work."""
+    emitted = emit_verify(step, working_directory)
+    emitted["name"] = recheck_name(step["id"])
+    emitted["id"] = recheck_handle(step["id"])
+    emitted["preconditions"] = [
+        {"condition": shlex.join([*shlex.split(assertion_gate(step)), "--after-remedy"])}
+    ]
     return emitted
 
 
@@ -263,6 +314,8 @@ def assertion_gate(step: Step) -> str:
             step["id"],
             "--command-digest",
             command_digest(command),
+            "--bound",
+            str(step["verify_timeout"]),
         ]
     )
 
@@ -287,7 +340,7 @@ def emit_verify(step: Step, working_directory: str) -> EngineStep:
         "run": command,
         # The assertion reads the tree the step wrote, so it stands where the step stood.
         "working_dir": working_directory,
-        "timeout_sec": SUPPORT_TIMEOUT,
+        "timeout_sec": step["verify_timeout"],
         "retry_policy": retry_policy(0, RETRY_INTERVAL),
         "preconditions": [{"condition": gate}],
         # `failure`: stay recorded as failed while the run survives to reach the join.
@@ -312,6 +365,8 @@ def verify_gate(step: Step, position: str) -> str:
     ]
     if has_assertion(step):
         arguments.extend(("--verify-exit", exit_status_reference(step["id"])))
+    if step["remediate"]:
+        arguments.extend(("--recheck-exit", recheck_exit_reference(step["id"])))
     return shlex.join(arguments)
 
 
@@ -525,6 +580,10 @@ def emit_node(
         emitted = emit_marker(
             _step_of(node, steps), node["working_directory"], str(node["detail"]["position"])
         )
+    elif role == "remedy":
+        emitted = emit_remedy(_step_of(node, steps), node["working_directory"])
+    elif role == "recheck":
+        emitted = emit_recheck(_step_of(node, steps), node["working_directory"])
     elif role == "merge":
         emitted = emit_merge(node)
     elif role == "join":
@@ -546,7 +605,7 @@ def emit_node(
     # The quoting rule is about bodies Cairn builds, so it is applied to those and not to
     # a step's assertion, whose body is the plan author's own shell line — pipes, globs and
     # all. A merge's proof is Cairn's own body and is held to it.
-    if role != "verify" or node["step"] is None:
+    if role not in ("verify", "recheck") or node["step"] is None:
         _refuse_unquoted(node["name"], str(emitted["run"]))
     return emitted
 
@@ -576,6 +635,8 @@ __all__ = [
     "emit_merge_verify",
     "emit_node",
     "emit_prune",
+    "emit_recheck",
+    "emit_remedy",
     "emit_setup",
     "emit_step",
     "emit_verify",

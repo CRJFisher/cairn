@@ -131,6 +131,7 @@ naming the offending step, never a warning a run proceeds past.
 | `commit_without_skipped`       | an excluded branch's skip cascades and the wave lands nothing        |
 | `marker_with_skipped`          | the commit runs anyway and lands exactly the unverified work         |
 | `assertion_without_skipped`    | a declined assertion's skip cascades into its marker and commit      |
+| `remedy_without_skipped`       | a declined remedy's skip cascades into its marker and commit         |
 | `gate_unresolvable`            | every step skips into a clean success                                |
 | `foreign_condition`            | the gate runs a command Cairn did not write, and `dagu dry` runs it  |
 | `scope_without_occasion`       | the step re-pays and is excluded on every run, for ever              |

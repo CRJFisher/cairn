@@ -36,9 +36,11 @@ rejected rather than ignored.
 | `scope`          | no                               | `once`                                   |
 | `reads`          | no                               | `[]`                                     |
 | `timeout`        | no                               | 3600s for `agent.*`, 600s otherwise      |
+| `verify_timeout` | no                               | 600s                                     |
 | `retries`        | no                               | `0` for every kind                       |
 | `max_budget_usd` | no                               | 5.0 for `agent.*`, `null` otherwise      |
 | `model`          | no                               | `sonnet` for `agent.*`, `null` otherwise |
+| `remediate`      | no                               | `false`                                  |
 
 - `id` is the engine identifier, matching `^[a-z][a-z0-9_]*$`.
 - `slug` is the plan's own name for the step, verbatim, for display.
@@ -67,6 +69,11 @@ rejected rather than ignored.
   stopped session still leaves its account ([step-kinds.md](step-kinds.md)). A timeout
   that differs from the kind's default is a warning on the parse report, because nothing
   quotes the document's words for it the way an edge's evidence does.
+- `verify_timeout` bounds the step's assertion, which runs once and is never retried. The
+  plan document sets it where the assertion is slow ("the suite takes twenty minutes"); a
+  plan that says nothing gets 600s. It counts toward the run's maximum duration like every
+  other bound, and a value differing from the default is the same `derived_timeout`
+  warning a step's own timeout raises.
 - `retries` is `0` for every kind. Arbitrary shell is not assumed idempotent, and an agent
   failure is either a wrong task or a paid session that already changed the repository —
   neither is worth paying for twice. A rate limit is reported with the moment it clears
@@ -79,6 +86,14 @@ rejected rather than ignored.
   command — and the price of leaving one in is stated plainly: one proof is shared by
   every gate quoting a command ([verify-gate.md](verify-gate.md)), so one flaky execution
   closes every one of them.
+- `remediate` gives an agent step one more paid session when its assertion ran and exited
+  nonzero: the step's own session, resumed, told the command and its exit and asked to fix
+  the work and never the assertion ([step-protocol.md](step-protocol.md)). The assertion then
+  runs again, unchanged, and only that second run can record the step. The remedy is never
+  opened over an assertion that passed, never ran, or was ended by a signal, nor behind a
+  step that reported failure or is waiting on a person. It is bounded and priced as the step's
+  own session, so a run's offer counts it. A plan sets it where the document asks for a
+  failing check to be fixed rather than halted on ("if its tests fail, have it fix them").
 - `max_budget_usd` is the dollar ceiling of the one session an agent step opens, written
   into the emitted body as `--max-budget-usd`. It is always present on an agent step and
   always `null` on a command step, which opens no session: a session with no ceiling is
@@ -96,8 +111,8 @@ so a default stated in one place and applied in another cannot drift apart. `kin
 `timeout`, `retries`, `max_budget_usd` and `model` are the five whose value depends on
 another field, and `normalise` resolves those.
 
-A bound a plan states is judged before any default or conversion touches it: `timeout` is a
-positive integer, `retries` a non-negative integer, and `max_budget_usd` a positive finite
+A bound a plan states is judged before any default or conversion touches it: `timeout` and `verify_timeout` are
+positive integers, `retries` a non-negative integer, and `max_budget_usd` a positive finite
 number. A value outside those — zero, a negative, a boolean, `NaN`, `Infinity`, or an integer
 too large to be a float — is a `schema` error naming the field, and a document spelling `NaN`
 or `Infinity` is refused as it is read.
@@ -303,6 +318,7 @@ With `--source-root`, six more:
 | `evidence_not_in_source` | an edge, omission or declared reading quoting words no document contains |
 | `invented_verify`        | a verify command no document gives, with no answer behind it             |
 | `invented_command`       | a command no document gives                                              |
+| `unremediable_step`      | `remediate` on a step that is not an agent step or has no assertion      |
 
 **Warnings** (recorded, reported, never blocking):
 

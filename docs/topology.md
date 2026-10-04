@@ -24,6 +24,10 @@ feed one `join`, the join feeds a chain of `merge` slots each followed by its ow
 ([merge-step.md](merge-step.md)), and the last proof feeds a `prune`. The next wave starts
 from the prune.
 
+A step that declares `remediate` runs `remedy` and `recheck` between its `verify` and its
+`mark`, in either position: one resumed session over a failed assertion, then the same
+assertion again ([verify-gate.md](verify-gate.md)).
+
 A plan of one step is the degenerate chain. The run's first node is always `lock_acquire`.
 The release is not a node at all: it runs as the workflow's exit handler, because a node
 whose dependency failed is never dispatched and a failed run must still give the repository
@@ -53,12 +57,12 @@ home directory or an assumed workspace root.
 Every node is named `<role>_<subject>`, and the role is the text before the first
 underscore. The roles are closed:
 
-| Role                                    | Subject                | Example               |
-| --------------------------------------- | ---------------------- | --------------------- |
-| `setup` `work` `verify` `mark` `commit` | the step id            | `verify_theme_reader` |
-| `join` `prune`                          | `w<wave>`              | `prune_w3`            |
-| `merge`                                 | `w<wave>_<slot>`       | `merge_w3_2`          |
-| `lock`                                  | `acquire` or `release` | `lock_release`        |
+| Role                                                       | Subject                | Example               |
+| ---------------------------------------------------------- | ---------------------- | --------------------- |
+| `setup` `work` `verify` `remedy` `recheck` `mark` `commit` | the step id            | `verify_theme_reader` |
+| `join` `prune`                                             | `w<wave>`              | `prune_w3`            |
+| `merge`                                                    | `w<wave>_<slot>`       | `merge_w3_2`          |
+| `lock`                                                     | `acquire` or `release` | `lock_release`        |
 
 Because the role is exactly the first token, a step whose own id begins with a role name
 still round-trips: `work_work_config` is the `work` node of the step `work_config`. The run

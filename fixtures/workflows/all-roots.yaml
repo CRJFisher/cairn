@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "all-roots",
-    "cairn_generator": "6",
+    "cairn_generator": "7",
     "cairn_engine": "2.11.0",
-    "cairn_graph_sha256": "9254f1e61bf14544d713d47c8f447587864b5852d7b0c530cd116ab22e066682",
-    "cairn_body_sha256": "dae26474f39856a7ba80c7d6b9f43f0df2b73090fd1f9c5ebb502e81b2eab145"
+    "cairn_graph_sha256": "8838a443a89218d5e19f0700ddb810300b4a5a699008607cfb7261acc173dd54",
+    "cairn_body_sha256": "ea393a136e9d024836e6276ebc1df3d121f0e1ca418911fb53f077871d6b54cf"
   },
   "params": [
     {
@@ -103,7 +103,7 @@
       },
       "preconditions": [
         {
-          "condition": "python3 -m cairn verify needed --step drop_the_legacy_exporter --command-digest 791464c891bff9471cb20e269dac809b4a76cfb86b6e03819517737d2e95fc86"
+          "condition": "python3 -m cairn verify needed --step drop_the_legacy_exporter --command-digest 791464c891bff9471cb20e269dac809b4a76cfb86b6e03819517737d2e95fc86 --bound 600"
         }
       ],
       "continue_on": {
@@ -195,7 +195,7 @@
       },
       "preconditions": [
         {
-          "condition": "python3 -m cairn verify needed --step tighten_the_log_format --command-digest 9f1916e04586ab6c359976d344f075027db24f5c0c2388530e91fa7b1c1312ea"
+          "condition": "python3 -m cairn verify needed --step tighten_the_log_format --command-digest 9f1916e04586ab6c359976d344f075027db24f5c0c2388530e91fa7b1c1312ea --bound 600"
         }
       ],
       "continue_on": {

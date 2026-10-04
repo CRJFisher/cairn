@@ -18,12 +18,14 @@ from cairn.plan.schema import (
     RESERVED_ID_PREFIXES,
     STEP_ID_PATTERN,
     UNRESOLVED_REFERENCE,
+    VERIFY_TIMEOUT,
     Graph,
     Question,
     SchemaError,
     Step,
     cannot_fail,
     default_timeout,
+    has_assertion,
     is_unasserted,
     is_unverified,
     normalise,
@@ -503,6 +505,27 @@ def validate(raw: Any, source_root: str | None = None) -> Result:
                     f"step {step_id!r} is bounded at {step['timeout']} s rather than the "
                     f"{default_timeout(step['kind'])} s its kind defaults to; the "
                     "derivation supplied it and nothing quotes the document for it",
+                    step_id,
+                )
+            )
+        if step["remediate"] and (
+            not step["kind"].startswith(AGENT_FAMILY) or not has_assertion(step)
+        ):
+            errors.append(
+                Finding(
+                    "unremediable_step",
+                    f"step {step_id!r} declares remediate, which needs an agent step whose "
+                    "session can be resumed and an assertion to run again",
+                    step_id,
+                )
+            )
+        if step["verify_timeout"] != VERIFY_TIMEOUT:
+            warnings.append(
+                Finding(
+                    "derived_timeout",
+                    f"step {step_id!r} bounds its assertion at {step['verify_timeout']} s "
+                    f"rather than the {VERIFY_TIMEOUT} s default; the derivation supplied "
+                    "it and nothing quotes the document for it",
                     step_id,
                 )
             )

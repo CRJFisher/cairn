@@ -17,7 +17,9 @@ from unittest.mock import patch
 from cairn.assertions import (
     ASSERTION_EXECUTED,
     BACKED_BY_KEY,
+    BOUND_KEY,
     DECISION_KEY,
+    DECISION_NOT_REMEDIED,
     DECISION_RUN,
     DECISION_SHARED,
     DECISION_SKIPPED_UPSTREAM,
@@ -25,6 +27,8 @@ from cairn.assertions import (
     NEEDED_RUN_IT,
     NEEDED_SKIP_IT,
     RELEASED_AT_KEY,
+    REMEDY_DECLINE_IT,
+    REMEDY_OPEN_IT,
     SIGNALLED_EXIT,
     SOURCE_KEY,
     assertion_report,
@@ -518,11 +522,29 @@ class TheAssertionsOwnGateFailsOpen(unittest.TestCase):
             report_path=reports_of(self.root) / f"{mark_name('a')}.json", runs_root=self.root / "runs",
         )
         verdict, _ = run_verify_gate("a", CHAIN, str(SIGNALLED_EXIT), context)
-        self.assertEqual(verdict["cause"], "verify_failed")
+        self.assertEqual(verdict["cause"], "assertion_interrupted")
         account = self._decision()
         assert account is not None
         self.assertIn("ended by a signal after 473s", account["summary"])
         self.assertGreaterEqual(account["duration"], 473)
+
+    def test_an_assertion_killed_at_its_bound_is_said_to_have_outgrown_it(self) -> None:
+        work_report(self.root, "a", status="done")
+        self._needed("--bound", "600")
+        report = self._decision()
+        assert report is not None
+        self.assertEqual(report["detail"][BOUND_KEY], 600)
+        report["detail"][RELEASED_AT_KEY] -= 601
+        (reports_of(self.root) / f"{verify_name('a')}.json").write_text(json.dumps(report))
+        context = RuntimeContext(
+            run_id="run-1", step_id=mark_name("a"), working_directory=self.root,
+            report_path=reports_of(self.root) / f"{mark_name('a')}.json", runs_root=self.root / "runs",
+        )
+        run_verify_gate("a", CHAIN, str(SIGNALLED_EXIT), context)
+        account = self._decision()
+        assert account is not None
+        self.assertIn("stopped at its 600 s bound", account["summary"])
+        self.assertIn("verify_timeout", account["summary"])
 
     def test_a_missing_work_report_is_a_halt_whatever_the_reference_reads(self) -> None:
         context = RuntimeContext(
@@ -539,6 +561,132 @@ class TheAssertionsOwnGateFailsOpen(unittest.TestCase):
             report_path=reports_of(self.root) / f"{mark_name('a')}.json", runs_root=self.root / "runs",
         )
         self.assertTrue(run_verify_gate("a", CHAIN, None, context)[0]["record"])
+
+
+class ARemedyIsOneSessionOverAnAssertionThatRanAndFailed(unittest.TestCase):
+    """A step declaring `remediate` gets one session to fix what its assertion found, and
+    only the assertion run again after it can record the step."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+
+    def _context(self, node: str) -> RuntimeContext:
+        return RuntimeContext(
+            run_id="run-1", step_id=node, working_directory=self.root,
+            report_path=reports_of(self.root) / f"{node}.json", runs_root=self.root / "runs",
+        )
+
+    def _assert_ran(self, prefix: str = "verify") -> None:
+        node = f"{prefix}_a"
+        arguments = ["verify", "needed", "--step", "a", "--command-digest", "0" * 64]
+        if prefix == "recheck":
+            arguments.append("--after-remedy")
+        run_cli(arguments, runtime_env(self.root, step_id=node), self.root)
+
+    def _remedy_gate(self, verify_exit: str) -> tuple[int, str]:
+        code, _, err = run_cli(
+            ["verify", "remedy", "--step", "a", "--verify-exit", verify_exit],
+            runtime_env(self.root, step_id="remedy_a"),
+            self.root,
+        )
+        return code, err
+
+    def _remedy_report(self) -> dict[str, Any] | None:
+        return assertion_report(reports_of(self.root), "a", "run-1", prefix="remedy_")
+
+    def _remedied(self, status: str = "done") -> None:
+        write_json(
+            reports_of(self.root) / "remedy_a.json",
+            {
+                "step_id": "remedy_a", "run_id": "run-1", "status": status,
+                "summary": "fixed the parser", "needs_user_decision": False,
+                "follow_up_work": [], "cause": None, "duration": 1.0,
+                "working_directory": str(self.root), "detail": {"total_cost_usd": 0.5},
+            },
+        )
+
+    def test_a_remedy_opens_over_an_assertion_that_ran_and_exited_nonzero(self) -> None:
+        work_report(self.root, "a", status="done")
+        self._assert_ran()
+        code, err = self._remedy_gate("1")
+        self.assertEqual(code, REMEDY_OPEN_IT, err)
+        self.assertIsNone(self._remedy_report())
+        account = self._decision()
+        assert account is not None
+        self.assertEqual(account["detail"][EXIT_KEY], 1)
+
+    def test_a_remedy_is_declined_wherever_no_session_could_fix_the_work(self) -> None:
+        cases = {
+            "the assertion passed": ("done", "0"),
+            "a signal ended the assertion": ("done", str(SIGNALLED_EXIT)),
+            "the step reported failure": ("failed", "1"),
+        }
+        for reason, (status, verify_exit) in cases.items():
+            with self.subTest(reason=reason):
+                for found in reports_of(self.root).glob("*.json"):
+                    found.unlink()
+                work_report(self.root, "a", status=status)
+                self._assert_ran()
+                code, _ = self._remedy_gate(verify_exit)
+                self.assertEqual(code, REMEDY_DECLINE_IT)
+                declined = self._remedy_report()
+                assert declined is not None
+                self.assertEqual(declined["status"], "noop")
+
+    def test_a_remedy_is_declined_where_the_assertion_never_ran(self) -> None:
+        self.assertEqual(self._remedy_gate("0")[0], REMEDY_DECLINE_IT)
+
+    def test_a_remedy_gate_that_cannot_read_its_arguments_opens_nothing(self) -> None:
+        code, _, _ = run_cli(
+            ["verify", "remedy", "--nonsense"], runtime_env(self.root, step_id="remedy_a"), self.root
+        )
+        self.assertEqual(code, REMEDY_DECLINE_IT)
+
+    def test_the_assertion_runs_again_only_after_a_remedy_reported_its_work(self) -> None:
+        work_report(self.root, "a", status="done")
+        self._assert_ran("recheck")
+        skipped = assertion_report(reports_of(self.root), "a", "run-1", prefix="recheck_")
+        self.assertEqual(decision_of(skipped), DECISION_NOT_REMEDIED)
+        self._remedied()
+        self._assert_ran("recheck")
+        ran = assertion_report(reports_of(self.root), "a", "run-1", prefix="recheck_")
+        self.assertEqual(decision_of(ran), DECISION_RUN)
+
+    def test_the_marker_gate_reads_the_assertion_run_after_the_remedy(self) -> None:
+        work_report(self.root, "a", status="done")
+        self._assert_ran()
+        self._remedy_gate("1")
+        self._remedied()
+        self._assert_ran("recheck")
+        verdict, detail = run_verify_gate("a", CHAIN, "1", self._context("mark_a"), "0")
+        self.assertTrue(verdict["record"], verdict)
+        self.assertEqual(detail["verify_exit"], 0)
+        self.assertEqual(detail["first_verify_exit"], 1)
+
+    def test_a_recheck_with_no_remedy_before_it_never_stands_in_for_the_assertion(self) -> None:
+        """Otherwise a flaky command would pass on its second asking, a retry the plan
+        never declared."""
+        work_report(self.root, "a", status="done")
+        self._assert_ran()
+        self._assert_ran("recheck")
+        verdict, detail = run_verify_gate("a", CHAIN, "1", self._context("mark_a"), "0")
+        self.assertFalse(verdict["record"])
+        self.assertEqual(detail["verify_exit"], 1)
+
+    def test_a_remedy_that_did_not_fix_it_leaves_the_step_failed(self) -> None:
+        work_report(self.root, "a", status="done")
+        self._assert_ran()
+        self._remedy_gate("1")
+        self._remedied()
+        self._assert_ran("recheck")
+        verdict, detail = run_verify_gate("a", CHAIN, "1", self._context("mark_a"), "2")
+        self.assertEqual(verdict["cause"], "verify_failed")
+        self.assertEqual(detail["verify_exit"], 2)
+
+    def _decision(self) -> dict[str, Any] | None:
+        return assertion_report(reports_of(self.root), "a", "run-1")
 
 
 class OneProofPerCommandPerTree(unittest.TestCase):
@@ -645,6 +793,14 @@ class OneProofPerCommandPerTree(unittest.TestCase):
         self.assertEqual(self._account("c")["detail"][EXIT_KEY], 1)
         verdict, _ = self._gate("c", "0")
         self.assertFalse(verdict["record"])
+
+    def test_an_interrupted_assertion_is_no_proof_another_gate_shares(self) -> None:
+        """Filed, the `-1` would dominate as a failure and close every later gate quoting
+        the command over an assertion that decided nothing."""
+        self._prove("a", str(SIGNALLED_EXIT))
+        self.assertFalse(assertion_result_path(self.root / "runs", "run-1", self.digest).exists())
+        work_report(self.root, "b", status="noop")
+        self.assertEqual(self._needed("b"), NEEDED_RUN_IT)
 
     def test_a_different_command_shares_nothing(self) -> None:
         self._prove("a", "0")
@@ -1419,6 +1575,7 @@ class TheGateIsStatedOnce(unittest.TestCase):
                 "timed_out",
                 "retry_exhausted",
                 "orchestrator_died",
+                "assertion_interrupted",
             ),
         )
 

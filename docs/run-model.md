@@ -138,6 +138,7 @@ is derived from the record rather than composed as prose, and is one of:
 | `decide`          | a step is blocked on a human decision                                                | none — a person decides, and no command does                                                               |
 | `settle_merge`    | a step or a census exclusion left work unlanded, in a run whose topology has a merge | none                                                                                                       |
 | `rerun`           | the run failed, or a merge-less run left work unlanded                               | `python3 -m cairn run offer --plan <plan> --repository <repository> --trigger recovery --recovering <run>` |
+| `fix_assertion`   | as `rerun`, where a signal ended the assertion of the step the fault is at           | the same recovery command, to use once what stopped the assertion has changed                              |
 | `start_scheduler` | the run is queued and nothing is draining the queue                                  | `cairn schedule offer --scope start`                                                                       |
 | `wait`            | the run is still in flight                                                           | none                                                                                                       |
 | `nothing`         | the run is green, or every step no-opped                                             | none                                                                                                       |
@@ -240,7 +241,7 @@ Each step carries `step_id`, `outcome`, `overlays`, `cause`, `position`, `asked`
 `transcript`, `stderr_log`,
 `resume_command`, `follow_up_work`, `started_at`, `finished_at`, `exit_code`,
 `assertion_exit`, `assertion_source`, `assertion_backed_by`, `timeout_seconds`,
-`elapsed_seconds`, `assertion_tail`, `nodes` and `provenance`.
+`elapsed_seconds`, `assertion_tail`, `remedy`, `nodes` and `provenance`.
 
 `assertion_exit` is what the step's assertion exited, and `assertion_source` says which
 execution backed it — `executed` by the step's own assertion node, or `shared` from the
@@ -265,6 +266,13 @@ without diffing it against the step's transcript ([cli-contract.md](cli-contract
 kept for that node — standard output first, standard error where that is empty — so the
 report can quote why a gate closed rather than name a log path. It is absent where the
 assertion passed, never ran, or its log is gone.
+
+`remedy` is present only on a step that declared `remediate` and whose remedy node left an
+account. It carries the node's `status` and what it `said` — the remedy gate's reason for a
+decline, or the session's own summary — with the session's `cost_usd`, the `first_exit` of
+the assertion it answered, and the `resumed_session` it continued. Where a remedy reported its
+work `done` and the assertion ran again, `assertion_exit` is that second run's, and the
+remedy's cost counts toward the run's `budget` like any session's.
 
 `asked` is the command the engine recorded for the step, which for an agent step contains
 the prompt. The plan's own task text does not survive into a run — the generator consumes

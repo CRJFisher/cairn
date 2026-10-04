@@ -51,7 +51,7 @@ import sys
 import time
 import traceback
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 
 from cairn.core import (
     EXIT_FAILED,
@@ -68,9 +68,10 @@ from cairn.core import (
 from cairn.gitio import digest_states, git, tree_entries
 from cairn.layout import MARKER_DIRECTORY, assertion_lock_path, assertion_result_path
 from cairn.locks import exclusive_lock
-from cairn.plan.schema import VERIFY_PREFIX, WORK_PREFIX
+from cairn.plan.schema import REMEDY_PREFIX, VERIFY_PREFIX, WORK_PREFIX
 
 NEEDED_VERB = "needed"
+REMEDY_VERB = "remedy"
 
 # How long publishing one proof waits for the key's lock. The critical section is a read of
 # one small file and a replace of another, so a wait this long is already pathological
@@ -87,7 +88,21 @@ NEEDED_SKIP_IT = EXIT_FAILED
 DECISION_RUN = "run"
 DECISION_SHARED = "shared"
 DECISION_SKIPPED_UPSTREAM = "skipped_upstream"
-DECISIONS: tuple[str, ...] = (DECISION_RUN, DECISION_SHARED, DECISION_SKIPPED_UPSTREAM)
+# A remedied step's second assertion, declined because no remedy session reported doing
+# anything: running it again over an unchanged tree would only ask the first question twice.
+DECISION_NOT_REMEDIED = "not_remedied"
+DECISIONS: tuple[str, ...] = (
+    DECISION_RUN,
+    DECISION_SHARED,
+    DECISION_SKIPPED_UPSTREAM,
+    DECISION_NOT_REMEDIED,
+)
+
+# The remedy gate's two answers. It fails **closed**, the opposite of the assertion's own
+# gate: a remedy it wrongly declines costs a step that was failing anyway, while one it
+# wrongly opens is a paid session nobody needed.
+REMEDY_OPEN_IT = EXIT_OK
+REMEDY_DECLINE_IT = EXIT_FAILED
 
 # Which execution backed a step's assertion, once one did: its own, or another step's
 # proof of the same command against the same tree.
@@ -104,6 +119,12 @@ TREE_KEY = "tree_sha256"
 # Wall-clock time the gate let the assertion run. The assertion writes nothing, so this is
 # the only start the mark gate can time it from; the gate's own duration is milliseconds.
 RELEASED_AT_KEY = "released_at"
+# The assertion's own bound, so its account can tell the engine's kill at that bound from
+# any other signal: the remedy for one is a larger `verify_timeout`, for the other a hunt.
+BOUND_KEY = "bound_seconds"
+# How close to its bound a signalled assertion has to have run for the bound to be what
+# ended it. The engine's kill and the gate's clock are seconds apart, never minutes.
+BOUND_SLACK_SECONDS = 5.0
 
 # The exit status Dagu 2.11.0 hands on for a process a signal ended: Go's `ExitCode()`
 # answers -1 there, and the signal itself does not reach `${<id>.exit_code}`. Read as an
@@ -159,11 +180,14 @@ def _inside(root: Path, directory: Path | None) -> list[str]:
 
 
 def assertion_report(
-    directory: Path, step_id: str, run_id: str
+    directory: Path, step_id: str, run_id: str, *, prefix: str = VERIFY_PREFIX
 ) -> dict[str, Any] | None:
-    """The account the assertion's gate left for this step, or None where it left none."""
+    """The account an assertion's gate left for this step, or None where it left none.
+
+    `prefix` names which execution: the step's assertion, or a remedied step's second one.
+    """
     try:
-        return read_step_report(directory, f"{VERIFY_PREFIX}{step_id}", run_id)
+        return read_step_report(directory, f"{prefix}{step_id}", run_id)
     except CairnError as exc:
         if exc.cause == "missing_report":
             return None
@@ -183,6 +207,23 @@ def decision_of(report: dict[str, Any] | None) -> str | None:
     return found if isinstance(found, str) and found in DECISIONS else None
 
 
+def remedy_ran(directory: Path, step_id: str, run_id: str) -> bool:
+    """Whether a remedy session ran for this step and reported its work done."""
+    try:
+        report = read_step_report(directory, f"{REMEDY_PREFIX}{step_id}", run_id)
+    except CairnError:
+        return False
+    return report.get("status") == "done" and not report.get("needs_user_decision")
+
+
+def recorded_exit(report: dict[str, Any] | None) -> int | None:
+    """The exit an executed assertion's account was already completed with, if it was."""
+    detail = _detail(report)
+    if detail.get(SOURCE_KEY) != ASSERTION_EXECUTED:
+        return None
+    return shared_exit(cast(dict[str, Any], report))
+
+
 def shared_exit(report: dict[str, Any]) -> int | None:
     found = _detail(report).get(EXIT_KEY)
     return found if isinstance(found, int) and not isinstance(found, bool) else None
@@ -197,9 +238,30 @@ def _read_shared(path: Path) -> dict[str, Any] | None:
 
 
 def _decide(
-    context: RuntimeContext, step_id: str, digest: str
+    context: RuntimeContext,
+    step_id: str,
+    digest: str,
+    bound: int | None,
+    *,
+    after_remedy: bool = False,
 ) -> tuple[int, CommandResult]:
-    detail: dict[str, Any] = {DECISION_KEY: DECISION_RUN, COMMAND_KEY: digest, TREE_KEY: None}
+    detail: dict[str, Any] = {
+        DECISION_KEY: DECISION_RUN,
+        COMMAND_KEY: digest,
+        TREE_KEY: None,
+        BOUND_KEY: bound,
+    }
+    if after_remedy and not remedy_ran(context.report_path.parent, step_id, context.run_id):
+        detail[DECISION_KEY] = DECISION_NOT_REMEDIED
+        return NEEDED_SKIP_IT, CommandResult(
+            NEEDED_SKIP_IT,
+            "noop",
+            "no remedy session reported changing anything, so there is nothing new to assert",
+            [],
+            False,
+            None,
+            detail,
+        )
     try:
         read_step_report(context.report_path.parent, f"{WORK_PREFIX}{step_id}", context.run_id)
     except CairnError as exc:
@@ -267,10 +329,18 @@ def needed_main(arguments: list[str]) -> int:
     parser = argparse.ArgumentParser(prog=f"cairn verify {NEEDED_VERB}", add_help=False)
     parser.add_argument("--step", required=True)
     parser.add_argument("--command-digest", dest="command_digest", required=True)
+    parser.add_argument("--bound", type=int, default=None)
+    parser.add_argument("--after-remedy", dest="after_remedy", action="store_true")
     try:
         args = parser.parse_args(arguments)
         context = RuntimeContext.from_env()
-        answer, result = _decide(context, str(args.step), str(args.command_digest))
+        answer, result = _decide(
+            context,
+            str(args.step),
+            str(args.command_digest),
+            args.bound,
+            after_remedy=bool(args.after_remedy),
+        )
         with survive_termination():
             write_report(context, result, time.monotonic() - started)
         print(
@@ -285,6 +355,115 @@ def needed_main(arguments: list[str]) -> int:
         traceback.print_exc()
         print(f"assertion gate: {exc}; running the assertion", file=sys.stderr)
         return NEEDED_RUN_IT
+
+
+def _remedy_decision(
+    context: RuntimeContext, step_id: str, verify_exit_text: str
+) -> tuple[int, str]:
+    """Whether a remedy session is worth opening, and why, in one sentence.
+
+    Opened only over an assertion that ran — or shared a proof — and exited nonzero, behind
+    a step that reported its work done or already done. Everything else is something a
+    session cannot fix: a pass, an assertion that never ran, one a signal ended, a step that
+    vetoed itself or is waiting on a person.
+    """
+    directory = context.report_path.parent
+    account = assertion_report(directory, step_id, context.run_id)
+    decision = decision_of(account)
+    if decision == DECISION_SHARED and account is not None:
+        exit_code = shared_exit(account)
+    elif decision == DECISION_RUN and account is not None:
+        exit_code = recorded_exit(account)
+        if exit_code is None:
+            exit_code = int(verify_exit_text)
+            record_executed(context, step_id, account, exit_code)
+    else:
+        return REMEDY_DECLINE_IT, "the assertion did not run, so there is nothing to remedy"
+    if exit_code is None:
+        return REMEDY_DECLINE_IT, "the assertion's account carries no exit status"
+    if exit_code == 0:
+        return REMEDY_DECLINE_IT, "the assertion passed"
+    if exit_code == SIGNALLED_EXIT:
+        return REMEDY_DECLINE_IT, (
+            "a signal ended the assertion before it exited, which no change to the work "
+            "can fix"
+        )
+    try:
+        work = read_step_report(directory, f"{WORK_PREFIX}{step_id}", context.run_id)
+    except CairnError as exc:
+        return REMEDY_DECLINE_IT, f"the step's own report cannot be read: {exc}"
+    if work.get("needs_user_decision"):
+        return REMEDY_DECLINE_IT, "the step is waiting on a person's decision"
+    if work.get("status") not in ("done", "noop"):
+        return REMEDY_DECLINE_IT, "the step reported failure, which a remedy may not overrule"
+    return REMEDY_OPEN_IT, f"the assertion exited {exit_code} over work the step reported"
+
+
+class RemedyBrief(NamedTuple):
+    """What a remedy session is told, and which session it continues."""
+
+    exit_code: int
+    said: str
+    resume_session: str | None
+
+
+def remedy_brief(context: RuntimeContext, step_id: str) -> RemedyBrief:
+    """Read back what the remedy gate read: the assertion's exit and the step's account.
+
+    The session resumed is the one the step's own report names. A report that names none
+    leaves a fresh session to do the remedy, told everything the brief holds.
+    """
+    directory = context.report_path.parent
+    account = assertion_report(directory, step_id, context.run_id)
+    exit_code = recorded_exit(account)
+    if exit_code is None and decision_of(account) == DECISION_SHARED and account is not None:
+        exit_code = shared_exit(account)
+    if exit_code is None:
+        raise CairnError(
+            "invalid_arguments",
+            f"step {step_id!r} has no assertion exit a remedy could answer",
+        )
+    work = read_step_report(directory, f"{WORK_PREFIX}{step_id}", context.run_id)
+    detail = _detail(work)
+    session = detail.get("session_id")
+    return RemedyBrief(
+        exit_code,
+        str(work.get("summary") or ""),
+        session if isinstance(session, str) and session else None,
+    )
+
+
+def remedy_main(arguments: list[str]) -> int:
+    """Answer whether a remedied step's remedy session opens. Exit 0 means it does.
+
+    The precondition of the remedy node. A decline is written as the remedy node's own
+    `noop` report, because the node it gates will not run to write one; an opening writes
+    nothing, because the session writes its own. Every fault declines.
+    """
+    started = time.monotonic()
+    parser = argparse.ArgumentParser(prog=f"cairn verify {REMEDY_VERB}", add_help=False)
+    parser.add_argument("--step", required=True)
+    parser.add_argument("--verify-exit", dest="verify_exit", required=True)
+    try:
+        args = parser.parse_args(arguments)
+        context = RuntimeContext.from_env()
+        answer, reason = _remedy_decision(context, str(args.step), str(args.verify_exit))
+    except SystemExit:
+        print(f"remedy gate rejected its own arguments: {arguments}", file=sys.stderr)
+        return REMEDY_DECLINE_IT
+    except Exception as exc:  # noqa: BLE001 - see the docstring: every fault declines
+        traceback.print_exc()
+        print(f"remedy gate: {exc}; no remedy session opens", file=sys.stderr)
+        return REMEDY_DECLINE_IT
+    print(f"remedy gate [{args.step}]: {reason}", file=sys.stderr)
+    if answer == REMEDY_DECLINE_IT:
+        with survive_termination():
+            write_report(
+                context,
+                CommandResult(EXIT_OK, "noop", reason, [], False, None, {}),
+                time.monotonic() - started,
+            )
+    return answer
 
 
 def _standing_failure(standing: dict[str, Any] | None, command: str, tree: str) -> bool:
@@ -347,7 +526,12 @@ def _publish(
 
 
 def record_executed(
-    context: RuntimeContext, step_id: str, report: dict[str, Any], exit_code: int
+    context: RuntimeContext,
+    step_id: str,
+    report: dict[str, Any],
+    exit_code: int,
+    *,
+    prefix: str = VERIFY_PREFIX,
 ) -> None:
     """Complete an assertion's account with the exit it produced, and file it as a proof.
 
@@ -372,20 +556,35 @@ def record_executed(
     completed = CommandResult(
         exit_code,
         "done" if exit_code == 0 else "failed",
-        f"the assertion was ended by a signal after {duration:.0f}s, before it exited"
-        if exit_code == SIGNALLED_EXIT
-        else f"the assertion exited {exit_code}",
+        _account(exit_code, duration, detail.get(BOUND_KEY)),
         [],
         False,
         None,
         detail,
     )
     with survive_termination():
-        write_report_for(context, f"{VERIFY_PREFIX}{step_id}", completed, duration)
+        write_report_for(context, f"{prefix}{step_id}", completed, duration)
         tree = detail.get(TREE_KEY)
         command = detail.get(COMMAND_KEY)
-        if isinstance(tree, str) and isinstance(command, str):
+        # An assertion a signal ended decided nothing, so it is no proof to share: filed,
+        # its failure would dominate and close every later gate quoting the command.
+        if exit_code != SIGNALLED_EXIT and isinstance(tree, str) and isinstance(command, str):
             _publish(context, step_id, command, tree, exit_code)
+
+
+def _account(exit_code: int, duration: float, bound: Any) -> str:
+    if exit_code != SIGNALLED_EXIT:
+        return f"the assertion exited {exit_code}"
+    if (
+        isinstance(bound, int)
+        and not isinstance(bound, bool)
+        and duration >= bound - BOUND_SLACK_SECONDS
+    ):
+        return (
+            f"the assertion was stopped at its {bound} s bound before it exited; "
+            "the plan's verify_timeout is smaller than the assertion needs"
+        )
+    return f"the assertion was ended by a signal after {duration:.0f}s, before it exited"
 
 
 __all__ = [
@@ -393,9 +592,11 @@ __all__ = [
     "ASSERTION_SHARED",
     "ASSERTION_SOURCES",
     "BACKED_BY_KEY",
+    "BOUND_KEY",
     "COMMAND_KEY",
     "DECISIONS",
     "DECISION_KEY",
+    "DECISION_NOT_REMEDIED",
     "DECISION_RUN",
     "DECISION_SHARED",
     "DECISION_SKIPPED_UPSTREAM",
@@ -406,14 +607,22 @@ __all__ = [
     "PROOF_LOCK_UNAVAILABLE",
     "PUBLICATION_WAIT_SECONDS",
     "RELEASED_AT_KEY",
+    "REMEDY_DECLINE_IT",
+    "REMEDY_OPEN_IT",
+    "REMEDY_VERB",
     "SIGNALLED_EXIT",
     "SOURCE_KEY",
     "TREE_KEY",
+    "RemedyBrief",
     "assertion_report",
     "command_digest",
     "decision_of",
     "needed_main",
     "record_executed",
+    "recorded_exit",
+    "remedy_brief",
+    "remedy_main",
+    "remedy_ran",
     "shared_exit",
     "tree_digest",
 ]

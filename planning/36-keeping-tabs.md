@@ -13,6 +13,9 @@ mechanical fact (turn, last tool, age). This adds a _meaning_ layer on top. Answ
 A summariser (`claude -p`, a small model) periodically reads a session's recent events and writes
 a short status to a store; a web page renders the store.
 
+The first iteration reads the agent's own task list instead of summarising with a model — see
+[40](40-task-list-as-the-tab-source.md) for which events and stores expose it.
+
 ## Design choices to settle
 
 - **Trigger: session hooks or Cairn's wrapper?** Claude Code hooks (`PostToolUse`, `Stop`) would

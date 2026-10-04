@@ -29,11 +29,11 @@ import subprocess
 import tempfile
 from typing import Any, NamedTuple, cast
 
-from cairn.assertions import NEEDED_VERB
+from cairn.assertions import NEEDED_VERB, REMEDY_VERB
 from cairn.bounds import positive_finite, positive_integer, retry_policy_is
 from cairn.plan.schema import INPUTS_SCOPE, ONCE_SCOPE
 from cairn.topology import TopologyError, check_name, parse_node_name
-from cairn.verify import verify_handle
+from cairn.verify import recheck_handle, verify_handle
 from cairn.workflow.build import EXIT_HANDLER, PYTHONPATH_ENV, step_concurrency
 from cairn.workflow.schema import (
     CAIRN_INVOCATION,
@@ -61,6 +61,7 @@ EXIT_CODE_SUFFIX = ".exit_code"
 MARKER_GATE_ARGV = (*CAIRN_INVOCATION, "marker", "absent")
 VERIFY_GATE_ARGV = (*CAIRN_INVOCATION, "verify", "gate")
 ASSERTION_GATE_ARGV = (*CAIRN_INVOCATION, "verify", NEEDED_VERB)
+REMEDY_GATE_ARGV = (*CAIRN_INVOCATION, "verify", REMEDY_VERB)
 
 
 class Rule(NamedTuple):
@@ -99,6 +100,7 @@ RULES: tuple[Rule, ...] = (
     Rule("commit_without_skipped", "an excluded branch's skip cascades and the wave lands nothing"),
     Rule("marker_with_skipped", "the commit runs anyway and lands exactly the unverified work"),
     Rule("assertion_without_skipped", "a declined assertion's skip cascades into its marker and commit, and the step leaves no account of the halt"),
+    Rule("remedy_without_skipped", "a declined remedy's skip cascades into its marker and commit, and a step whose assertion passed is never recorded"),
     Rule("gate_unresolvable", "every step skips into a clean success"),
     Rule("foreign_condition", "the gate runs a command Cairn did not write, and `dagu dry` runs it"),
     Rule("scope_without_occasion", "a recovery cannot continue the occasion it is recovering"),
@@ -191,7 +193,11 @@ def _is_plan_assertion(step: dict[str, Any]) -> bool:
     if not isinstance(name, str) or handle is None:
         return False
     role, _, subject = name.partition("_")
-    return role == "verify" and bool(subject) and handle == verify_handle(subject)
+    if not subject:
+        return False
+    return (role == "verify" and handle == verify_handle(subject)) or (
+        role == "recheck" and handle == recheck_handle(subject)
+    )
 
 
 def _conditions(step: dict[str, Any]) -> list[str]:
@@ -225,6 +231,8 @@ def gate_kind(condition: str) -> str | None:
         return "verify"
     if tuple(words[: len(ASSERTION_GATE_ARGV)]) == ASSERTION_GATE_ARGV:
         return "assertion"
+    if tuple(words[: len(REMEDY_GATE_ARGV)]) == REMEDY_GATE_ARGV:
+        return "remedy"
     return None
 
 
@@ -578,6 +586,8 @@ def _must_not_retry(name: str | None, step: dict[str, Any]) -> bool:
             "merge",
             "prune",
             "verify",
+            "remedy",
+            "recheck",
             "mark",
         }
     except TopologyError:
@@ -645,6 +655,14 @@ def _check_gates(
                 "marker_with_skipped",
                 name,
                 "a verify-gated step must let a closed gate reach the commit",
+            )
+        )
+    if "remedy" in kinds and flags.get("skipped") is not True:
+        faults.append(
+            Fault(
+                "remedy_without_skipped",
+                name,
+                "a remedy its gate declined must still let the marker's gate run",
             )
         )
     if "assertion" in kinds and flags.get("skipped") is not True:

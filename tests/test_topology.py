@@ -11,6 +11,7 @@ from cairn.plan.schema import (
     ENGINE_NAME_MAX_BYTES,
     GRAPH_VERSION,
     SUPPORT_TIMEOUT,
+    VERIFY_TIMEOUT,
     WAIT_REPORT_GRACE,
     Graph,
     Step,
@@ -354,6 +355,18 @@ class Duration(unittest.TestCase):
         )
         self.assertEqual(by_name(command, "work_only")["max_seconds"], 100)
 
+    def test_an_assertion_is_bounded_by_the_plan_and_the_run_counts_that_bound(self) -> None:
+        # Measured: a whole-suite assertion ran 844 s against a fixed 600 s bound.
+        graph = one_step_graph(verify_timeout=1800)
+        derived = derive(graph, repository_root=REPOSITORY, parent_branch=PARENT)
+        self.assertEqual(by_name(derived, "verify_only")["max_seconds"], 1800)
+        step = graph["steps"][0]
+        self.assertEqual(emit_verify(step, "/repo")["timeout_sec"], 1800)
+        unstated = derive(one_step_graph(), repository_root=REPOSITORY, parent_branch=PARENT)
+        self.assertEqual(
+            derived["max_seconds"] - unstated["max_seconds"], 1800 - VERIFY_TIMEOUT
+        )
+
     def test_the_run_maximum_holds_whatever_the_engines_concurrency_cap_is(self) -> None:
         # The slowest path would be tighter and wrong: the engine caps concurrent steps,
         # so a wave wider than the cap outruns its own longest path, and a reclaim window
@@ -606,7 +619,7 @@ class Emission(unittest.TestCase):
         graph = fixture("multi-wave")
         derived = derive(graph, repository_root=REPOSITORY, parent_branch=PARENT)
         for node in derived["nodes"]:
-            if node["role"] in ("merge", "join", "verify"):
+            if node["role"] in ("merge", "join", "verify", "recheck"):
                 continue
             emitted = emit_node(
                 node, steps=self.steps(graph), run_timeout_seconds=derived["max_seconds"]

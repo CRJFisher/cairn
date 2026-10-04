@@ -52,6 +52,25 @@ This session is ending now and nothing will re-invoke it. Do no further work.
 Report what you have already done, through the structured output you are constrained to.
 """
 
+# What a remedy session is asked, after its own step's assertion ran and exited nonzero. The
+# assertion is the plan's definition of done, so the one move this text forbids is the one
+# that would make a failing assertion pass without the work changing.
+REMEDY_TASK = """\
+This step's work was asked for as the original task below. Its assertion, the command
+`{assertion}`, then ran over the tree and exited {exit_code}, so the end state it checks
+does not hold.
+
+Run that command yourself, read what it reports, and change the work until it passes. The
+assertion is the plan's definition of done: fix the work, never the assertion. Do not edit,
+skip or weaken the checks it runs. If passing it would need the checks themselves to
+change, change nothing, report `failed`, and say why.
+
+What the step reported of itself: {said}
+
+The original task:
+{task}"""
+
+
 STEP_REPORT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -68,6 +87,11 @@ STEP_REPORT_SCHEMA: dict[str, Any] = {
         "needs_user_decision",
     ],
 }
+
+
+def compose_remedy_task(task: str, assertion: str, exit_code: int, said: str) -> str:
+    """The task a remedy session is given, before the preamble every session receives."""
+    return REMEDY_TASK.format(assertion=assertion, exit_code=exit_code, said=said, task=task)
 
 
 def compose_prompt(task: str) -> str:

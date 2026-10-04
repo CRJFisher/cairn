@@ -210,6 +210,30 @@ task converges is a reading of the plan, so the derivation declares it — a
 ([plan-contract.md](plan-contract.md)) — and the author restates the task; no code at
 emission or anywhere else re-reads the sentence.
 
+## The remedy
+
+A step that declares `remediate` gets one more session when its assertion ran and exited
+nonzero: its own work session, resumed, given this text as its task. Resuming is safe only
+here: the tree is still the one that session left, with nothing else written into it since,
+so what it believes about the tree is still true. The assertion then runs again, unchanged,
+and only that second run can record the step ([verify-gate.md](verify-gate.md)).
+
+```text
+This step's work was asked for as the original task below. Its assertion, the command
+`{assertion}`, then ran over the tree and exited {exit_code}, so the end state it checks
+does not hold.
+
+Run that command yourself, read what it reports, and change the work until it passes. The
+assertion is the plan's definition of done: fix the work, never the assertion. Do not edit,
+skip or weaken the checks it runs. If passing it would need the checks themselves to
+change, change nothing, report `failed`, and say why.
+
+What the step reported of itself: {said}
+
+The original task:
+{task}
+```
+
 ## Lowering the gate onto the engine
 
 The marker check is a **precondition**. A `condition:` with no `expected:` executes as a

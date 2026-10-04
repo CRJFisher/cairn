@@ -28,7 +28,7 @@ than resolved.
   timeout_sec: 600
   retry_policy: { limit: 0, interval_sec: 1 }
   preconditions:
-    - condition: python3 -m cairn verify needed --step config_schema --command-digest <sha256>
+    - condition: python3 -m cairn verify needed --step config_schema --command-digest <sha256> --bound 600
   continue_on: { failure: true, skipped: true }
 
 - name: mark_config_schema # the record, gated on the assertion and the report
@@ -107,6 +107,44 @@ record to make the next run skip it ([step-protocol.md](step-protocol.md)).
 **The marker quotes the step's own account.** Its one-line summary is read from the step's
 report, because only the step that did the work can say what it did, and the marker reaches
 git and outlives every report beside it.
+
+## A remedied step: two more nodes
+
+A step that declares `remediate` ([plan-contract.md](plan-contract.md)) becomes five nodes
+rather than three: its work, its assertion, a **remedy**, a **recheck**, and its marker.
+
+```yaml
+- name: remedy_config_schema # the step's own session, resumed once
+  run: python3 -m cairn agent run --provider claude --prompt '…' --model sonnet --max-budget-usd 5.0 --timeout 3600 --remedy-of config_schema --assertion 'test -e config-schema.md'
+  timeout_sec: 3780
+  preconditions:
+    - condition: python3 -m cairn verify remedy --step config_schema --verify-exit '${verify_config_schema.exit_code}'
+  continue_on: { failure: true, skipped: true }
+
+- name: recheck_config_schema # the same assertion, verbatim
+  id: recheck_config_schema
+  run: test -e config-schema.md
+  timeout_sec: 600
+  preconditions:
+    - condition: python3 -m cairn verify needed --step config_schema --command-digest <sha256> --bound 600 --after-remedy
+  continue_on: { failure: true, skipped: true }
+```
+
+**`cairn verify remedy` opens the session only over an assertion that ran and exited
+nonzero**, behind a step that reported its work `done` or `noop`. It declines a pass, an
+assertion that never ran, one a signal ended (`assertion_interrupted`), and a step that
+reported failure or is waiting on a person, and writes that decline as the remedy node's own
+`noop` report. It fails **closed**: a fault opens no paid session. Before it decides, it
+completes the first assertion's account with the exit it read, so that account and its
+proof are filed exactly as they would be without a remedy.
+
+**The recheck runs only after a remedy reported its work `done`**, and the marker's gate
+reads its exit only then — `--recheck-exit '${recheck_config_schema.exit_code}'` is the
+gate's one extra argument. Anything less leaves the first assertion as the verdict, because a
+second assertion with no session between the two would be a retry that passed on its second
+asking. The recheck is the plan's command unchanged and is held to every rule the assertion
+is: bare, never retried, bounded by the step's `verify_timeout`, its proof shared under the
+tree the remedy left.
 
 ## Failure routes by position, through one flag
 
@@ -196,6 +234,11 @@ never reached from one killed before it could write.
 | `timed_out`              | the step was stopped at its bound before it reported | the gate, or the run record |
 | `retry_exhausted`        | the step hit its retry bound                         | the run record              |
 | `orchestrator_died`      | the run's own process was killed under the step      | the run record              |
+| `assertion_interrupted`  | a signal ended the assertion before it exited        | the gate                    |
+
+`assertion_interrupted` is never `verify_failed`: an assertion the engine killed at its
+`verify_timeout`, or that anything else signalled, decided nothing about the work. Its own
+report says which of the two it was, and it is never filed as a proof another gate shares.
 
 `gate_indeterminate` exists because folding an unreadable report into `not_reached` would
 claim a step never ran when it may have done all of its work.

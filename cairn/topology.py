@@ -49,7 +49,7 @@ RESERVED_NAMES = frozenset(
 # parses: `work_work_config` splits into the role `work` and the step `work_config`. The
 # closure is enforced by both the producer and the parser, because the round-trip is what
 # the run model reads names back with and a comment cannot hold it.
-STEP_ROLES = ("setup", "work", "verify", "mark", "commit")
+STEP_ROLES = ("setup", "work", "verify", "remedy", "recheck", "mark", "commit")
 WAVE_ROLES = ("join", "prune", "merge")
 RUN_ROLES = ("lock",)
 ROLES = STEP_ROLES + WAVE_ROLES + RUN_ROLES
@@ -361,10 +361,41 @@ def _step_nodes(
                 "wave": wave,
                 "working_directory": working_directory,
                 "after": [nodes[-1]["name"]],
-                "max_seconds": _support_seconds(),
+                "max_seconds": step_max_seconds(
+                    step["verify_timeout"], SUPPORT_RETRIES, 1
+                ),
                 "detail": {"command": step["verify"]},
             }
         )
+        if step["remediate"]:
+            # Priced as the work session it resumes and bounded the same way, then the
+            # same assertion under the same bound.
+            nodes.append(
+                {
+                    "name": node_name("remedy", step_id),
+                    "role": "remedy",
+                    "step": step_id,
+                    "wave": wave,
+                    "working_directory": working_directory,
+                    "after": [nodes[-1]["name"]],
+                    "max_seconds": _step_seconds(step),
+                    "detail": {"kind": step["kind"]},
+                }
+            )
+            nodes.append(
+                {
+                    "name": node_name("recheck", step_id),
+                    "role": "recheck",
+                    "step": step_id,
+                    "wave": wave,
+                    "working_directory": working_directory,
+                    "after": [nodes[-1]["name"]],
+                    "max_seconds": step_max_seconds(
+                        step["verify_timeout"], SUPPORT_RETRIES, 1
+                    ),
+                    "detail": {"command": step["verify"]},
+                }
+            )
     nodes.append(
         {
             "name": node_name("mark", step_id),

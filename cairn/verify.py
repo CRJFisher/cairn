@@ -19,9 +19,12 @@ from cairn.assertions import (
     DECISION_RUN,
     DECISION_SHARED,
     DECISION_SKIPPED_UPSTREAM,
+    SIGNALLED_EXIT,
     assertion_report,
     decision_of,
     record_executed,
+    recorded_exit,
+    remedy_ran,
     shared_exit,
 )
 from cairn.core import (
@@ -38,6 +41,8 @@ from cairn.core import (
 from cairn.plan.schema import (
     ENGINE_NAME_MAX_BYTES,
     MARK_PREFIX,
+    RECHECK_PREFIX,
+    REMEDY_PREFIX,
     VERIFY_PREFIX,
     WORK_PREFIX,
 )
@@ -56,6 +61,9 @@ GATE_INDETERMINATE = "gate_indeterminate"
 TIMED_OUT = "timed_out"
 RETRY_EXHAUSTED = "retry_exhausted"
 ORCHESTRATOR_DIED = "orchestrator_died"
+# The assertion was ended by a signal — the engine's kill at its bound or anything else —
+# before it exited. It decided nothing about the work, so it is never `verify_failed`.
+ASSERTION_INTERRUPTED = "assertion_interrupted"
 EXCLUSION_CAUSES: tuple[str, ...] = (
     VERIFY_FAILED,
     REPORTED_FAILURE,
@@ -66,6 +74,7 @@ EXCLUSION_CAUSES: tuple[str, ...] = (
     TIMED_OUT,
     RETRY_EXHAUSTED,
     ORCHESTRATOR_DIED,
+    ASSERTION_INTERRUPTED,
 )
 
 # How a failure routes onward. The engine spells a chain halt and a branch exclusion both
@@ -168,6 +177,20 @@ def mark_name(step_id: str) -> str:
     return f"{MARK_PREFIX}{step_id}"
 
 
+def recheck_name(step_id: str) -> str:
+    return f"{RECHECK_PREFIX}{step_id}"
+
+
+def remedy_name(step_id: str) -> str:
+    return f"{REMEDY_PREFIX}{step_id}"
+
+
+def _handle(name: str, marker: str, step_id: str) -> str:
+    if len(name.encode("utf-8")) <= ENGINE_NAME_MAX_BYTES:
+        return name
+    return f"{marker}_{hashlib.sha256(step_id.encode()).hexdigest()[:_DIGEST_LENGTH]}"
+
+
 def verify_handle(step_id: str) -> str:
     """The engine id the gate's exit-status reference names.
 
@@ -175,10 +198,12 @@ def verify_handle(step_id: str) -> str:
     declares an explicit `id`, and an id over the engine's bound is refused at load. A
     digest keeps the handle inside the bound without letting two steps share one.
     """
-    name = verify_name(step_id)
-    if len(name.encode("utf-8")) <= ENGINE_NAME_MAX_BYTES:
-        return name
-    return f"v_{hashlib.sha256(step_id.encode()).hexdigest()[:_DIGEST_LENGTH]}"
+    return _handle(verify_name(step_id), "v", step_id)
+
+
+def recheck_handle(step_id: str) -> str:
+    """The engine id of a remedied step's second assertion, bounded as `verify_handle` is."""
+    return _handle(recheck_name(step_id), "r", step_id)
 
 
 def exit_status_reference(step_id: str) -> str:
@@ -189,6 +214,10 @@ def exit_status_reference(step_id: str) -> str:
     and fails the precondition without ever launching the command it names.
     """
     return f"${{{verify_handle(step_id)}.exit_code}}"
+
+
+def recheck_exit_reference(step_id: str) -> str:
+    return f"${{{recheck_handle(step_id)}.exit_code}}"
 
 
 def judge(verify_exit: int | None, report: dict[str, Any] | None) -> Verdict:
@@ -273,6 +302,16 @@ def judge(verify_exit: int | None, report: dict[str, Any] | None) -> Verdict:
                 else "the step reported failure"
             ),
         )
+    if verify_exit == SIGNALLED_EXIT:
+        return Verdict(
+            record=False,
+            cause=ASSERTION_INTERRUPTED,
+            divergence=None,
+            summary=(
+                "the assertion was ended by a signal before it exited, so it decided "
+                "nothing about the work"
+            ),
+        )
     if asserted is False:
         return Verdict(
             record=False,
@@ -328,13 +367,43 @@ def _assertion_exit(
             else "the assertion's own gate left no account of whether the assertion ran, "
             "so its exit status cannot be trusted",
         )
+    # A remedied step's remedy gate completes this account before the session opens, and
+    # completing it twice would time the assertion across the session that followed it.
     exit_code = _read_verify_exit(verify_exit_text)
-    record_executed(context, step_id, account, exit_code)
+    if recorded_exit(account) != exit_code:
+        record_executed(context, step_id, account, exit_code)
+    return exit_code
+
+
+def _recheck_exit(
+    step_id: str, recheck_exit_text: str | None, context: RuntimeContext
+) -> int | None:
+    """A remedied step's second assertion, read only where a remedy ran and it did too.
+
+    Anything short of both leaves the first assertion as the step's verdict. A second
+    assertion with no remedy session before it would let a flaky command pass on its
+    second asking, which is a retry the plan never declared ([plan-contract.md]).
+    """
+    directory = context.report_path.parent
+    if recheck_exit_text is None or not remedy_ran(directory, step_id, context.run_id):
+        return None
+    account = assertion_report(directory, step_id, context.run_id, prefix=RECHECK_PREFIX)
+    decision = decision_of(account)
+    if decision == DECISION_SHARED and account is not None:
+        return shared_exit(account)
+    if decision != DECISION_RUN or account is None:
+        return None
+    exit_code = _read_verify_exit(recheck_exit_text)
+    record_executed(context, step_id, account, exit_code, prefix=RECHECK_PREFIX)
     return exit_code
 
 
 def run_verify_gate(
-    step_id: str, position: str, verify_exit_text: str | None, context: RuntimeContext
+    step_id: str,
+    position: str,
+    verify_exit_text: str | None,
+    context: RuntimeContext,
+    recheck_exit_text: str | None = None,
 ) -> tuple[Verdict, dict[str, Any]]:
     """Decide, and assemble what the record needs when the answer is no.
 
@@ -356,8 +425,12 @@ def run_verify_gate(
         )
     except CairnError as exc:
         unread = exc
+    first_exit: int | None = None
     try:
         verify_exit = _assertion_exit(step_id, verify_exit_text, context)
+        rechecked = _recheck_exit(step_id, recheck_exit_text, context)
+        if rechecked is not None:
+            first_exit, verify_exit = verify_exit, rechecked
         fault = unread
     except CairnError as exc:
         fault = unread or exc
@@ -373,6 +446,8 @@ def run_verify_gate(
         "verify_exit": verify_exit,
         "reported": None if report is None else report["status"],
     }
+    if first_exit is not None:
+        detail["first_verify_exit"] = first_exit
     if verdict["divergence"] is not None:
         detail["divergence"] = verdict["divergence"]
     return verdict, detail
@@ -411,6 +486,8 @@ def gate_main(arguments: list[str]) -> int:
     # Absent exactly where the plan declared the step has no checkable effect, so the
     # step's own report is the only routing signal it has.
     parser.add_argument("--verify-exit", dest="verify_exit")
+    # Present exactly where the plan declared `remediate`: the second assertion's exit.
+    parser.add_argument("--recheck-exit", dest="recheck_exit")
     # Identity is resolved before the arguments are judged, because an exclusion with no
     # account of itself is the one outcome this gate must never produce — and argument
     # skew between an emitted workflow and an upgraded binary is exactly a case where the
@@ -429,7 +506,7 @@ def gate_main(arguments: list[str]) -> int:
         args = parser.parse_args(arguments)
         step = args.step
         verdict, detail = run_verify_gate(
-            args.step, args.position, args.verify_exit, context
+            args.step, args.position, args.verify_exit, context, args.recheck_exit
         )
     except SystemExit:
         pass
@@ -454,6 +531,7 @@ def gate_main(arguments: list[str]) -> int:
 
 
 __all__ = [
+    "ASSERTION_INTERRUPTED",
     "BRANCH",
     "CHAIN",
     "EXCLUSION_CAUSES",
@@ -472,6 +550,10 @@ __all__ = [
     "gate_main",
     "judge",
     "mark_name",
+    "recheck_exit_reference",
+    "recheck_handle",
+    "recheck_name",
+    "remedy_name",
     "run_verify_gate",
     "verify_handle",
     "verify_name",

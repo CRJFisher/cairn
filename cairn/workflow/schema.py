@@ -95,7 +95,10 @@ ENGINE_VERSION = "2.11.0"
 # 6: every merge body carries its resolver model, dollar ceiling, and internal deadline.
 # Definitions written by 5 leave conflict resolution to provider defaults and the engine's
 # outer kill, so they must be re-authored before execution.
-GENERATOR_VERSION = 6
+# 7: every assertion is bounded by its step's `verify_timeout`, and its gate is handed that
+# bound so an assertion's account can tell the engine's kill at it from any other signal.
+# Definitions written by 6 bound every assertion at 600 s whatever the plan says.
+GENERATOR_VERSION = 7
 
 # The one execution type. The alternative reading serialises the graph, which is the defect
 # Cairn exists to avoid — and `type: chain` without `depends` validates clean and silently

@@ -89,6 +89,7 @@ def canonical_facts(record: RunRecord) -> list[tuple[str, str]]:
         freshness = step["freshness"]
         diffstat = step["diffstat"]
         divergence = step["divergence"]
+        remedy = step["remedy"]
         facts.extend(
             [
                 (f"{key}.outcome", _value(step["outcome"])),
@@ -124,6 +125,22 @@ def canonical_facts(record: RunRecord) -> list[tuple[str, str]]:
                 (f"{key}.timeout_seconds", _value(step["timeout_seconds"])),
                 (f"{key}.elapsed_seconds", _value(step["elapsed_seconds"])),
                 (f"{key}.assertion_tail", _value(step["assertion_tail"])),
+                (
+                    f"{key}.remedy",
+                    ABSENT if remedy is None else _value(remedy["status"]),
+                ),
+                (
+                    f"{key}.remedy_said",
+                    ABSENT if remedy is None else _value(remedy["said"]),
+                ),
+                (
+                    f"{key}.remedy_first_exit",
+                    ABSENT if remedy is None else _value(remedy["first_exit"]),
+                ),
+                (
+                    f"{key}.remedy_cost_usd",
+                    ABSENT if remedy is None else _value(remedy["cost_usd"]),
+                ),
                 (f"{key}.branch", _value(step["branch"])),
                 (f"{key}.commit", _value(step["commit"])),
                 (

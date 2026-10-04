@@ -329,12 +329,35 @@ class ThePreflightRefusesWhatTheEngineWouldRun(unittest.TestCase):
 
         self.assertIn("assertion_without_skipped", self.mutated(drop))
 
+    def test_a_remedy_that_cannot_survive_being_declined_is_refused(self) -> None:
+        """A declined remedy's skip would cascade into its marker, and a step whose
+        assertion passed would never be recorded."""
+        def drop(d: Any) -> None:
+            for step in d["steps"]:
+                if any("verify remedy" in c["condition"] for c in step.get("preconditions", [])):
+                    step["continue_on"] = {"failure": True}
+                    return
+            self.fail("the document carries no remedy to mutate")
+
+        self.assertIn("remedy_without_skipped", self.mutated(drop))
+
+    def test_a_recheck_is_the_plans_own_command_and_absorbs_like_one(self) -> None:
+        def drop(d: Any) -> None:
+            for step in d["steps"]:
+                if step["name"].startswith("recheck_"):
+                    step["continue_on"] = {"skipped": True}
+                    return
+            self.fail("the document carries no recheck to mutate")
+
+        self.assertIn("assertion_absorbs_no_failure", self.mutated(drop))
+
     def test_the_three_gates_are_three_exact_prefixes(self) -> None:
         """A widened `cairn verify` would route the assertion's gate to the marker's rule,
         and the two want opposite answers to `skipped`."""
         self.assertEqual(gate_kind("python3 -m cairn marker absent --step a --scope once"), "marker")
         self.assertEqual(gate_kind("python3 -m cairn verify gate --step a --position chain"), "verify")
         self.assertEqual(gate_kind("python3 -m cairn verify needed --step a --command-digest x"), "assertion")
+        self.assertEqual(gate_kind("python3 -m cairn verify remedy --step a --verify-exit 1"), "remedy")
         self.assertIsNone(gate_kind("python3 -m cairn verify --step a"))
 
     def test_a_missing_timeout_is_refused(self) -> None:
@@ -980,11 +1003,14 @@ class PublishingOnlyTheReviewedGraph(unittest.TestCase):
         self.assertFalse(workflow_path(self.repository, "all-roots").exists())
 
     def test_authoring_without_a_source_root_is_a_usage_error(self) -> None:
-        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-            with self.assertRaises(SystemExit):
-                workflow_main(
-                    ["author", str(self.plan / "graph.json"), "--repository", str(self.repository)]
-                )
+        with (
+            redirect_stdout(io.StringIO()),
+            redirect_stderr(io.StringIO()),
+            self.assertRaises(SystemExit),
+        ):
+            workflow_main(
+                ["author", str(self.plan / "graph.json"), "--repository", str(self.repository)]
+            )
 
 
 class EachPlanKeepsItsOwnGraph(unittest.TestCase):

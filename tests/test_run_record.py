@@ -47,6 +47,7 @@ from cairn.record.vocabulary import (
     EXIT_GREEN,
     EXIT_NO_RECORD,
     NEXT_ACTIONS,
+    NEXT_FIX_ASSERTION,
     NEXT_RERUN,
     NEXT_SETTLE_MERGE,
     NEXT_WAIT,
@@ -83,6 +84,7 @@ from cairn.text import (
     normalise_all,
 )
 from cairn.verify import (
+    ASSERTION_INTERRUPTED,
     EXCLUSION_CAUSES,
     NOT_REACHED,
     ORCHESTRATOR_DIED,
@@ -1047,6 +1049,59 @@ class TheHeadlineNamesTheFault(unittest.TestCase):
         self.assertEqual(record["next_action"]["action"], NEXT_RERUN)
         self.assertEqual(record["next_action"]["subject"], "b")
         self.assertIsNotNone(record["next_action"]["command"])
+
+    def test_a_halt_at_an_interrupted_assertion_says_to_fix_it_before_running_again(
+        self,
+    ) -> None:
+        """Measured: a suite SIGTERMed mid-run was offered "run it again", which meets the
+        same end."""
+        state, reports = halted_chain(("a", "b", "c"), fails_at="b")
+        reports["mark_b"] = {
+            **reports["mark_b"],
+            "cause": ASSERTION_INTERRUPTED,
+            "detail": {"position": "chain", "verify_exit": -1, "reported": "done"},
+        }
+        record = extract(state, reports, run_id="run-halt")
+        self.assertEqual(record["next_action"]["action"], NEXT_FIX_ASSERTION)
+        self.assertEqual(record["next_action"]["subject"], "b")
+        self.assertIsNotNone(record["next_action"]["command"])
+
+    def test_a_remedied_step_carries_its_remedy_and_the_second_assertions_exit(
+        self,
+    ) -> None:
+        state, reports = halted_chain(("a", "b"), fails_at="b")
+        common: dict[str, Any] = {"run_id": "run-halt", "needs_user_decision": False}
+        reports["verify_b"] = {
+            **common, "step_id": "verify_b", "status": "failed", "summary": "exited 1",
+            "detail": {"decision": "run", "exit": 1, "source": "executed", "backed_by": "b"},
+        }
+        reports["remedy_b"] = {
+            **common, "step_id": "remedy_b", "status": "done", "summary": "fixed the parser",
+            "detail": {"total_cost_usd": 0.5, "resumed_session": "session-7"},
+        }
+        reports["recheck_b"] = {
+            **common, "step_id": "recheck_b", "status": "failed", "summary": "exited 3",
+            "detail": {"decision": "run", "exit": 3, "source": "executed", "backed_by": "b"},
+        }
+        record = extract(state, reports, run_id="run-halt")
+        step = next(step for step in record["steps"] if step["step_id"] == "b")
+        self.assertEqual(
+            step["remedy"],
+            {
+                "status": "done",
+                "said": "fixed the parser",
+                "cost_usd": 0.5,
+                "first_exit": 1,
+                "resumed_session": "session-7",
+            },
+        )
+        self.assertEqual(step["assertion_exit"], 3)
+        unremedied = extract(*halted_chain(("a", "b"), fails_at="b"), run_id="run-halt")
+        self.assertIsNone(
+            next(s for s in unremedied["steps"] if s["step_id"] == "b")["remedy"]
+        )
+        before = unremedied["budget"]["cost_usd"] or 0.0
+        self.assertAlmostEqual((record["budget"]["cost_usd"] or 0.0) - before, 0.5)
 
     def test_the_subject_is_first_in_dependency_order_and_never_first_by_name(self) -> None:
         state, reports = halted_chain(("zulu", "alpha", "mike"), fails_at="zulu")

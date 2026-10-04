@@ -26,6 +26,7 @@ from cairn.record.vocabulary import (
     ATTENTION_ORDER,
     NEXT_ACTIONS,
     NEXT_DECIDE,
+    NEXT_FIX_ASSERTION,
     NEXT_NOTHING,
     NEXT_RERUN,
     NEXT_SETTLE_MERGE,
@@ -57,6 +58,9 @@ from cairn.report.spine import (
     TONE_ALARM,
     TONE_CAUTION,
     TONE_PLAIN,
+)
+from cairn.verify import (
+    ASSERTION_INTERRUPTED as CAUSE_ASSERTION_INTERRUPTED,
 )
 from cairn.verify import (
     EXCLUSION_CAUSES,
@@ -119,6 +123,11 @@ SENTENCE_BY_ACTION: dict[str, str] = {
     NEXT_RERUN: (
         "Run it again as a recovery once the failure is understood: every step already "
         "done no-ops, and the step it halted at is attempted again."
+    ),
+    NEXT_FIX_ASSERTION: (
+        "Find what stopped the assertion before it finished and change that first — a "
+        "verify_timeout too small for it, or something that signalled it. Run as it stands, "
+        "the assertion meets the same end."
     ),
     NEXT_START_SCHEDULER: "Start a scheduler: this run is queued and nothing is draining the queue.",
     NEXT_WAIT: "Wait: this run is still going.",
@@ -185,6 +194,11 @@ SENTENCE_BY_CAUSE: dict[str, str] = {
         "asserted over it and what it left is unproven"
     ),
     CAUSE_RETRY_EXHAUSTED: "the step hit its retry bound",
+    CAUSE_ASSERTION_INTERRUPTED: (
+        "the step's assertion was ended by a signal before it exited — the engine's kill at "
+        "its bound, or something else that signalled it — so it decided nothing about the "
+        "work. The assertion's own summary says which"
+    ),
     CAUSE_ORCHESTRATOR_DIED: (
         "the run's own process was killed under the step, so nothing decided its fate at all"
     ),
