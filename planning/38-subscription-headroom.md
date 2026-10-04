@@ -130,9 +130,12 @@ Three feeders write it, cheapest first:
 1. **The stream.** Every `rate_limit_event` a session produces updates its window's `status` and
    `resets_at` (and `used`, when the event carries it). Free, continuous, and the only feeder
    that sees `rejected`.
-2. **The usage endpoint**, when a credential is readable and the account answers. Gives both
-   windows' `used` and per-model weekly windows. Read-only, cached 180 s minimum, backed off on 429,
-   never refreshes a token. Gated behind a setting so a person can switch it off.
+2. **The usage endpoint**, **off unless `CAIRN_HEADROOM_USAGE_ENDPOINT=1`**, and then used when a
+   credential is readable and the account answers. Gives both windows' `used` and per-model
+   weekly windows. Read-only, cached 180 s minimum, backed off on 429, never refreshes a token.
+   It reads a credential Cairn did not create, so a person turns it on; the owner's own
+   environment sets it, and Cairn's code carries no default of its own. Packaging may later ask
+   each installer once, during onboarding.
 3. **The probe**, when the reading is older than the admission TTL (10 minutes) and the endpoint
    has not answered. A one-turn `claude -p` session on the cheapest model with no project
    settings, no MCP and no session persistence, read for its first `rate_limit_event` and
@@ -239,12 +242,9 @@ at 93%, finish and report") is a possible later addition, and it reads the same 
 
 1. **Hold threshold per window.** 0.95 on the 5-hour window is a different bet from 0.95 on the
    weekly one, which reopens days away. Spike 5 informs it; the default may be per window.
-2. **Is the usage endpoint on by default?** It is the most accurate feeder and the least stable one,
-   and it reads a credential Cairn did not create. The plan makes it opt-in; the alternative is
-   on-by-default with the probe as the fallback.
-3. **Which model does the probe use?** The cheapest one, but a per-model weekly window (Opus,
+2. **Which model does the probe use?** The cheapest one, but a per-model weekly window (Opus,
    Sonnet) is only visible through that model's event or the endpoint.
-4. **One account or several?** The reading is keyed by the logged-in account. Two Claude logins on
+3. **One account or several?** The reading is keyed by the logged-in account. Two Claude logins on
    one machine need two readings; today Cairn assumes one.
 
 ## Acceptance
