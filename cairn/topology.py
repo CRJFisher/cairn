@@ -369,8 +369,8 @@ def _step_nodes(
             }
         )
         if step["remediate"]:
-            # Bounded as the work session it resumes is bounded the same way, then the
-            # same assertion under the same bound.
+            # Bounded the same way as the work session it resumes, then the same
+            # assertion under the same bound.
             nodes.append(
                 {
                     "name": node_name("remedy", step_id),

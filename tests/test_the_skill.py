@@ -109,17 +109,6 @@ GOLDEN_WORKFLOW = WORKFLOWS / "mixed-kinds.yaml"
 
 CAPABILITY_DOCUMENTS = tuple(sorted(set(DOCUMENT_BY_CAPABILITY.values())))
 
-# Every file the skill's own claims could be restated in, which is what a "stated in exactly
-# one place" test has to search to mean anything.
-def sources() -> list[Path]:
-    return [
-        *sorted((PACKAGE_ROOT / "cairn").rglob("*.py")),
-        *sorted((PACKAGE_ROOT / "docs").glob("*.md")),
-        *sorted(CAPABILITIES.glob("*.md")),
-        SKILL,
-        README,
-    ]
-
 
 def _imports(module: Path) -> set[str]:
     found: set[str] = set()

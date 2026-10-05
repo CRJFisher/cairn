@@ -13,7 +13,8 @@ against a graph on disk, `cairn workflow …` generates and checks an engine def
 `cairn supervise …` repairs a run that is over, `cairn record …` reads one
 ([run-model.md](run-model.md)), `cairn report …` renders it ([report.md](report.md)), and
 `cairn schedule …` installs a recurring trigger and starts the daemon it needs
-([triggers.md](triggers.md)), `cairn run start` starts a run, and `cairn explain …` answers what a workflow would do, what a frozen word means
+([triggers.md](triggers.md)), `cairn run start` starts a run, and `cairn explain …` answers
+what a workflow would do, what a frozen word means
 and why a step was excluded, and `cairn hook stop` answers the one hook a step's own session
 runs under — reading the harness's end-of-turn payload on stdin and exiting `2` to hold the
 turn open while a background shell the session started is still running, or `0` to let it
@@ -55,8 +56,9 @@ done/no-op except when `needs_user_decision` deliberately blocks routing with
 
 The cause vocabulary is closed. Doc 05 issues `command_failed`, `wait_timeout`,
 `timed_out`, `cancelled`, `provider_failed`, `provider_protocol`, `provider_unavailable`,
-`reported_failure`, `user_decision_required`, `rate_limited`, `turn_limit`, `process_launch_failed`, `invalid_command`, `invalid_wait`,
-`invalid_arguments`, `invalid_report`, `missing_runtime_identity`, and `internal_error`.
+`reported_failure`, `user_decision_required`, `rate_limited`, `turn_limit`,
+`process_launch_failed`, `invalid_command`, `invalid_wait`, `invalid_arguments`,
+`invalid_report`, `missing_runtime_identity`, and `internal_error`.
 Doc 06 adds `invalid_marker`, `invalid_occasion`, `invalid_reads`, `invalid_scope`,
 `invalid_step_id`, `marker_ignored`, and `missing_report`. Docs 07 and
 09 add `git_failed`, `not_a_repository`, `git_mutex_timeout`, `merge_in_progress`,
@@ -106,9 +108,9 @@ preserves a normal child exit status, reporting a signalled child the way a shel
 
 `wait` requires exactly one of `--until` and `--for` plus a positive, finite `--timeout`;
 polling and fixed durations are bounded, and polling never sleeps past the bound. The bound
-is the step's own, and the emitted step's `timeout_sec` is set fifteen seconds above it, so a wait
-that runs out reports `wait_timeout` instead of racing the engine's own kill for the same
-instant. That grace counts in the run's declared maximum too.
+is the step's own, and the emitted step's `timeout_sec` is set fifteen seconds above it, so a
+wait that runs out reports `wait_timeout` instead of racing the engine's own kill for the
+same instant. That grace counts in the run's declared maximum too.
 
 The Claude provider invokes plain `claude -p --output-format stream-json --verbose
 --json-schema … --session-id … --permission-mode auto --settings …`, sends the prompt on stdin, and
@@ -118,14 +120,14 @@ and a session-sized reply each outgrow a pipe buffer and writing one before read
 other would hang the step. Reading stops at the terminal result message rather than at
 end-of-stream, because a provider's own children can hold the pipe open after it has
 answered; a provider that then declines to exit is stopped and the fact recorded under
-`detail`, never at the expense of the answer it already gave. It adds the model flag only when supplied.
-Tool rules become repeated `--disallowedTools` flags only in that provider module, and **Cairn's
-own denials lead**: a fixed set the plan adds to and cannot remove, because those tools'
-whole contract is that something will re-invoke the session and under `-p` nothing does. The
-`--settings` document arms one `Stop` hook per session and is composed per invocation, so
-nothing is written to any settings file on the machine. A session that ends a turn without
-its structured report is resumed once, `--resume` in place of `--session-id`
-([step-protocol.md](step-protocol.md)). Cairn handles
+`detail`, never at the expense of the answer it already gave. It adds the model flag only
+when supplied. Tool rules become repeated `--disallowedTools` flags only in that provider
+module, and **Cairn's own denials lead**: a fixed set the plan adds to and cannot remove,
+because those tools' whole contract is that something will re-invoke the session and under
+`-p` nothing does. The `--settings` document arms one `Stop` hook per session and is composed
+per invocation, so nothing is written to any settings file on the machine. A session that
+ends a turn without its structured report is resumed once, `--resume` in place of
+`--session-id` ([step-protocol.md](step-protocol.md)). Cairn handles
 no credentials, and the only process group it creates is the detached engine's
 ([supervision.md](supervision.md)).
 

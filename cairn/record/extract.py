@@ -626,7 +626,7 @@ def derive_next_action(
 
     The subject is the step the fault is at — the first in dependency order whose gate
     closed for a cause of its own — and never a step behind it ([23 B]). A command is
-    carried only where one can be spelled correctly and completely: the recovery offer
+    carried only where one can be spelled correctly and completely: the recovery command
     needs the plan and the repository as well as the run, and one missing any of them
     fails when it is pasted, which is worse than the report saying plainly it has none.
     """

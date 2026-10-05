@@ -286,12 +286,14 @@ def _session_in(
     to collect a report it ended a turn without giving ([19 D]) — and the pipe handling here
     is exactly the part that must not be written twice.
 
-    `deadline_seconds` is the hang guard. A timer stops the provider when it fires,
-    and the stream then ends without a result, which is reported as `Deadline` rather than
-    as a protocol fault: the session did not misbehave, it was stopped ([22 B]). The
-    process group is signalled too, because a provider's own children can hold the pipe
-    open after it is gone — and a reader blocked on a pipe nobody will close never reaches
-    the report the deadline exists to write.
+    `deadline_seconds` bounds this one invocation — the hang guard for an ordinary session,
+    or what is left of the report grace for a resume asked only to report
+    ([resume_bound_seconds]). A timer stops the provider when it fires, and the stream then
+    ends without a result, which is reported as `Deadline` rather than as a protocol fault:
+    the session did not misbehave, it was stopped ([22 B]). The process group is signalled
+    too, because a provider's own children can hold the pipe open after it is gone — and a
+    reader blocked on a pipe nobody will close never reaches the report the deadline exists
+    to write.
     """
     process = launch(
         popen_factory,

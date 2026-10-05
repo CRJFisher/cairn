@@ -87,9 +87,9 @@ column, a verb's are its row.
 - `many_verbs` — the request reads as two different kinds of thing at once. Ask, always:
   never one reading over the other, and never even when both only read. **A stated order
   does not resolve it**: "and then" names two pieces of work, and doing the first before
-  going on to the second is the whole failure. Doing
-  only the harmless half and stopping is the same failure: neither piece is performed —
-  not even one that only reads — until the question is answered.
+  going on to the second is the whole failure. Doing only the harmless half and stopping is
+  the same failure: neither piece is performed — not even one that only reads — until the
+  question is answered.
 - `no_verb` — a subject named with nothing asked of it. Ask, unless its whole column
   collapses to a single reading that only reads, in which case answer.
 - `many_subjects` — more than one _kind_ of thing to act on, each a separate piece of work.
@@ -152,7 +152,8 @@ of its verbs are worth pointing at. Cairn refuses exactly one: never `dagu retry
 re-running a plan is the whole recovery story and a continued occasion is what makes it cheap.
 
 Two things it cannot answer are Cairn's: **divergence**, a workflow no longer matching the
-plan that generated it; and the **verdict**, because a run that dropped a branch reports a clean success at the engine level.
+plan that generated it; and the **verdict**, because a run that dropped a branch reports a
+clean success at the engine level.
 Say which is which rather than leaving someone to find the gap. A run started at the view
 records the username that started it and a run Cairn started records no actor, so Report
 accounts for runs the skill did not start.

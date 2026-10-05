@@ -342,9 +342,8 @@ entirely; both passes' turns are summed into the record's turn count.
 **A session stopped by the hang guard is resumed the same way.** Its first pass was killed
 mid-stream, so the resume asks the same session for its account under the same time bound
 ([22 B]). If it reports, the step is recorded as it should have been. If it does not, the
-step ends as stopped by the hang guard, with the attempt recorded beside it. A session that
-ended without a report is the `provider_protocol` failure it already was, with the attempt
-recorded beside it — the rescue can never make the outcome worse than not attempting it.
+outcome is exactly the `provider_protocol` failure it already was, with the attempt recorded
+beside it — the rescue can never make the outcome worse than not attempting it.
 
 The discrimination is narrow and it is measured: a **correct** structured report is itself a
 tool call, so a session that reported returns `stop_reason: "tool_use"` too. The stop reason

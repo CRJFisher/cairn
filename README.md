@@ -111,10 +111,10 @@ the skill that drives all of it.
   them carrying the answers their authoring conversation received.
 - `fixtures/workflows/` — the whole emitted file for six of those plans, one per topology
   shape, compared byte for byte by the suite.
-- `fixtures/runs/` — eight runs recorded from a real engine: green, red, blocked,
-  green-with-exclusions, all-no-op, mid-run, crashed, and timed-out. Three of
-  them are the same clean success as far as the engine is concerned and none of them extracts
-  the same way.
+- `fixtures/runs/` — nine runs recorded from a real engine: green, red, blocked,
+  green-with-exclusions, all-no-op, mid-run, crashed, timed-out, and one real agent step.
+  Three of them are the same clean success as far as the engine is concerned and none of them
+  extracts the same way.
 - `scripts/record_runs.py` — re-records that corpus against the installed engine.
 - `scripts/measure_fanout.py` — what the fan-out buys and what the mutex adds, as numbers.
 - `fixtures/invocations/` — every phrasing the skill is held to, what each must resolve to,
@@ -160,7 +160,7 @@ Measured by `python3 -m scripts.measure_surface`. Tokens are an estimate at 4 ch
 | Read                          | What                                   | Characters | Lines | Tokens (est.) |
 | ----------------------------- | -------------------------------------- | ---------: | ----: | ------------: |
 | when Cairn is named           | the skill's description                |      `211` |   `1` |          `53` |
-| when Cairn is named           | `SKILL.md`                             |    `11120` | `158` |        `2780` |
+| when Cairn is named           | `SKILL.md`                             |    `11120` | `159` |        `2780` |
 | when a capability is selected | `capabilities/running.md`, the largest |     `8996` | `137` |        `2249` |
 
 **None of it is read unless asked for.** Cairn declares `disable-model-invocation: true`, so

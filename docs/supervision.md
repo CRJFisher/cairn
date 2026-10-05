@@ -83,10 +83,10 @@ repository out from under the retry.
 
 ## A step halts if the repository stopped being its own
 
-Every step that opens a session or writes — `agent`, `exec`, `commit`, `worktree` — reads the lock
-before it starts and halts if the repository is held by a different run. A run whose lock
-was reclaimed while it queued would otherwise discover it at its next commit, an hour of
-agent time later, with a second run already writing to the same repository.
+Every step that opens a session or writes — `agent`, `exec`, `commit`, `worktree` — reads
+the lock before it starts and halts if the repository is held by a different run. A run
+whose lock was reclaimed while it queued would otherwise discover it at its next commit, an
+hour of agent time later, with a second run already writing to the same repository.
 
 Only a lock held by somebody else counts. An absent lock does not: these subcommands are the
 step vocabulary and stand on their own, and a working directory that is no repository at all
@@ -292,8 +292,9 @@ A rate limit is the one distinguishable case — it arrives as a typed stream ev
 `resetsAt`, and `cairn agent run` leaves on exit **75** rather than 1 — and it is still not
 retried. The engine's retry policy is a static number in a file and cannot read `resetsAt`.
 A fixed wait short enough to be worth making is far shorter than a real limit's reset, so
-the retry would usually meet the same limit and meet it again. The moment is reported instead: `detail.resets_at` says when the plan is worth running
-again, and the committed marker means the re-run skips every step that already landed.
+the retry would usually meet the same limit and meet it again. The moment is reported
+instead: `detail.resets_at` says when the plan is worth running again, and the committed
+marker means the re-run skips every step that already landed.
 
 Exit 75 survives as the distinction it always was — a report can say the run stopped
 because of a limit rather than because the work was wrong — it simply no longer drives a

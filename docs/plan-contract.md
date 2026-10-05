@@ -79,9 +79,9 @@ rejected rather than ignored.
   the work and never the assertion ([step-protocol.md](step-protocol.md)). The assertion then
   runs again, unchanged, and only that second run can record the step. The remedy is never
   opened over an assertion that passed, never ran, or was ended by a signal, nor behind a
-  step that reported failure or is waiting on a person. It is bounded by the hang guard like the
-  step's own session. A plan sets it where the document asks for a
-  failing check to be fixed rather than halted on ("if its tests fail, have it fix them").
+  step that reported failure or is waiting on a person. It is bounded by the hang guard like
+  the step's own session. A plan sets it where the document asks for a failing check to be
+  fixed rather than halted on ("if its tests fail, have it fix them").
 - `model` is the model that session is pinned to, written into the emitted body as
   `--model` — which is how the run's record can name the model that did each step's work
   instead of recording whatever the environment chose. Always present on an agent step,
@@ -383,4 +383,4 @@ rechecks every pin and every quotation against the documents themselves.
 Six of these plans are also the recorded inputs to `fixtures/workflows/`, so a change to one
 of their graphs changes an emitted file too ([workflow.md](workflow.md)).
 
-Run everything with `python3 -m unittest discover -s tests -t .` from this directory.
+Run everything with `python3 -m pytest -q` from this directory.

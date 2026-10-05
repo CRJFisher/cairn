@@ -44,7 +44,7 @@ DESCRIPTION_CHARACTER_LIMIT = 600
 # aligned cells and its padding is not slack — it is the one artifact a reader has to apply
 # exactly, and a table nobody can scan is worse than a longer file. It moves down when the
 # file does, and up only for a sentence a sweep over real sessions showed was missing rather
-# than implied, with the sweep named here.
+# than implied.
 ON_TRIGGER_CHARACTER_LIMIT = 11_200
 
 
