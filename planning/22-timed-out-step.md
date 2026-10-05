@@ -70,3 +70,38 @@ reaches the engine that nothing in a document could justify.
   report; no provider call relies only on an engine kill.
 - The report's next action for a timed-out step with a passing assertion says the work is in the tree before it says re-run.
 - Reproduction: an agent step whose session stops making progress. The run record names the timeout; the reports directory holds the step's report; the engine's own log shows the wrapper stopped the session before the engine did.
+
+## Implementation Notes
+
+**Status: done.** Sections A, B and D are built; C needed nothing beyond them.
+
+A step stopped at a bound is recorded as one that ran and was stopped, with the bound and
+the elapsed time beside it, and an agent session is stopped by Cairn rather than by the
+engine, so a report survives the stop.
+
+- **A.** The run record reads the engine node's own error — `step timed out after <elapsed>
+(timeout: <bound>): context deadline exceeded`, parsed in `cairn/record/engine.py` — and
+  `classify_step` gives a failed work node that left no report the cause `timed_out`,
+  carrying `timeout_seconds` and `elapsed_seconds` as derived fields. It never overrides a
+  cause the gate established on evidence of its own, and never touches a step that reported.
+  `not_reached` is left to a node the engine itself skipped. An absent report still never
+  opens the gate.
+- **B.** `emit_agent` gives an agent step a `timeout_sec` of `HANG_GUARD +
+AGENT_REPORT_GRACE` and states no bound in the body, because the bound is Cairn's own
+  constant rather than anything a plan says. `run_claude` stops the provider at the hang
+  guard and resumes the session once, under what is left of the grace less
+  `AGENT_RESUME_MARGIN`, to ask for the account it owes. A session that answers is recorded
+  `done` with `timed_out`, the bound, the elapsed time and its turns; one that stays silent
+  is `timed_out` with its session id. Either way the report reaches the run directory before
+  the engine's bound.
+- **D.** A merge resolver names its model, opens its session through the same hang guard,
+  and leaves the same `AGENT_REPORT_GRACE` before `MERGE_TIMEOUT`; a resolution stopped at
+  the guard records its session id and `resolution.timed_out` in the merge's own detail.
+- **The shape of a killed step.** The gate [24 B](24-recovery-economics.md) puts on every
+  assertion declines it whenever the work node left no report, so an engine-killed step
+  carries no assertion verdict and no commits, and the record says its work is unproven. A
+  session the wrapper stops leaves a report, its assertion runs, and the divergence between
+  the two accounts is what the record carries. Where that divergence says the assertion
+  passed, the report says the work is in the tree before it offers the re-run.
+- **Reproduction.** `fixtures/runs/timed-out` is a recorded two-step chain whose first step
+  the engine killed at a 2 s bound, with the second never reached behind it.

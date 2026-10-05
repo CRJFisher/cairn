@@ -32,8 +32,8 @@ Found live on the task-381 dogfood runs [21](21-commit-scope.md) and [22](22-tim
 
 | #   | Symptom                                                                                                                                                  | Where it lives      | State                                                                                              |
 | --- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- | -------------------------------------------------------------------------------------------------- |
-| A   | A sandboxed reader turns a live run into `orchestrator_died`                                                                                             | `cairn/liveness.py` | open                                                                                               |
-| B   | The cascade's headline names a bystander, prescribes `settle_merge` on a merge-less chain                                                                | `cairn/record/`     | open                                                                                               |
+| A   | A sandboxed reader turns a live run into `orchestrator_died`                                                                                             | `cairn/liveness.py` | done                                                                                               |
+| B   | The cascade's headline names a bystander, prescribes `settle_merge` on a merge-less chain                                                                | `cairn/record/`     | done                                                                                               |
 | C   | The emitted definition bakes `PYTHONPATH` as this machine's absolute path, so it runs nowhere else — re-authoring on the target machine is the only path | `cairn/workflow/`   | decided: a definition is a per-machine build product, authored where it runs ([16](16-release.md)) |
 
 ## Acceptance
@@ -41,3 +41,24 @@ Found live on the task-381 dogfood runs [21](21-commit-scope.md) and [22](22-tim
 - `cairn report` over a live run, from a shell that may not inspect processes, says the run is running and that liveness could not be established — and never `orchestrator_died`.
 - After a one-gate cascade, the report's next action names the step whose gate recorded the fault, quotes its cause, and counts the rest as unreached behind it; `settle_merge` appears only where the topology has a merge.
 - Reproduction for A: run `cairn report` on a live run under a sandbox that denies `ps`-class syscalls. Reproduction for B: a chain of three steps whose middle assertion fails; the report must name the middle step.
+
+## Implementation Notes
+
+**Status: done.** A and B are built; C stands as decided.
+
+A report read from a shell that may not inspect processes says the run is running and that
+its process could not be checked, and a cascade's headline names the step the fault is at.
+
+- **A.** Liveness answers in three values. `process_is_alive` returns `False` only for a
+  probe that succeeded and found nothing — `ProcessLookupError`, or a start time that
+  belongs to a different process — `True` for the recorded process, and `None` for a probe
+  the shell refused. The report reads `None` as running-as-far-as-the-record-shows and says
+  in one line that the process could not be checked and that the engine's own record is the
+  better witness; `orchestrator_died` is written only where the probe established a death.
+- **B.** The subject of "what to do next" is the first step in dependency order whose gate
+  closed for a cause of its own — `_halts` in `cairn/record/extract.py` skips every step
+  carrying `not_reached` or `gate_indeterminate`, which are the causes of a bystander. The
+  next-action section quotes the tail of what that step's assertion printed. The steps a
+  halt left behind collapse into one attention item naming the halt, while `steps` still
+  carries each of them in full. `settle_merge` is emitted only for a run whose topology
+  holds a merge — a wave census or a merge node — so a chain's remedy is its re-run.

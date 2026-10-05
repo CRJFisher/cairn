@@ -157,8 +157,8 @@ REPORT_HEADROOM = SUPPORT_TIMEOUT - MUTEX_WAIT - GIT_TIMEOUT
 # are the same one.
 WAIT_REPORT_GRACE = 15
 
-# An agent step owns its declared bound the same way: the wrapper stops the session at
-# `--timeout`, and the engine's own kill lands this much later. The grace is for the
+# An agent step owns its bound the same way: the wrapper stops the session at the hang
+# guard, and the engine's own kill lands this much later. The grace is for the
 # report, not the work — it covers stopping the provider, one resume that asks the session
 # for the account it owes, and the write of the report the engine's kill would otherwise
 # erase ([22 B]). Measured: a session that has committed its work answers that in a turn,
