@@ -602,6 +602,23 @@ def _staged_diffstat(working_directory: Path, paths: list[str]) -> dict[str, int
 DIRTY_BEFORE = "dirty_before"
 
 
+def _addable_paths(working_directory: Path, root: Path, paths: list[str]) -> list[str]:
+    """The paths `git add` can be asked about: those the working tree or the index still holds.
+
+    A deletion the step staged itself (`git rm`) is gone from both, and a pathspec naming a
+    path git has nothing for fails the whole add — one removed file would lose every other
+    path's staging, and the step's verified work with it. Such a path needs no add: its
+    deletion is already in the index, and the commit's pathspec still carries it.
+    """
+    indexed = set(
+        git(
+            working_directory,
+            ("--literal-pathspecs", "ls-files", "-z", "--", *paths),
+        ).stdout.split("\0")
+    )
+    return [path for path in paths if path in indexed or (root / path).exists() or (root / path).is_symlink()]
+
+
 def commit_step(
     working_directory: Path, message: str, *, step_id: str, context: RuntimeContext
 ) -> CommandResult:
@@ -649,7 +666,9 @@ def commit_step(
                 EXIT_OK, "noop", "nothing to commit", _follow_up(left), False, None,
                 {"working_directory": str(working_directory), "left_uncommitted": left},
             )
-        git(working_directory, ("--literal-pathspecs", "add", "--", *staged_paths))
+        addable = _addable_paths(working_directory, root, staged_paths)
+        if addable:
+            git(working_directory, ("--literal-pathspecs", "add", "--all", "--", *addable))
         # The question is what the commit would record, so it is asked of the index, and of
         # the step's own paths within it. A working tree can hold residue `add` cannot stage
         # — dirty submodule content, for one — and reading the tree instead turns a step

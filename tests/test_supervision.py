@@ -1862,6 +1862,25 @@ class CommitAndPrune(RepositoryCase):
         )
 
 
+class AStagedDeletionIsCommittedWithTheStepsOtherWork(RepositoryCase):
+    """A step that `git rm`s a file leaves a path the index and tree both lack. `git add`
+    refuses such a path, which failed `commit_implement_32` and lost the step's other work."""
+
+    def test_a_deleted_file_and_an_edited_file_land_in_one_commit(self) -> None:
+        git(self.repository, ("rm", "--quiet", "README.md"))
+        (self.repository / "other.txt").write_text("the step's\n", encoding="utf-8")
+        result = commit_as_step(self.root, self.repository, "cairn(a): delete and add")
+        self.assertEqual(result.status, "done")
+        self.assertEqual(committed_paths_of_head(self.repository), ["README.md", "other.txt"])
+        self.assertEqual(tree_state(self.repository), ())
+
+    def test_an_unstaged_deletion_is_committed_too(self) -> None:
+        (self.repository / "README.md").unlink()
+        result = commit_as_step(self.root, self.repository, "cairn(a): delete")
+        self.assertEqual(result.status, "done")
+        self.assertEqual(committed_paths_of_head(self.repository), ["README.md"])
+
+
 class TheCommitCarriesOnlyTheStepsOwnWork(RepositoryCase):
     """[21]: a second session's three-file edit landed byte-identical inside
     `cairn(task_381_10): …`, under a message that described none of it."""
