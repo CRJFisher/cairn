@@ -2,12 +2,12 @@
 
 Every other trigger surface belongs to the engine — its start dialog, a cron firing, a
 webhook — and Cairn owns none of them ([docs/triggers.md]). This is the skill's, and it is
-the only one in Cairn's own code that can begin a paid run. It accepts an `Authorisation`
-and nothing else, so a run has to have been offered, priced and accepted before this module
-has anything to act on.
+the only one in Cairn's own code that begins a run. It accepts a `Launch` and nothing else,
+so the repository, the branch and the occasion are settled, and the definition's bytes
+admitted, before this module has anything to act on.
 
 **It composes no parameter it was not asked for.** The repository is the one the definition
-was authored for, established before the offer was made ([resolve.py]), so nothing here
+was authored for, established before the launch is composed ([resolve.py]), so nothing here
 retargets a workflow — that is re-authoring, and varying the parameter instead writes the
 run's whole record into the wrong repository ([cairn/parameters.py]).
 
@@ -17,19 +17,35 @@ composer the run record uses, so there is one spelling of where a run can be wat
 
 from __future__ import annotations
 
+import hashlib
+import os
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
-from cairn.core import Child, PopenFactory, launch
+from cairn.core import CairnError, Child, PopenFactory, launch, read_standard_json
 from cairn.enginehome import ENGINE_BINARY
+from cairn.gitio import CAIRN_STATE, common_directory
 from cairn.layout import check_run_id, engine_log_path, view_url
-from cairn.skill.consent import Authorisation, refuse_uncarriable
 from cairn.supervise import find_run_record
-from cairn.workflow.gate import EngineUnavailable, assert_pinned, rehearse_start
-from cairn.workflow.schema import OCCASION_PARAM, PARENT_BRANCH_PARAM, WORKFLOW_SUFFIX
+from cairn.workflow.gate import (
+    Admission,
+    EngineUnavailable,
+    assert_pinned,
+    rehearse_start,
+)
+from cairn.workflow.schema import (
+    OCCASION_PARAM,
+    PARENT_BRANCH_PARAM,
+    WORKFLOW_SUFFIX,
+    declared_parameter,
+)
+from cairn.workflow.stamp import file_digest
+
+ADMITTED_DIRECTORY = "admitted"
 
 # Whether the engine has taken a run on, asked of the engine's own history. A seam, so a
 # test can drive the three outcomes without an engine.
@@ -37,20 +53,34 @@ RunRegistered = Callable[[str], bool]
 
 # How long to wait for the engine to say it has the run. Measured: from an unsandboxed
 # shell the engine took the run on within a second, and a shell that cannot bind the run's
-# socket is refused before the offer is spent ([gate.rehearse_start]) — so this bound is
+# socket is refused before the run is launched ([gate.rehearse_start]) — so this bound is
 # reached only where neither happened, and it must stay well under the two minutes a
 # harness's own tool call allows, because that caller is who this exists for.
 TAKEN_ON_TIMEOUT = 30.0
 TAKEN_ON_INTERVAL = 0.2
 
 
+class Launch(NamedTuple):
+    """Everything settled about one run before the engine is invoked.
+
+    The workflow is the path of the admitted bytes' snapshot, not the definition's own: what
+    the engine executes is what passed the gate, whatever happens to the source afterwards.
+    """
+
+    plan: str
+    workflow: str
+    repository: str
+    parent_branch: str
+    occasion: str | None
+
+
 class Address(NamedTuple):
     """Everything about a run that is known before the engine is invoked.
 
-    Composed from an `Authorisation` and nothing else, which is what lets the four lines a
-    person needs be printed *before* the launch — the run id, the branch, the view and the
-    command that reads the record. A start killed at any point after this has already handed
-    over the name of the run it bought ([19 B]).
+    Composed from a `Launch` and nothing else, which is what lets the four lines a person
+    needs be printed *before* the launch — the run id, the branch, the view and the command
+    that reads the record. A start killed at any point after this has already handed over
+    the name of the run it began ([19 B]).
     """
 
     run_id: str
@@ -75,15 +105,13 @@ class Started(NamedTuple):
 
 
 def refuse_unusable_engine() -> None:
-    """Halt before an offer is spent if the engine could not run the plan anyway.
+    """Halt before anything is written if the engine could not run the plan anyway.
 
-    Asked here rather than inside `start`, because an acceptance is consumed the moment the
-    offer's marker is claimed and a machine carrying the wrong engine is a cause a person
-    can clear. Making them answer for the run twice, for a refusal that started nothing, is
-    the one thing the single-use rule must not be allowed to cost.
+    Asked here rather than inside `start`, because a machine carrying the wrong engine is a
+    cause a person can clear, and a refusal that started nothing should leave nothing behind.
 
     **Two questions, and the order is load-bearing.** The version pin is answered by asking
-    the binary what it is, which costs nothing and needs no engine home; the rehearsal
+    the binary what it is, which is quick and needs no engine home; the rehearsal
     actually starts a one-step run, which is the only way to find out whether this shell can
     bind the socket every run opens ([gate.rehearse_start]). Pinning first means a machine
     with no engine at all is refused by the cheaper question, and the rehearsal is never
@@ -103,26 +131,75 @@ def dag_name(workflow: Path) -> str:
     return workflow.name.removesuffix(WORKFLOW_SUFFIX)
 
 
-def start_command(authorisation: Authorisation, run_id: str) -> tuple[str, ...]:
+def refuse_uncarriable(parameter: str) -> None:
+    """Refuse a parameter the engine could not carry to the run intact.
+
+    The engine re-splits one `--params` string on whitespace into key=value pairs, so a value
+    holding a space arrives as two parameters and the run acts on something other than what
+    was asked for. Asked before anything is written, so a refusal started nothing.
+    """
+    if any(character.isspace() for character in parameter):
+        raise CairnError(
+            "invalid_arguments",
+            f"{parameter!r} holds whitespace, and the engine splits `--params` on it, so "
+            "the run would be started with a value other than the one asked for",
+        )
+
+
+def declared_branch(admission: Admission) -> str | None:
+    """The branch the admitted definition merges into unless a run is asked for another."""
+    try:
+        document = read_standard_json(admission.body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return None
+    return declared_parameter(document, PARENT_BRANCH_PARAM) or None
+
+
+def snapshot_admitted(repository: Path, run_id: str, name: str, admission: Admission) -> Path:
+    """Persist the admitted bytes under their DAG name, where the engine will read them.
+
+    In git's admin directory rather than the working tree: a commit step stages the paths it
+    names, and a worktree removal reaches the working tree, and this is in neither. Read back
+    and compared, so what the engine executes is provably the bytes that passed the gate.
+    """
+    directory = common_directory(repository) / CAIRN_STATE / ADMITTED_DIRECTORY / run_id
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / name
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{name}.", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(admission.body)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o400)
+        os.replace(temporary, target)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+    if file_digest(target) != hashlib.sha256(admission.body).hexdigest():
+        raise CairnError(
+            "invalid_arguments",
+            f"{target} did not preserve the workflow bytes that passed the gate",
+        )
+    return target
+
+
+def start_command(settled: Launch, run_id: str) -> tuple[str, ...]:
     """The engine invocation this run is, spelled so a person can read or repeat it.
 
-    **Every value here comes from the authorisation**, so the run that happens is the run
-    that was priced and accepted. A parameter settled after the offer would be a term of the
-    agreement nobody agreed to — the branch most of all, since it is what verified work is
-    merged into.
+    **Every value here comes from the `Launch`**, so the run that happens is the run that was
+    asked for. The branch most of all, since it is what verified work is merged into.
 
     Never `dagu retry`. Re-running a plan is the whole recovery story (I4), and a continued
-    occasion is what makes it cheap — so a recovery is an ordinary start carrying the
-    occasion it continues, and there is no second recovery path to keep correct.
+    occasion is what makes it a no-op for work already done — so a recovery is an ordinary
+    start carrying the occasion it continues, and there is no second recovery path to keep
+    correct.
     """
     check_run_id(run_id)
-    parameters = [f"{PARENT_BRANCH_PARAM}={authorisation.parent_branch}"]
-    if authorisation.occasion is not None:
-        parameters.append(f"{OCCASION_PARAM}={authorisation.occasion}")
+    parameters = [f"{PARENT_BRANCH_PARAM}={settled.parent_branch}"]
+    if settled.occasion is not None:
+        parameters.append(f"{OCCASION_PARAM}={settled.occasion}")
     # Measured against Dagu 2.11.0, `--params` takes `P1=foo P2=bar` and splits on
-    # whitespace, so a value holding a space arrives as two parameters. `make_offer` refuses
-    # such a value when the offer is priced; this is the same rule where it can no longer
-    # cost anybody their acceptance.
+    # whitespace, so a value holding a space arrives as two parameters.
     for parameter in parameters:
         refuse_uncarriable(parameter)
     return (
@@ -132,22 +209,18 @@ def start_command(authorisation: Authorisation, run_id: str) -> tuple[str, ...]:
         run_id,
         "--params",
         " ".join(parameters),
-        authorisation.workflow,
+        settled.workflow,
     )
 
 
-def address(authorisation: Authorisation, run_id: str, runs_root: Path) -> Address:
-    """Where this run will be, composed before anything is asked to start it.
-
-    Every value comes from the authorisation, so nothing here can name a run that was not
-    priced and accepted.
-    """
-    name = dag_name(Path(authorisation.workflow))
+def address(settled: Launch, run_id: str, runs_root: Path) -> Address:
+    """Where this run will be, composed before anything is asked to start it."""
+    name = dag_name(Path(settled.workflow))
     return Address(
         run_id=run_id,
         dag_name=name,
         view=view_url(name, run_id),
-        command=start_command(authorisation, run_id),
+        command=start_command(settled, run_id),
         log=engine_log_path(runs_root, run_id),
     )
 
@@ -204,8 +277,8 @@ def start(
 ) -> Started:
     """Begin the run this address names, and return once the engine has it.
 
-    Takes the `Address` itself, composed once by the caller from an `Authorisation`, rather
-    than the `Authorisation` and `runs_root` it would be derived from again here — a caller
+    Takes the `Address` itself, composed once by the caller from a `Launch`, rather than the
+    `Launch` and `runs_root` it would be derived from again here — a caller
     that already needs the address to print the run's identity before invoking the engine
     ([19 B]) would otherwise be paying for the same derivation twice.
 
@@ -213,8 +286,8 @@ def start(
     launched detached and this waits only until the engine's own history says it took the
     run on. A plan whose slowest chain is bounded at forty-four hours is forty-four hours of
     a blocked terminal otherwise, and any caller with its own timeout — an agent harness's
-    tool call at two minutes — kills the process tree under it, spending the offer and
-    losing the run id with the dying process ([19 B]).
+    tool call at two minutes — kills the process tree under it and
+    loses the run id with the dying process ([19 B]).
 
     Nothing is lost by not waiting: the release handler writes the run's record whether
     anyone is watching or not ([12]).
@@ -224,9 +297,8 @@ def start(
     derive by walking every node ([docs/run-model.md]). What this returns is that a run
     started and where it is, never how it went.
 
-    The engine is checked before the authorisation is spent rather than here — see
-    `refuse_unusable_engine` — so a machine that cannot run the plan does not cost a person
-    their acceptance.
+    The engine is checked before anything is written rather than here — see
+    `refuse_unusable_engine`.
     """
     factory: PopenFactory = subprocess.Popen if popen_factory is None else popen_factory
     holds: RunRegistered = (
@@ -253,8 +325,8 @@ def start(
             return Started(address=where, taken_on=holds(where.run_id), exit_code=exited)
         if monotonic() >= deadline:
             # Neither taken on nor exited. The child is deliberately **not** killed: it may
-            # be a moment from registering, and killing a run the offer has already paid
-            # for, on a timer, is the one destructive move available here.
+            # be a moment from registering, and killing a run the engine may already have,
+            # on a timer, is the one destructive move available here.
             #
             # `--wait` is still honoured: a caller that asked to block until the run ends
             # asked for exactly that, and returning without waiting would hand it a zero
@@ -271,14 +343,18 @@ def start(
 __all__ = [
     "Address",
     "EngineUnavailable",
+    "Launch",
     "RunRegistered",
     "Started",
     "address",
     "dag_name",
+    "declared_branch",
     "engine_holds",
     "launch_detached",
+    "refuse_uncarriable",
     "refuse_unusable_engine",
     "rehearse_start",
+    "snapshot_admitted",
     "start",
     "start_command",
 ]

@@ -1,12 +1,12 @@
-# 24 — What a recovery re-pays, and what a spent offer bought
+# 24 — What a recovery repeats
 
 Found live across five runs of one seventeen-step chain-shaped plan — the task-381 dogfood that also produced [21](21-commit-scope.md), [22](22-timed-out-step.md) and [23](23-reading-a-broken-run.md). The recovery story held every time: markers no-opped every finished step's work, and nothing was ever done twice by an agent. What was done twice — and four times, and fourteen times — was everything else.
 
-**Serves** the capability surface of **Run**. The invariants stand: a verdict stays something a declared assertion proved on the current tree, and a step nobody asserted still never records. What moves is only how many times one proof is paid for.
+**Serves** the capability surface of **Run**. The invariants stand: a verdict stays something a declared assertion proved on the current tree, and a step nobody asserted still never records. What moves is only how many times one proof is run.
 
 ## A — Fourteen byte-identical assertions are proven fourteen times per run
 
-**What happened.** Nearly every step of the plan carries the same accepted assertion suffix: `cd packages/core && npx tsc --noEmit && npx vitest run` — a typecheck and a 4,360-test suite, ~2.2 minutes. On a recovery, every finished step's work no-ops in milliseconds and its assertion runs in full, so each recovery spends ~30 minutes proving the same command against the same tree fourteen times before any new work starts. Four recoveries paid it four times. The person driving asked, verbatim: _"why is it running verification steps on tasks that were completed A LONG TIME AGO????"_
+**What happened.** Nearly every step of the plan carries the same accepted assertion suffix: `cd packages/core && npx tsc --noEmit && npx vitest run` — a typecheck and a 4,360-test suite, ~2.2 minutes. On a recovery, every finished step's work no-ops in milliseconds and its assertion runs in full, so each recovery takes ~30 minutes proving the same command against the same tree fourteen times before any new work starts. Four recoveries ran it four times. The person driving asked, verbatim: _"why is it running verification steps on tasks that were completed A LONG TIME AGO????"_
 
 **Why each proof is right on its own.** The tree has changed since each marker was written — later steps landed on it — so re-asserting an earlier step's end state on today's tree is the guarantee, not waste. What is waste is proving one command's exit status more than once per tree state.
 
@@ -37,7 +37,7 @@ cannot exercise the race, so the concurrent one is what the sharing stands on.
 
 **Touches.** `cairn/assertions.py` (the assertion's own precondition and its proof), `cairn/verify.py`, `cairn/emitters.py`, `cairn/locks.py`, `cairn/layout.py`, `docs/verify-gate.md`, `tests/test_verify_gate.py`.
 
-## B — After a gate closes, the run spends half an hour proving nothing
+## B — After a gate closes, the run takes half an hour proving nothing
 
 **What happened.** One failed assertion at the chain's second step skipped every downstream work node — and every downstream **verify** still ran, thirteen more full-suite executions against a tree the missing work never touched, ~30 minutes of CPU whose results no gate could use: each downstream gate closed as `not_reached` regardless, because its work step left no report. The run's last half hour existed to decorate a verdict that was already decided.
 
@@ -53,19 +53,7 @@ cannot exercise the race, so the concurrent one is what the sharing stands on.
 
 **What happened.** Two consecutive recoveries died on a single test exceeding vitest's 5,000 ms default under load — a different test each time, in a suite of 4,360 — each one read by the gate as a failed assertion, each cascading fifteen steps. The repair belonged to the repository and was made there (an explicit `testTimeout` stating the machine's real bound). What belongs here is the observation: an assertion that runs a whole test suite makes the gate's false-negative rate the suite's flake rate times fourteen executions per recovery.
 
-**The open question, recorded rather than decided.** Verify nodes are emitted with `retries: 0` like everything else, on the plan contract's reasoning that arbitrary shell is not idempotent and a paid session must not be paid twice. Neither reason applies to an assertion: it is read-only by contract and costs no session. Whether a verify may retry once — turning a transient false negative into a second read instead of a fifteen-step cascade — is a plan-contract question ([plan-contract.md](../docs/plan-contract.md)'s `retries` paragraph), and the counterargument is real: a flaky assertion that passes on retry has asserted less, and the honest fix is the plan stating an assertion that does not flake. Recorded for the contract's owner to decide.
-
-## D — A dirty working tree costs the acceptance, though it was checkable before the offer was spent
-
-**What happened.** A `run start` was accepted while one uncommitted file sat in the working tree — an edit made minutes earlier and not yet committed. The run's first act, `lock_acquire`, refused with `repository_dirty` — _"uncommitted work … which a step's commit would sweep up as its own output"_ — correctly, given [21](21-commit-scope.md). But the refusal came **inside** the run, so it consumed the offer and the acceptance, and continuing cost a fresh offer and a fresh yes.
-
-**Today.** [19 §C](19-start-friction.md) built exactly the right machinery for exactly this shape: `run start` rehearses a one-step run in a scratch engine home _before the offer is spent_, because _"a machine that cannot run the plan does not cost a person their acceptance."_ The rehearsal checks the socket and the engine; it does not read `git status`. A dirty tree is knowable in the same breath, from the same repository path the start already holds.
-
-**The change.** The start's preflight reads the working tree before claiming the offer and refuses — on the before-the-offer-is-spent list, leaving the yes standing — naming the dirty paths. The in-run check stays: the tree can dirty itself between preflight and `lock_acquire`, and the run's own refusal is the backstop, not the interface.
-
-**What must not change.** The preflight refuses only what `lock_acquire` would refuse; it never stashes, commits, or otherwise touches the tree.
-
-**Touches.** `cairn/skill/` (the start path's preflight), `capabilities/running.md` (the refusal lists), `tests/test_the_skill.py`.
+**The open question, recorded rather than decided.** Verify nodes are emitted with `retries: 0` like everything else, on the plan contract's reasoning that arbitrary shell is not idempotent and a session must not run twice. Neither reason applies to an assertion: it is read-only by contract and opens no session. Whether a verify may retry once — turning a transient false negative into a second read instead of a fifteen-step cascade — is a plan-contract question ([plan-contract.md](../docs/plan-contract.md)'s `retries` paragraph), and the counterargument is real: a flaky assertion that passes on retry has asserted less, and the honest fix is the plan stating an assertion that does not flake. Recorded for the contract's owner to decide.
 
 ## Acceptance
 
@@ -75,17 +63,14 @@ cannot exercise the race, so the concurrent one is what the sharing stands on.
 - Concurrent passing and failing executions for one proof key always leave failure standing,
   regardless of write order or process timing.
 - A run whose chain breaks at step k runs no assertion for steps after k that were skipped for the upstream cause, and its wall clock past the fault is seconds, not minutes; a marker no-op's assertion still runs.
-- `run start` over a dirty tree refuses before the offer is spent, names the paths, and the same acceptance starts the run once the tree is clean.
 - The verify-retry question is answered in [plan-contract.md](../docs/plan-contract.md) one way or the other, with the reasoning recorded beside `retries`.
 
 ## Implementation Notes
 
-**Status: done.** Sections A, B and C are built. D landed with them, before
-[32](32-no-cost.md) decided there is no acceptance left to lose; it stays as built until
-that purge takes it.
+**Status: done.** Sections A, B and C are built.
 
 A recovery of the seventeen-step chain waits on one execution of its shared assertion
-command instead of fourteen, and a run whose chain breaks stops spending wall clock the
+command instead of fourteen, and a run whose chain breaks stops using wall clock the
 moment the verdict is decided. Nothing about what a verdict means moved: every step's record
 still names an assertion and its exit status, and a step nobody asserted still never records.
 
@@ -117,5 +102,5 @@ still names an assertion and its exit status, and a step nobody asserted still n
   retry count, so a retried pass would read exactly like a first-try pass in the run record,
   and an assertion that passes on its second asking has asserted less while looking like
   more. The remedy for one that flakes is the plan stating an assertion that does not, and
-  the price of leaving one in is stated there: one proof is shared by every gate quoting a
+  what leaving one in does is stated there: one proof is shared by every gate quoting a
   command, so one flaky execution closes every one of them.

@@ -1,14 +1,14 @@
-"""The missing-verify conversation: show what the derivation offered, take the human's answer.
+"""The missing-verify conversation: show what the derivation proposed, take the answer.
 
 Real plans state their end states in English and leave the command unwritten, so a plan
 arriving with no assertions anywhere is the expected case rather than an edge one. What
 happens then is a designed conversation: for each step nobody has been asked about, quote
 the step's own words back, show the assertion the derivation proposed for them — declared on
 the `missing_verify` question, resting on the sentence it quotes — and record accept, edit,
-or decline. Nothing here composes an offer: the agent that read the plan is the only thing
-that proposes, and this module only carries its proposal to the person.
+or decline. Nothing here composes a proposal: the agent that read the plan is the only
+thing that proposes, and this module only carries its proposal to the person.
 
-Nothing here writes a command into a graph. A proposal is an offer; only an answer is a
+Nothing here writes a command into a graph. A proposal is a reading; only an answer is a
 decision, and only `answer` writes.
 """
 
@@ -29,7 +29,7 @@ from cairn.plan.schema import (
 
 
 class Proposal(TypedDict):
-    """One offer, and everything the human needs beside it to answer."""
+    """One proposal, and everything the human needs beside it to answer."""
 
     step: str
     title: str
@@ -42,8 +42,8 @@ class Tally(TypedDict):
     """How each step's assertion was arrived at.
 
     `accepted` and `edited` count answers to a proposal Cairn actually made; `authored`
-    counts a command written where it could offer none, which is the difference between
-    a proposal carrying its weight and a human doing the work unaided.
+    counts a command written where it proposed none, which is the difference between a
+    proposal carrying its weight and a human doing the work unaided.
     """
 
     accepted: int
@@ -81,7 +81,7 @@ def _question_of(graph: Graph, step_id: str) -> Question | None:
 
 
 def propose(graph: Graph) -> list[Proposal]:
-    """Every step nobody has been asked about, with what the derivation offered for it."""
+    """Every step nobody has been asked about, with what the derivation proposed for it."""
     proposals: list[Proposal] = []
     for step in graph["steps"]:
         if not is_unasserted(step):
@@ -100,7 +100,7 @@ def propose(graph: Graph) -> list[Proposal]:
 
 
 def render(proposals: list[Proposal], graph_path: str = "<graph>") -> str:
-    """The worksheet a human answers from, with each offer beside the words it came from.
+    """The worksheet a human answers from, with each proposal beside its own words.
 
     Every answer is printed as the whole invocation that records it. A worksheet whose
     instruction has to be corrected before it works records nothing, and the flags it
@@ -121,18 +121,18 @@ def render(proposals: list[Proposal], graph_path: str = "<graph>") -> str:
             lines.append("")
             lines.append(f"What the document says is done: {proposal['acceptance']}")
         lines.append("")
-        offered = proposal["proposed"]
-        if offered is None:
+        proposed = proposal["proposed"]
+        if proposed is None:
             lines.append(
-                "The derivation offered nothing for this step. Write a command, or "
+                "The derivation proposed nothing for this step. Write a command, or "
                 "declare the step unverified and say why."
             )
         else:
-            lines.append(f"Proposed: `{offered}`")
+            lines.append(f"Proposed: `{proposed}`")
         lines.append("")
         # Every part of the invocation is quoted as a shell argument, the graph's own path
         # included: a line an operator has to repair before it runs records nothing. The
-        # offer itself is not on the line — it lives on the graph's own question, and
+        # proposal itself is not on the line — it lives on the graph's own question, and
         # `answer` records it from there, so no answer can drop or misquote it.
         where = shlex.quote(graph_path)
         invocation = (
@@ -141,7 +141,7 @@ def render(proposals: list[Proposal], graph_path: str = "<graph>") -> str:
         )
         lines.append("Accept or edit it with:")
         lines.append(
-            f"    {invocation} --command {shlex.quote(offered or '<the command>')}"
+            f"    {invocation} --command {shlex.quote(proposed or '<the command>')}"
             f" --out {where}"
         )
         lines.append("")
@@ -163,9 +163,9 @@ def answer(
 ) -> Graph:
     """Record one human's decision about one step, and clear the question it answers.
 
-    The outcome is derived from the answer against the offer the graph itself carries, so
-    an accept, an edit and a command written unaided cannot be miscounted by whoever ran
-    the conversation — and no answer can drop or misquote what was offered.
+    The outcome is derived from the answer against the proposal the graph itself carries,
+    so an accept, an edit and a command written unaided cannot be miscounted by whoever ran
+    the conversation — and no answer can drop or misquote what was proposed.
     """
     for step in graph["steps"]:
         if step["id"] != step_id:

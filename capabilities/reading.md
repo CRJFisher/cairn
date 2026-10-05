@@ -6,14 +6,13 @@
 | Entered when   | the dispatch table selected **report** or **explain**                                      |
 | Preconditions  | for a report, a run to read; for an explanation, a workflow, a run or one of Cairn's words |
 | Bound on entry | `capability` · `repository` · `run` · `step` · `workflow` · `verdict_word`                 |
-| Owns           | the verdict, the cost, the six questions, and what a frozen word means                     |
+| Owns           | the verdict, the six questions, and what a frozen word means                               |
 | Defers to      | [../docs/report.md](../docs/report.md) · [../docs/run-model.md](../docs/run-model.md)      |
 | Triggers       | nothing                                                                                    |
 
 **Nothing here starts, locks or writes anything.** Both capabilities read, and both work with
 the engine stopped. That is why they share one document: neither procedure fills a screen on
-its own, and neither has a consent rule because neither costs anything. Their entry
-preconditions do differ, and the row above says how.
+its own. Their entry preconditions do differ, and the row above says how.
 
 ## Reporting
 
@@ -38,7 +37,10 @@ terminal|markdown|html]`. Terminal is the default; markdown is the durable artif
    actor was started by that person at the engine's view. An absent actor is never rendered
    as unknown, so Report accounts for runs the skill did not start.
 
-If the honest answer is "this needs to be run", say so and stop. Offering a run is
+A question about what a run cost is not one Cairn answers; say that in one line and go on
+with what the record does hold.
+
+If the honest answer is "this needs to be run", say so and stop. Running is
 [running.md](running.md)'s, and it needs its own turn.
 
 ## Explaining
@@ -70,7 +72,7 @@ graph live and zoomable, its link survives the run ending, and past eighty nodes
 drawing defers to it outright. Every run record carries that address, so a run is reachable
 from its identity alone.
 
-What it will never answer: the **cost**, which has no field anywhere in the engine's model;
-the **divergence** between a workflow and the plan that generated it; and the **verdict**,
-because a run that dropped a branch reports a clean success at the engine level. Those three
-are why this capability exists beside the view rather than instead of it.
+What it will never answer: the **divergence** between a workflow and the plan that generated
+it, and the **verdict**, because a run that dropped a branch reports a clean success at the
+engine level. Those two are why this capability exists beside the view rather than instead
+of it.

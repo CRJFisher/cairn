@@ -375,9 +375,9 @@ class ThePreflightRefusesWhatTheEngineWouldRun(unittest.TestCase):
                     ),
                 )
 
-    def test_an_agent_body_stripped_of_its_bounds_is_refused(self) -> None:
-        """A paid session with no written price or model is the one thing an offer
-        cannot price, so the file never reaches a run."""
+    def test_an_agent_body_stripped_of_its_model_is_refused(self) -> None:
+        """A session with no written model leaves a record that cannot say who did the
+        work, so the file never reaches a run."""
 
         def strip(flag: str) -> Callable[[dict[str, Any]], object]:
             def change(d: dict[str, Any]) -> None:
@@ -393,9 +393,7 @@ class ThePreflightRefusesWhatTheEngineWouldRun(unittest.TestCase):
 
             return change
 
-        for flag in ("--max-budget-usd", "--model"):
-            with self.subTest(flag=flag):
-                self.assertIn("unbounded_session", self.mutated(strip(flag)))
+        self.assertIn("unnamed_model", self.mutated(strip("--model")))
 
     def test_a_missing_working_directory_is_refused(self) -> None:
         self.assertIn(
@@ -543,7 +541,7 @@ class ThePreflightRefusesWhatTheEngineWouldRun(unittest.TestCase):
             "unbounded_retry", self.mutated(lambda d: d["steps"][0].update(retry_policy={}))
         )
 
-    def test_malformed_and_active_paid_retries_are_refused(self) -> None:
+    def test_malformed_and_active_session_retries_are_refused(self) -> None:
         for policy in (
             {"limit": True, "interval_sec": 1},
             {"limit": -1, "interval_sec": 1},
@@ -559,11 +557,11 @@ class ThePreflightRefusesWhatTheEngineWouldRun(unittest.TestCase):
                         )
                     ),
                 )
-        def activate_paid(d: dict[str, Any]) -> None:
-            paid = next(step for step in d["steps"] if is_agent_body(str(step.get("run", ""))))
-            paid["retry_policy"] = {"limit": 1, "interval_sec": 1}
+        def activate_session(d: dict[str, Any]) -> None:
+            session = next(step for step in d["steps"] if is_agent_body(str(step.get("run", ""))))
+            session["retry_policy"] = {"limit": 1, "interval_sec": 1}
 
-        self.assertIn("unbounded_retry", self.mutated(activate_paid))
+        self.assertIn("unbounded_retry", self.mutated(activate_session))
 
     def test_dag_retry_is_exactly_disabled(self) -> None:
         self.assertIn(
@@ -889,7 +887,7 @@ class Authoring(unittest.TestCase):
             json.loads(path.read_text(encoding="utf-8"))["steps"][1]["timeout_sec"], 99999
         )
 
-    def test_the_command_line_offers_only_authoring_and_checking(self) -> None:
+    def test_the_command_line_provides_only_authoring_and_checking(self) -> None:
         """The generator is the only thing that writes one; nothing accepts workflow text."""
         with self.assertRaises(SystemExit):
             workflow_main(["install", "somewhere.yaml"])
@@ -1235,7 +1233,7 @@ class TheEngineVersionIsPinned(unittest.TestCase):
 
     def test_a_rehearsal_never_names_the_machines_own_engine_home(self) -> None:
         """An engine home the binary has never seen is created carrying an active retry
-        policy that re-executes paid work ([09]), so reading whether the engine works must
+        policy that re-executes agent work ([09]), so reading whether the engine works must
         never be the thing that arms it."""
         recorder = self.root / "argv"
         with self.assertRaises(EngineUnavailable):

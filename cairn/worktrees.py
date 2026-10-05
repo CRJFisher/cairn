@@ -62,7 +62,7 @@ JUNK = "junk"
 ABSENT = "absent"
 UNCLASSIFIED = "unclassified"
 
-# Ordered by the cost of getting it wrong: every refusal is decided before any repair, and
+# Ordered by the harm of getting it wrong: every refusal is decided before any repair, and
 # every repair before any creation.
 STATES = (
     FOREIGN,
@@ -397,7 +397,7 @@ def _switch(worktree: Path, branch: str, facts: Facts) -> CommandResult:
     """Move a clean worktree of ours onto the branch this step owns.
 
     Uncommitted work here is a killed agent's output on some other ref, so it halts rather
-    than being checked out over. Convergence never costs work.
+    than being checked out over. Convergence never loses work.
     """
     if facts.tree != "clean":
         on = facts.registered_branch or "an unknown ref"

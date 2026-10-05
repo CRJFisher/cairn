@@ -45,7 +45,7 @@ rather than to prevent it.
    ([../docs/plan-derivation.md](../docs/plan-derivation.md)) — and every other open
    question, each with the whole `python3 -m cairn plan answer … --out <graph>` invocation
    that records each answer it admits. **The answers are the author's, never yours**: show
-   the question and the offer, and record exactly what they said. Its exit status says only
+   the question and the proposal, and record exactly what they said. Its exit status says only
    that the listing was made; `--json` carries `complete`, which says whether anything is
    left to ask.
 
@@ -68,12 +68,11 @@ rather than to prevent it.
    is in the plan, not in the emitted file; every rule exists because the engine's own
    validation passes the same document.
 
-## Then offer, or stop
+## Then run, or stop
 
-Authoring starts nothing. When the workflow exists, say so and offer the run rather than
-performing it — the offer, its price and how its answer is taken are
-[../SKILL.md](../SKILL.md)'s consent rule, and the procedure is
-[running.md](running.md)'s. Nothing here may start a run.
+Authoring starts nothing. When the workflow exists, say so. Where the request also asked for
+a run, the next step is the run, and the procedure is [running.md](running.md)'s; where it
+did not, stop here — nothing here may start a run on its own.
 
 ## Where the engine's view is better
 

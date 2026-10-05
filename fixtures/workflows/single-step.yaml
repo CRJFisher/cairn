@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "single-step",
-    "cairn_generator": "8",
+    "cairn_generator": "9",
     "cairn_engine": "2.11.0",
-    "cairn_graph_sha256": "9c788b50aa042768ab69a6b4977a5586b45c10b5fa756781b9fb66037a19b7e3",
-    "cairn_body_sha256": "85e64b7b71e0add00a09ea433d9b8842f99918c8329687b96c2c609bfc6bc123"
+    "cairn_graph_sha256": "3e3fa04a1c54fe1fafa5d2e903970e50e04da64ac0c19dfef749c3cf5b123343",
+    "cairn_body_sha256": "51f75638381c019031d45c47eb2b8c0bfc2e4a9bc688955501280f892cd5c1cb"
   },
   "params": [
     {
@@ -54,17 +54,17 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn lock acquire --plan single-step --run-timeout 6780"
+      "run": "python3 -m cairn lock acquire --plan single-step --run-timeout 17580"
     },
     {
       "name": "work_manifest_writer",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 3780,
+      "timeout_sec": 14580,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/release/manifest.py` to a state where it writes `dist/manifest.json` holding every artefact'\"'\"'s name, size and sha256.' --model sonnet --max-budget-usd 5.0 --timeout 3600",
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/release/manifest.py` to a state where it writes `dist/manifest.json` holding every artefact'\"'\"'s name, size and sha256.' --model sonnet",
       "preconditions": [
         {
           "condition": "python3 -m cairn marker absent --step manifest_writer --scope once"

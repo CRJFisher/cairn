@@ -42,8 +42,7 @@
       "scope": "once",
       "reads": [],
       "retries": 0,
-      "kind": "agent.claude",
-      "timeout": 3600
+      "kind": "agent.claude"
     },
     {
       "id": "plan_backlog",
@@ -67,8 +66,7 @@
       "scope": "once",
       "reads": [],
       "retries": 0,
-      "kind": "agent.claude",
-      "timeout": 3600
+      "kind": "agent.claude"
     },
     {
       "id": "enforce_patterns",
@@ -92,8 +90,7 @@
       "scope": "once",
       "reads": [],
       "retries": 0,
-      "kind": "agent.claude",
-      "timeout": 3600
+      "kind": "agent.claude"
     }
   ],
   "omissions": [],

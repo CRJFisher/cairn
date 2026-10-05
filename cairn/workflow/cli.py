@@ -239,7 +239,7 @@ def _parser() -> argparse.ArgumentParser:
     child.add_argument("--out")
     # A recurring plan is asked for, never inferred. The cron expression itself is the
     # engine's to judge — measured, its validator refuses a malformed one — and the daemon
-    # a schedule costs is `cairn schedule` ([triggers.md]).
+    # a schedule needs is `cairn schedule` ([triggers.md]).
     child.add_argument("--schedule")
 
     child = verbs.add_parser("check")
@@ -248,7 +248,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def workflow_verbs() -> frozenset[str]:
-    """Every verb this command line offers — the whole surface that can write a definition."""
+    """Every verb this command line provides — the whole surface that can write a definition."""
     return VERBS
 
 

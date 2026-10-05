@@ -1,7 +1,7 @@
 """Building one run's record: Cairn's own reports first, the engine's state as a supplement.
 
 Every step goes through Cairn's CLI, so the reports are uniform across kinds and are the
-richer source — they are the only place cost, session identity, turns and an agent's own
+richer source — they are the only place session identity, turns and an agent's own
 account of itself exist at all. The engine contributes what only it holds: when each node
 started and finished, what status it reached, where its logs are, and how the run was
 triggered.
@@ -33,7 +33,6 @@ from cairn.providers import resume_command
 from cairn.record import engine
 from cairn.record.model import (
     Attention,
-    Budget,
     Diffstat,
     Divergence,
     Edge,
@@ -52,7 +51,6 @@ from cairn.record.model import (
 )
 from cairn.record.vocabulary import (
     ATTENTION_BLOCKED,
-    ATTENTION_BUDGET,
     ATTENTION_DIVERGENCE,
     ATTENTION_EXCLUDED,
     ATTENTION_FAILURE,
@@ -97,7 +95,6 @@ from cairn.text import (
     LINE_LIMIT,
     TEXT_LIMIT,
     as_count,
-    as_money,
     flatten,
     normalise,
     normalise_all,
@@ -488,7 +485,6 @@ def _never_reached_line(unreached: list[str], fault: str | None) -> str:
 def derive_attention(
     steps: list[StepRecord],
     infrastructure: list[Infrastructure],
-    budget: Budget,
     waves: list[WaveCensus],
     order: list[str],
 ) -> list[Attention]:
@@ -564,20 +560,6 @@ def derive_attention(
                 subject=entry["branch"],
                 summary=entry["summary"] or "the branch carried no work the gate would land",
                 cause=entry["cause"],
-            )
-        )
-    if budget["notional"] and budget["cost_usd"]:
-        items.append(
-            Attention(
-                kind=ATTENTION_BUDGET,
-                subject="run",
-                # The figure itself is deliberately not spelled here. The record carries the
-                # cost once, in `budget`, and a second formatting of it would be a second
-                # spelling of one number for every surface to choose between.
-                summary=(
-                    "the run's cost is an API-equivalent price rather than money spent"
-                ),
-                cause=None,
             )
         )
     for item in infrastructure:
@@ -662,7 +644,7 @@ def derive_next_action(
             # Never the bare engine command: starting a scheduler re-executes every failed
             # run on the machine from the previous day unless the machine-wide retry
             # override is in place, and this verb is where that is asserted ([triggers.md]).
-            command="python3 -m cairn schedule offer --scope start",
+            command="python3 -m cairn schedule start",
         )
     if verdict == VERDICT_RUNNING:
         return NextAction(action=NEXT_WAIT, subject=None, command=None)
@@ -710,10 +692,10 @@ def _rerun_or_fix(subject: StepRecord | None) -> str:
 
 
 def _recovery_command(run_id: str, plan: str | None, repository: str | None) -> str | None:
-    """The skill's own offer of a run that continues this one ([skill/cli.py]).
+    """The skill's own command for a run that continues this one ([skill/cli.py]).
 
     Never `dagu retry`: re-running a plan is the whole recovery story, and a continued
-    occasion is what makes it cheap, so the record hands a person the offer rather than
+    occasion is what keeps it short, so the record hands a person this command rather than
     the engine's verb — which also refuses a run the engine still believes is going.
     """
     if not plan or not repository:
@@ -722,7 +704,7 @@ def _recovery_command(run_id: str, plan: str | None, repository: str | None) -> 
         [
             *CAIRN_INVOCATION,
             "run",
-            "offer",
+            "start",
             "--plan",
             plan,
             "--repository",
@@ -826,7 +808,6 @@ def _step_record(
     working_directory = (
         engine.text(work_report.get("working_directory")) if work_report is not None else None
     )
-    cost = as_money(work_detail.get("total_cost_usd"))
     exit_code = engine.parse_exit_code(None if work is None else work.get("error"))
     diffstat = _diffstat(commit_detail.get("diffstat"))
     freshness = _freshness(work_report) if outcome == OUTCOME_NO_OP else None
@@ -844,7 +825,6 @@ def _step_record(
         "branch": _reported_text(commit_detail.get("branch")),
         "commit": _reported_text(commit_detail.get("commit")),
         "diffstat": diffstat,
-        "cost_usd": cost,
         "turns": as_count(work_detail.get("turn_count")),
         "session_id": session_id,
         "model": _reported_text(work_detail.get("model")),
@@ -868,7 +848,6 @@ def _step_record(
         outcome=outcome,
         overlays=overlays,
         verified=outcome == OUTCOME_VERIFIED,
-        cost_is_notional=work_detail.get("cost_is_notional") is True,
         # The commit's follow-up is the step's too: a path it left uncommitted because
         # somebody else had it dirty is work the step found and did not do ([21]).
         follow_up_work=normalise_all(
@@ -901,7 +880,6 @@ def _remedy(
     return Remedy(
         status=str(report.get("status")),
         said=None if not isinstance(said, str) else normalise(said, limit=LINE_LIMIT),
-        cost_usd=as_money(detail.get("total_cost_usd")),
         first_exit=as_count(_detail(first).get(EXIT_KEY)),
         resumed_session=_reported_text(detail.get("resumed_session")),
     )
@@ -1186,10 +1164,9 @@ def extract(
     ]
     edges = _edges(nodes)
     waves = _census(reports)
-    budget = _budget(steps, infrastructure)
     order = step_order(nodes, step_ids)
     verdict = derive_verdict(steps, infrastructure, engine_state, waves)
-    attention = derive_attention(steps, infrastructure, budget, waves, order)
+    attention = derive_attention(steps, infrastructure, waves, order)
 
     parameters = _parameters(record)
     lock_detail = _detail(reports.get("lock_acquire"))
@@ -1232,7 +1209,6 @@ def extract(
         edges=edges,
         waves=waves,
         attention=attention,
-        budget=budget,
         git=git,
         next_action=derive_next_action(
             verdict,
@@ -1301,51 +1277,6 @@ def _edges(nodes: dict[str, dict[str, Any]]) -> list[Edge]:
                 )
             )
     return found
-
-
-def _budget(
-    steps: list[StepRecord], infrastructure: list[Infrastructure]
-) -> Budget:
-    priced = [step for step in steps if step["cost_usd"] is not None]
-    turns = [step["turns"] for step in steps if step["turns"] is not None]
-    resolutions = [
-        resolution
-        for item in infrastructure
-        if isinstance(resolution := item.get("resolution"), dict)
-    ]
-    resolution_costs = [
-        cost
-        for resolution in resolutions
-        if (cost := as_money(resolution.get("total_cost_usd"))) is not None
-    ]
-    # A remedy is a second paid session of its step, so it is spent like one.
-    remedy_costs = [
-        cost
-        for step in steps
-        if (remedy := step["remedy"]) is not None and (cost := remedy["cost_usd"]) is not None
-    ]
-    total = (
-        sum(cast(float, step["cost_usd"]) for step in priced)
-        + sum(resolution_costs)
-        + sum(remedy_costs)
-        if priced or resolution_costs or remedy_costs
-        else None
-    )
-    fields: dict[str, object] = {
-        "cost_usd": total,
-        "turns": sum(turns) if turns else None,
-    }
-    return Budget(
-        cost_usd=total,
-        notional=any(step["cost_is_notional"] for step in priced)
-        or any(bool(resolution.get("cost_is_notional")) for resolution in resolutions),
-        turns=sum(turns) if turns else None,
-        priced_steps=len(priced) + len(resolution_costs),
-        unpriced_steps=(
-            len(steps) - len(priced) + len(resolutions) - len(resolution_costs)
-        ),
-        provenance=_provenance(fields, derived=("cost_usd", "turns")),
-    )
 
 
 def _trigger(record: dict[str, Any]) -> Trigger:

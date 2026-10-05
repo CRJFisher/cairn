@@ -56,7 +56,7 @@ The topology derives these nodes and the emitters give them bodies;
 - name: merge_w2_1 # the slot: it chooses, lands, and proves what it landed
   depends: [join_w2]
   run: python3 -m cairn merge land --slot 1 --provider claude
-    --model sonnet --max-budget-usd 5.0 --timeout 3600
+    --model sonnet
     --branch step/keymap_reader --branch step/theme_reader
   working_dir: ${CAIRN_REPOSITORY}
   timeout_sec: 4320
@@ -80,18 +80,17 @@ is how a wave with an excluded branch still reaches its prune.
 slots behind it and the prune after them. A flag here would let the next slot write over a
 conflicted index.
 
-**A slot is bounded like the session it may have to pay for**, plus the git work on either
+**A slot is bounded like the session it may have to open**, plus the git work on either
 side of it. At a support step's bound the engine would kill a resolution mid-merge, leaving
 behind exactly the unsettled tree the halt path exists to produce only deliberately; at the
-session's own bound the mutex wait and the merge in front of it would come out of the
-session's budget. Its proof is priced as the support step it always is, because it runs git
+hang guard alone the mutex wait and the merge in front of it would come out of the session's
+own deadline. Its proof is bounded as the support step it always is, because it runs git
 reads and never a session.
 
-**The resolver is the plan's own default agent.** Its model, dollar ceiling, and internal
-work deadline are written into every slot and included in the run offer. A plan whose steps
-are all commands still gets one, because a conflict is a question about intent whatever
-produced it. A stopped resolution records those bounds, its session identity, and any cost
-the provider could report before the engine's outer timeout.
+**The resolver is the plan's own default agent.** Its model is written into every
+slot, and it runs under the hang guard like every other session. A plan whose steps are all
+commands still gets one, because a conflict is a question about intent whatever produced it.
+A stopped resolution records its model and its session identity.
 
 **The slot takes the git write mutex around its own `git merge` and releases it before the
 agent runs.** The mutex's wait is five minutes and a session runs to an hour, so holding it
@@ -107,7 +106,7 @@ upstream, the prune is downstream, and the run lock excludes other runs.
    not. A branch with nothing to land is asked _why_ — see below.
 3. If nothing is left to land, report a no-op naming every exclusion.
 4. Predict, then refuse a predicted conflict in a file no branch of the wave changes. This
-   happens **before any agent is paid for**.
+   happens **before any agent session opens**.
 5. Land the lightest branch: `git merge --no-ff`, under the write mutex.
 6. On a conflict only, hand the named files to the agent.
 7. Prove what landed, whatever the agent said.
@@ -204,7 +203,7 @@ settle. Settling means completing the merge in the repository by hand and re-tri
 workflow — not re-invoking `cairn merge land`, which takes its identity from the engine and
 refuses outside a run.
 
-The next run stops before spending anything: taking the run lock halts on an unresolved
+The next run stops before opening a session: taking the run lock halts on an unresolved
 merge, which is what forces the state to be settled rather than run over. Both completions
 converge.
 
@@ -254,15 +253,14 @@ trust that over the tree in front of it, which is the one thing the proof exists
 ## What this hands forward
 
 - **The run record** reads each slot's report for what landed, what was excluded and why,
-  and whether a session was paid for. Every exclusion cause is a value from the gate's
+  and whether a session opened. Every exclusion cause is a value from the gate's
   frozen set.
 - **The preflight** refuses a merge-chain node carrying `continue_on`, and asserts that
   every slot's body is one quoted invocation.
 - **The divergence rate** — how often a resolution is clean but semantically wrong — needs
-  real sessions against real repositories, and the suite here runs none: a test that spends
-  money and depends on what a model decided that day cannot gate a commit. The instrument is
-  in place, because every landing records what it changed and what proved it. What is owed
-  is a second suite that runs deliberately and measures it.
+  real sessions against real repositories, and the suite here runs none: a test that depends
+  on what a model decided that day cannot gate a commit. The instrument is in place, because
+  every landing records what it changed and what proved it.
 
 ## Measured against git 2.42.1
 

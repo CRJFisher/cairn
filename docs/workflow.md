@@ -23,9 +23,9 @@ would then measure the reader rather than the file. And **quoting stops being a 
 becomes a property**: an unquoted `false` is rejected at load, and a JSON string can never
 render as a bare `false` whatever it holds.
 
-The cost is that a person reading the file in the engine's own view reads JSON. The file is
+The drawback is that a person reading the file in the engine's own view reads JSON. The file is
 generated and never hand-maintained, and an edit to it is a divergence rather than a
-workflow, so that cost is accepted.
+workflow, so the drawback stands.
 
 ## Where a parameter may stand
 
@@ -68,17 +68,17 @@ stand in, because a path names one target. `cairn merge land`, `cairn merge veri
 Omission is inheritance, not neutrality: the engine writes `~/.config/dagu/base.yaml` on its
 first invocation and every DAG on that machine inherits it.
 
-| Field                | Emitted as                    | What omission would mean                                                 |
-| -------------------- | ----------------------------- | ------------------------------------------------------------------------ |
-| `type`               | `graph`                       | the machine decides; `chain` silently serialises it                      |
-| `max_active_steps`   | the node count                | **zero also means "unset"** — see below                                  |
-| `retry_policy`       | `{limit: 0, interval_sec: 1}` | three replays of every paid agent session                                |
-| `timeout_sec`        | on every step                 | there is no default; a step ran 35m uninterrupted                        |
-| `working_dir`        | on every step                 | the step runs in a generated scratch directory                           |
-| `env: PYTHONPATH`    | the package root              | the gate cannot import Cairn and every step skips                        |
-| `catchup_window`     | the empty string              | every cron slot missed while the machine slept replays as a paid session |
-| `overlap_policy`     | `skip`                        | the machine decides what a firing arriving mid-run costs                 |
-| no top-level `name:` | —                             | the validator rejects the file a run would accept                        |
+| Field                | Emitted as                    | What omission would mean                                                   |
+| -------------------- | ----------------------------- | -------------------------------------------------------------------------- |
+| `type`               | `graph`                       | the machine decides; `chain` silently serialises it                        |
+| `max_active_steps`   | the node count                | **zero also means "unset"** — see below                                    |
+| `retry_policy`       | `{limit: 0, interval_sec: 1}` | three replays of every agent session                                       |
+| `timeout_sec`        | on every step                 | there is no default; a step ran 35m uninterrupted                          |
+| `working_dir`        | on every step                 | the step runs in a generated scratch directory                             |
+| `env: PYTHONPATH`    | the package root              | the gate cannot import Cairn and every step skips                          |
+| `catchup_window`     | the empty string              | every cron slot missed while the machine slept replays as an agent session |
+| `overlap_policy`     | `skip`                        | the machine decides what a firing arriving mid-run does                    |
+| no top-level `name:` | —                             | the validator rejects the file a run would accept                          |
 
 `schedule` is the one optional root key, written when `author --schedule` is given and
 absent otherwise. Measured, the empty catchup window is the only spelling that turns
@@ -116,44 +116,44 @@ Every rule reads the document **re-parsed from the bytes on disk**, so a fault i
 serialisation is inside the blast radius rather than behind it. A refusal is a hard stop
 naming the offending step, never a warning a run proceeds past.
 
-| Rule                           | What it prevents                                                     |
-| ------------------------------ | -------------------------------------------------------------------- |
-| `cycle`                        | the run never starts, and `dagu validate` exits 0 on the same file   |
-| `unresolved_reference`         | the reference empties and the step runs on a corrupted argument      |
-| `reference_out_of_position`    | quoting decides whether it substitutes, splits, or executes          |
-| `with_block`                   | executor configuration is retyped by YAML behind Cairn's back        |
-| `mark_success`                 | a failed step is rewritten as succeeded, on disk and in the API      |
-| `continue_on_output`           | routing on stdout text, which for an agent step is self-report       |
-| `assertion_absorbs_no_failure` | one branch's failed assertion aborts the merge join                  |
-| `absorbs_a_failure`            | the next merge slot writes over a conflicted index                   |
-| `reference_without_id`         | it resolves to nothing and the branch drops with no failed node      |
-| `gate_without_skipped`         | a correct no-op cascades and the plan evaporates into a success      |
-| `commit_without_skipped`       | an excluded branch's skip cascades and the wave lands nothing        |
-| `marker_with_skipped`          | the commit runs anyway and lands exactly the unverified work         |
-| `assertion_without_skipped`    | a declined assertion's skip cascades into its marker and commit      |
-| `remedy_without_skipped`       | a declined remedy's skip cascades into its marker and commit         |
-| `gate_unresolvable`            | every step skips into a clean success                                |
-| `foreign_condition`            | the gate runs a command Cairn did not write, and `dagu dry` runs it  |
-| `scope_without_occasion`       | the step re-pays and is excluded on every run, for ever              |
-| `missing_timeout`              | there is no default; the step can hang for ever                      |
-| `unbounded_session`            | a paid session opens whose price and model nobody stated             |
-| `missing_working_dir`          | the step runs in a scratch directory, not the repository             |
-| `wrong_graph_type`             | one deletes the dependency graph, the other serialises it            |
-| `body_not_one_invocation`      | logic in a generated file is untestable                              |
-| `top_level_name`               | the validator rejects the file while a run would accept it           |
-| `node_name`                    | the run model cannot parse the name back into a role and a step      |
-| `unexpected_id`                | a step exempts its own body from the one-invocation rule             |
-| `unexpected_handler`           | a lifecycle body runs that no rule has looked at                     |
-| `unbounded_retry`              | the machine's own configuration decides how often paid work repeats  |
-| `undeclared_parameter`         | a caller can vary something the run cannot survive varying           |
-| `inherited_concurrency`        | zero reads as unset, so the machine's cap decides the width          |
-| `catchup_replay`               | a cron slot missed while the machine slept replays as a paid session |
-| `inherited_overlap`            | the machine decides what a firing arriving mid-run costs             |
-| `schedule_with_fixed_occasion` | every firing after the first no-ops into a clean success             |
-| `foreign_root_key`             | the machine's own configuration decides a field no rule has read     |
-| `not_a_document`               | there is nothing here a run could be built from                      |
-| `engine_validate`              | the engine refuses to load the file                                  |
-| `engine_dry`                   | the engine cannot build an execution plan from the file              |
+| Rule                           | What it prevents                                                       |
+| ------------------------------ | ---------------------------------------------------------------------- |
+| `cycle`                        | the run never starts, and `dagu validate` exits 0 on the same file     |
+| `unresolved_reference`         | the reference empties and the step runs on a corrupted argument        |
+| `reference_out_of_position`    | quoting decides whether it substitutes, splits, or executes            |
+| `with_block`                   | executor configuration is retyped by YAML behind Cairn's back          |
+| `mark_success`                 | a failed step is rewritten as succeeded, on disk and in the API        |
+| `continue_on_output`           | routing on stdout text, which for an agent step is self-report         |
+| `assertion_absorbs_no_failure` | one branch's failed assertion aborts the merge join                    |
+| `absorbs_a_failure`            | the next merge slot writes over a conflicted index                     |
+| `reference_without_id`         | it resolves to nothing and the branch drops with no failed node        |
+| `gate_without_skipped`         | a correct no-op cascades and the plan evaporates into a success        |
+| `commit_without_skipped`       | an excluded branch's skip cascades and the wave lands nothing          |
+| `marker_with_skipped`          | the commit runs anyway and lands exactly the unverified work           |
+| `assertion_without_skipped`    | a declined assertion's skip cascades into its marker and commit        |
+| `remedy_without_skipped`       | a declined remedy's skip cascades into its marker and commit           |
+| `gate_unresolvable`            | every step skips into a clean success                                  |
+| `foreign_condition`            | the gate runs a command Cairn did not write, and `dagu dry` runs it    |
+| `scope_without_occasion`       | the step re-pays and is excluded on every run, for ever                |
+| `missing_timeout`              | there is no default; the step can hang for ever                        |
+| `unnamed_model`                | a session opens whose model nobody stated                              |
+| `missing_working_dir`          | the step runs in a scratch directory, not the repository               |
+| `wrong_graph_type`             | one deletes the dependency graph, the other serialises it              |
+| `body_not_one_invocation`      | logic in a generated file is untestable                                |
+| `top_level_name`               | the validator rejects the file while a run would accept it             |
+| `node_name`                    | the run model cannot parse the name back into a role and a step        |
+| `unexpected_id`                | a step exempts its own body from the one-invocation rule               |
+| `unexpected_handler`           | a lifecycle body runs that no rule has looked at                       |
+| `unbounded_retry`              | the machine's own configuration decides how often session work repeats |
+| `undeclared_parameter`         | a caller can vary something the run cannot survive varying             |
+| `inherited_concurrency`        | zero reads as unset, so the machine's cap decides the width            |
+| `catchup_replay`               | a cron slot missed while the machine slept replays as an agent session |
+| `inherited_overlap`            | the machine decides what a firing arriving mid-run does                |
+| `schedule_with_fixed_occasion` | every firing after the first no-ops into a clean success               |
+| `foreign_root_key`             | the machine's own configuration decides a field no rule has read       |
+| `not_a_document`               | there is nothing here a run could be built from                        |
+| `engine_validate`              | the engine refuses to load the file                                    |
+| `engine_dry`                   | the engine cannot build an execution plan from the file                |
 
 Several of these are narrower than they first appear, and every distinction is read off the
 file rather than guessed — because the file may not be one Cairn wrote.
@@ -312,7 +312,7 @@ moved while input did not** is the generator having moved and nothing else. A pl
 the corpus moves the graph digest, a re-pin moves a pin, and both regenerate freely.
 
 Two things it does not do. A person who rewrites or deletes the recorded bytes by hand is
-choosing to, and this raises the cost of skipping the decision rather than making it
+choosing to, and this makes skipping the decision harder rather than making it
 impossible. And the shapes in the corpus are the whole of its claim: a construct no plan there
 holds — a declined assertion, a step with retries, a plan whose repository path holds a space
 — is covered by the rules and the properties, not by a recorded file.
@@ -335,12 +335,12 @@ kilobytes and it is never re-emitted inline through a conversation, where it cou
 reproduced faithfully. It is gated where it cannot be run from and moved into place only
 once it passes, so a refused definition never reaches the path a run would start from.
 
-Authoring is not the final admission. `run offer` gates a stable snapshot of the selected
-file through preflight and both engine checks, then records its byte digest. `run start`
-checks that digest before spending the offer and launches a private snapshot of those bytes.
+Authoring is not the final admission. `run start` gates a stable snapshot of the
+selected file through preflight and both engine checks, then launches a private snapshot of
+exactly those bytes.
 `schedule install` performs the same gate and links a content-addressed admitted snapshot,
 never the mutable authored file. An edit remains visible to provenance and can be admitted,
-but it never inherits an earlier offer or installation.
+but it never inherits an earlier admission or installation.
 
 The last row is the one the workflow's own bytes cannot show. A hand edit to the _workflow_
 moves its body hash; an edit to the **plan** leaves the workflow untouched and silently

@@ -73,7 +73,6 @@ OVERLAYS: tuple[str, ...] = (OVERLAY_BLOCKED, OVERLAY_DIVERGENCE, OVERLAY_UNVERI
 ATTENTION_BLOCKED = "blocked"
 ATTENTION_FAILURE = "failure"
 ATTENTION_EXCLUDED = "excluded"
-ATTENTION_BUDGET = "budget"
 ATTENTION_HOUSEKEEPING_FAILURE = "housekeeping_failure"
 ATTENTION_DIVERGENCE = "divergence"
 ATTENTION_FOLLOW_UP = "follow_up"
@@ -81,7 +80,6 @@ ATTENTION_ORDER: tuple[str, ...] = (
     ATTENTION_BLOCKED,
     ATTENTION_FAILURE,
     ATTENTION_EXCLUDED,
-    ATTENTION_BUDGET,
     ATTENTION_HOUSEKEEPING_FAILURE,
     ATTENTION_DIVERGENCE,
     ATTENTION_FOLLOW_UP,
@@ -92,7 +90,7 @@ ATTENTION_ORDER: tuple[str, ...] = (
 # Frozen apart from the display verdict, so a severity judgement in a report can never
 # silently redefine what automation sees. `green_with_exclusions` carries a code of its own
 # because that is the distinction automation most needs and the one the engine cannot make.
-# 2 is left alone: argparse spends it on usage, and a caller reading 2 as a verdict would
+# 2 is left alone: argparse uses it for usage, and a caller reading 2 as a verdict would
 # be reading a typo.
 EXIT_GREEN = 0
 EXIT_FAILED = 1
@@ -154,7 +152,6 @@ NEXT_ACTIONS: tuple[str, ...] = (
 
 __all__ = [
     "ATTENTION_BLOCKED",
-    "ATTENTION_BUDGET",
     "ATTENTION_DIVERGENCE",
     "ATTENTION_EXCLUDED",
     "ATTENTION_FAILURE",

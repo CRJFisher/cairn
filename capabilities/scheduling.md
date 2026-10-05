@@ -6,19 +6,19 @@
 | Entered when   | the dispatch table selected **schedule**                                                |
 | Preconditions  | a plan or workflow named; the repository came from the request; a cadence was asked for |
 | Bound on entry | `capability` · `repository` · `workflow` · `cadence`                                    |
-| Owns           | the cron expression's place, the daemon escalation, and the honest answer about queues  |
+| Owns           | the cron expression's place, the scheduler daemon, and the honest answer about queues   |
 | Defers to      | [../docs/triggers.md](../docs/triggers.md) · [authoring.md](authoring.md)               |
-| Triggers       | a scheduler daemon, after a persisted scope-specific offer is accepted                  |
+| Triggers       | a scheduler daemon, once the plan is installed and `start` is run                       |
 
-**A schedule is an escalation, never a side effect of wanting a recurring plan.** A cron
-firing and an external webhook cost the same thing: a scheduler process, whose retry scanner
-re-executes every failed run recorded on this machine in the previous 24 hours — including
-runs Cairn never wrote, three attempts each. For a tool whose failed runs are paid agent
-sessions against git repositories, that is the largest money event in the product.
+**A schedule needs a scheduler process.** A cron firing and an external webhook run on the
+same thing: a scheduler, whose retry scanner re-executes every failed run recorded on this
+machine in the previous 24 hours — including runs Cairn never wrote, three attempts each.
+Scheduling installs what was asked for and says this plainly while it does; it is
+information and asks nothing.
 
-**Wanting the view is not this escalation and is never priced as one.** `dagu server` holds
-no run state, binds loopback, and needs no scheduler. Someone who says "I want to see the
-graph" is asking for [reading.md](reading.md), not for this.
+**Wanting the view is not scheduling.** `dagu server` holds no run state, binds loopback, and
+needs no scheduler. Someone who says "I want to see the graph" is asking for
+[reading.md](reading.md), not for this.
 
 ## The procedure
 
@@ -27,34 +27,27 @@ graph" is asking for [reading.md](reading.md), not for this.
    ([authoring.md](authoring.md)). The engine validates the expression against the machine's
    own clock; Cairn parses none of it.
 
-2. **State what the daemon costs, before installing.** Run `schedule offer --scope install`
-   with the plan and repository. It prints exactly what is being agreed to and mints the id
-   an acceptance must identify. This is separate from any run or process-start consent.
-
-3. **Install it.** `python3 -m cairn schedule install --plan <slug> --repository <path>
---offer <id> --reply yes`. It links an immutable admitted snapshot into
-   the directory the scheduler watches, which
+2. **Install it.** `python3 -m cairn schedule install --plan <slug> --repository <path>`.
+   It links an immutable admitted snapshot into the directory the scheduler watches, which
    is not where Cairn writes it — a file carrying a schedule that was never installed fires
    never and says nothing. A name already taken by another plan is refused rather than
-   replaced.
+   replaced. The command states what the scheduler does on this machine.
 
-4. **Start the scheduler, or say plainly that nothing will fire.** Mint a separate
-   `schedule offer --scope start`, then
-   `python3 -m cairn schedule start --offer <id> --reply yes` **becomes** the scheduler and runs in the
-   foreground until killed, so keeping a nightly plan firing means keeping that process alive
-   under `launchd`, `systemd`, or a terminal left open. It asserts at that moment that the
-   machine is safe to run a scheduler on and refuses otherwise, naming every failed run it
-   would have re-executed. `python3 -m cairn supervise base-config --disable` is what makes it
-   safe.
+3. **Start the scheduler, or say plainly that nothing will fire.**
+   `python3 -m cairn schedule start` **becomes** the scheduler and runs in the foreground
+   until killed, so keeping a nightly plan firing means keeping that process alive under
+   `launchd`, `systemd`, or a terminal left open. It asserts at that moment that the machine
+   is safe to run a scheduler on and refuses otherwise, naming every failed run it would have
+   re-executed. `python3 -m cairn supervise base-config --disable` is what makes it safe.
 
-5. **Answer "is it actually going to fire?" honestly.** `python3 -m cairn schedule status`
+4. **Answer "is it actually going to fire?" honestly.** `python3 -m cairn schedule status`
    names every run sitting queued with nothing draining the queue. A trigger that was accepted
    and does nothing is the failure mode this exists for.
 
-## An external trigger costs the same daemon
+## An external trigger needs the same daemon
 
 A webhook does not execute a run; it enqueues one, and only the scheduler drains the queue.
-So it is not a cheaper alternative to a schedule — it is the same escalation through a
+So it is not a lighter alternative to a schedule — it is the same daemon through a
 different door. Cairn does not create the webhook and holds no credential: the engine shows
 a bearer token once, and `--webhook-token-sink '<where it went>'` records the place, never
 the value.
@@ -74,4 +67,4 @@ is chosen.
 
 Seeing that a scheduled run fired, and what it did. Its own page for the workflow lists every
 run of it. What it will not tell you is whether the scheduler is up, which is
-`schedule status`'s answer, or what any of it cost.
+`schedule status`'s answer.

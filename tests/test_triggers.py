@@ -20,7 +20,6 @@ import hashlib
 import io
 import json
 import os
-import re
 import shutil
 import subprocess
 import tempfile
@@ -404,10 +403,10 @@ class TheDocumentAndTheCodeStateOneTriggerRuleSet(unittest.TestCase):
             with self.subTest(rule=rule.name):
                 self.assertIn(f"`{rule.name}`", text)
 
-    def test_the_surface_document_names_the_two_the_view_will_never_answer(self) -> None:
+    def test_the_surface_document_names_what_the_view_will_never_answer(self) -> None:
         text = TRIGGERS_DOC.read_text(encoding="utf-8")
-        self.assertIn("**Cost**", text)
         self.assertIn("**Divergence**", text)
+        self.assertIn("The verdict", text)
 
     def test_the_surface_document_states_both_human_gate_constraints(self) -> None:
         text = TRIGGERS_DOC.read_text(encoding="utf-8")
@@ -666,7 +665,7 @@ class TheEnginesPathsAreAskedOfTheEngine(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name).resolve()
 
-    def test_an_explicit_home_is_arithmetic_and_costs_no_subprocess(self) -> None:
+    def test_an_explicit_home_is_arithmetic_and_needs_no_subprocess(self) -> None:
         found = engine_paths({"DAGU_HOME": "/opt/dagu"})
         self.assertEqual(
             found,
@@ -881,7 +880,6 @@ class ASecondFiringDoesItsWork(unittest.TestCase):
                     "kind": "command",
                     "command": "date +%s%N >> tick.txt",
                     "command_type": "exec",
-                    "timeout": 120,
                 }
             ],
             "omissions": [],
@@ -1027,11 +1025,11 @@ class ASecondFiringDoesItsWork(unittest.TestCase):
 
 
 
-class TheScheduleSurfaceStatesWhatItCosts(unittest.TestCase):
-    """The escalation gate, driven through the command line rather than the library.
+class TheScheduleSurfaceStatesWhatItInstalls(unittest.TestCase):
+    """The schedule commands, driven through the command line rather than the library.
 
-    The persisted offer is the boundary between wanting a recurring plan and acquiring a
-    daemon whose retry scanner re-executes paid work.
+    Installing asks nothing and states that the scheduler's retry scanner re-executes failed
+    runs on this machine.
     """
 
     def setUp(self) -> None:
@@ -1057,60 +1055,25 @@ class TheScheduleSurfaceStatesWhatItCosts(unittest.TestCase):
             code = cairn_main(["schedule", *arguments])
         return code, out.getvalue(), err.getvalue()
 
-    def offer(self, scope: str) -> str:
-        arguments = ["offer", "--scope", scope, "--dags", str(self.dags)]
-        if scope == "install":
-            arguments.extend(
-                ("--plan", "nightly", "--repository", str(self.repository))
-            )
-        code, out, _ = self.run_cli(*arguments)
-        self.assertEqual(code, 0)
-        self.assertIn("persistent process", out)
-        found = re.search(r"^offer\s+(\S+)$", out, re.MULTILINE)
-        self.assertIsNotNone(found)
-        return cast(re.Match[str], found).group(1)
-
     def install(self, *extra: str) -> tuple[int, str, str]:
-        offer = self.offer("install")
         return self.run_cli(
             "install", "--plan", "nightly", "--repository", str(self.repository),
-            "--dags", str(self.dags), "--offer", offer, "--reply", "yes", *extra,
+            "--dags", str(self.dags), *extra,
         )
-
-    def test_installing_without_a_prior_offer_is_refused(self) -> None:
-        code, _, err = self.run_cli(
-            "install", "--plan", "nightly", "--repository", str(self.repository),
-            "--dags", str(self.dags), "--offer", "20200101T000000Z-deadbeef",
-            "--reply", "yes",
-        )
-        self.assertEqual(code, 1)
-        self.assertIn("names no daemon offer", err)
-        self.assertEqual(installed(dags=self.dags), [], "it published anyway")
-
-    def test_a_negative_reply_does_not_spend_the_offer(self) -> None:
-        offer = self.offer("install")
-        code, _, err = self.run_cli(
-            "install", "--plan", "nightly", "--repository", str(self.repository),
-            "--dags", str(self.dags), "--offer", offer, "--reply", "no",
-        )
-        self.assertEqual(code, 1)
-        self.assertIn("affirmative reply", err)
-        self.assertEqual(installed(dags=self.dags), [])
 
     def test_install_refuses_changed_bytes_that_fail_the_complete_gate(self) -> None:
-        offer = self.offer("install")
         changed = json.loads(self.workflow.read_text(encoding="utf-8"))
         changed["steps"][0]["timeout_sec"] = False
         self.workflow.write_text(json.dumps(changed), encoding="utf-8")
         code, _, err = self.run_cli(
             "install", "--plan", "nightly", "--repository", str(self.repository),
-            "--dags", str(self.dags), "--offer", offer, "--reply", "yes",
+            "--dags", str(self.dags),
         )
         self.assertEqual(code, 1)
         self.assertIn("missing_timeout", err)
         self.assertEqual(installed(dags=self.dags), [])
 
-    def test_accepting_the_daemon_links_the_definition_and_says_what_will_fire_it(
+    def test_installing_links_the_definition_and_says_what_will_fire_it(
         self,
     ) -> None:
         code, out, _ = self.install()
@@ -1158,22 +1121,12 @@ class TheScheduleSurfaceStatesWhatItCosts(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("unsafe", out)
 
-    def test_starting_without_a_prior_offer_is_refused(self) -> None:
-        code, _, err = self.run_cli(
-            "start", "--dry-run", "--dags", str(self.dags),
-            "--base-config", str(self.base), "--engine-records", str(self.records),
-            "--offer", "20200101T000000Z-deadbeef", "--reply", "yes",
-        )
-        self.assertEqual(code, 1)
-        self.assertIn("names no daemon offer", err)
-
     def test_starting_asserts_the_machine_before_it_prints_the_invocation(self) -> None:
         self.base.write_text(
             "retry_policy:\n  limit: 3\n  interval_sec: 5\n", encoding="utf-8"
         )
-        offer = self.offer("start")
         code, out, err = self.run_cli(
-            "start", "--offer", offer, "--reply", "yes", "--dry-run", "--base-config", str(self.base),
+            "start", "--dry-run", "--base-config", str(self.base),
             "--engine-records", str(self.records), "--dags", str(self.dags),
         )
         self.assertEqual(code, 1)
@@ -1181,31 +1134,19 @@ class TheScheduleSurfaceStatesWhatItCosts(unittest.TestCase):
         self.assertNotIn("starting", out)
 
     def test_a_safe_machine_prints_the_invocation_it_would_become(self) -> None:
-        offer = self.offer("start")
         code, out, _ = self.run_cli(
-            "start", "--offer", offer, "--reply", "yes", "--dry-run", "--base-config", str(self.base),
+            "start", "--dry-run", "--base-config", str(self.base),
             "--engine-records", str(self.records), "--dags", str(self.dags),
         )
         self.assertEqual(code, 0)
         self.assertIn(f"--dags {self.dags}", out)
+        self.assertIn("retry scanner re-executes every failed run", out)
 
-        code, _, err = self.run_cli(
-            "start", "--offer", offer, "--reply", "yes", "--dry-run",
-            "--base-config", str(self.base), "--engine-records", str(self.records),
-            "--dags", str(self.dags),
-        )
-        self.assertEqual(code, 1)
-        self.assertIn("already spent", err)
-
-    def test_an_install_offer_cannot_authorise_process_start(self) -> None:
-        offer = self.offer("install")
-        code, _, err = self.run_cli(
-            "start", "--offer", offer, "--reply", "yes", "--dry-run",
-            "--base-config", str(self.base), "--engine-records", str(self.records),
-            "--dags", str(self.dags),
-        )
-        self.assertEqual(code, 1)
-        self.assertIn("does not authorise", err)
+    def test_installing_states_the_retry_scanner_and_asks_nothing(self) -> None:
+        code, out, _ = self.install()
+        self.assertEqual(code, 0)
+        self.assertIn("retry scanner re-executes every failed run", out)
+        self.assertIn(f"previous {RETRY_SCANNER_HOURS} hours", out)
 
 
 class TheReleaseCannotBeMadeToFailByWhatItRecords(unittest.TestCase):

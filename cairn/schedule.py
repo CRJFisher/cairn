@@ -1,15 +1,15 @@
-"""The scheduler, which is the one daemon that is dangerous, and what it costs to start it.
+"""The scheduler, which is the one daemon that is dangerous, and what starting it entails.
 
 There are two engine daemons and only one of them carries a hazard. The **view's** server
 binds loopback, holds no run state, and reads the same files the CLI writes; killing it and
 starting another loses nothing. The **scheduler** is different, and every recurring trigger
-costs it — a cron schedule obviously, and an external webhook non-obviously, because a
+needs it — a cron schedule obviously, and an external webhook non-obviously, because a
 webhook does not execute a run, it enqueues one, and the queue is drained by the scheduler.
 
 While it is up it does two things unasked. It reconciles crashed runs, which Cairn wants.
 And its retry scanner **re-executes every failed run recorded on the machine inside the
 window `RETRY_SCANNER_HOURS` names** — including runs outside the directory it watches,
-three attempts each, under the engine's own retry policy. For a tool whose failed runs are paid agent sessions against git
+three attempts each, under the engine's own retry policy. For a tool whose failed runs are agent sessions against git
 repositories that is unacceptable, so starting it asserts two machine-wide properties rather
 than assuming them, and names what it found.
 
@@ -32,22 +32,20 @@ hazard can actually fire.
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import tempfile
 import time
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
-from typing import Any, NamedTuple, cast
+from typing import Any, NamedTuple
 
 from cairn.baseconfig import (
     assert_catchup_disabled,
     assert_dag_retry_disabled,
     base_config_path,
 )
-from cairn.core import CairnError, write_json
+from cairn.core import CairnError
 from cairn.enginehome import ENGINE_BINARY, dags_directory, run_records_path
-from cairn.marker import OCCASION_PATTERN, mint_occasion
 from cairn.plan.ids import is_plan_slug
 from cairn.record import engine
 from cairn.supervise import find_status_files, last_record
@@ -59,183 +57,6 @@ from cairn.workflow.stamp import workflow_path
 # the number is stated here rather than described.
 RETRY_SCANNER_HOURS = 24
 ADMITTED_DIRECTORY = "scheduled"
-DAEMON_OFFERS_DIRECTORY = "daemon-offers"
-DAEMON_SCOPES = ("install", "start")
-
-
-class DaemonOffer(NamedTuple):
-    """One disclosed daemon escalation, scoped to exactly one act."""
-
-    offer_id: str
-    scope: str
-    dags: str
-    repository: str | None
-    plan: str | None
-    offered_at: str
-    disclosure_sha256: str
-
-
-class DaemonAcceptance(NamedTuple):
-    """The single-use acceptance of one daemon offer."""
-
-    offer: DaemonOffer
-    accepted_at: str
-    reply: str
-
-
-def daemon_offers_directory(dags: Path) -> Path:
-    return dags.resolve().parent / ".cairn" / DAEMON_OFFERS_DIRECTORY
-
-
-def daemon_offer_path(dags: Path, offer_id: str) -> Path:
-    if OCCASION_PATTERN.match(offer_id) is None:
-        raise CairnError("invalid_arguments", f"{offer_id!r} is not a daemon offer id")
-    return daemon_offers_directory(dags) / f"{offer_id}.json"
-
-
-def make_daemon_offer(
-    scope: str,
-    *,
-    dags: Path,
-    repository: Path | None = None,
-    plan: str | None = None,
-    disclosure_sha256: str,
-    moment: datetime | None = None,
-) -> DaemonOffer:
-    """Mint an offer only for a fully identified install or process start."""
-    if scope not in DAEMON_SCOPES:
-        raise CairnError("invalid_arguments", f"unknown daemon scope {scope!r}")
-    if scope == "install" and (repository is None or plan is None):
-        raise CairnError(
-            "invalid_arguments", "an install offer requires its repository and plan"
-        )
-    now = (datetime.now(UTC) if moment is None else moment.astimezone(UTC))
-    offer = DaemonOffer(
-        offer_id=mint_occasion(moment),
-        scope=scope,
-        dags=str(dags.resolve()),
-        repository=None if repository is None else str(repository.resolve()),
-        plan=plan,
-        offered_at=now.isoformat(),
-        disclosure_sha256=disclosure_sha256,
-    )
-    write_json(daemon_offer_path(dags, offer.offer_id), offer._asdict())
-    return offer
-
-
-def _read_daemon_offer(dags: Path, offer_id: str) -> DaemonOffer | None:
-    path = daemon_offer_path(dags, offer_id)
-    try:
-        raw: Any = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return None
-    except (OSError, ValueError) as exc:
-        raise CairnError("invalid_arguments", f"{path} is unreadable: {exc}") from exc
-    if not isinstance(raw, dict):
-        raise CairnError("invalid_arguments", f"{path} is not a daemon offer")
-    fields = cast(dict[str, Any], raw)
-    try:
-        offer = DaemonOffer(
-            offer_id=str(fields["offer_id"]),
-            scope=str(fields["scope"]),
-            dags=str(fields["dags"]),
-            repository=(
-                None if fields["repository"] is None else str(fields["repository"])
-            ),
-            plan=None if fields["plan"] is None else str(fields["plan"]),
-            offered_at=str(fields["offered_at"]),
-            disclosure_sha256=str(fields["disclosure_sha256"]),
-        )
-    except KeyError as exc:
-        raise CairnError("invalid_arguments", f"{path} is a damaged daemon offer") from exc
-    if (
-        offer.offer_id != offer_id
-        or offer.scope not in DAEMON_SCOPES
-        or not offer.offered_at
-        or len(offer.disclosure_sha256) != 64
-    ):
-        raise CairnError("invalid_arguments", f"{path} is a damaged daemon offer")
-    return offer
-
-
-def spend_daemon_offer(
-    dags: Path,
-    offer_id: str,
-    *,
-    scope: str,
-    reply: str,
-    repository: Path | None = None,
-    plan: str | None = None,
-    disclosure_sha256: str,
-    moment: datetime | None = None,
-) -> DaemonAcceptance:
-    """Accept one matching daemon offer exactly once, leaving an audit marker."""
-    answered = reply.strip().casefold()
-    if not (answered == "yes" or answered.startswith(("yes ", "yes,", "yes."))):
-        raise CairnError(
-            "invalid_arguments",
-            "a daemon acceptance must be an affirmative reply beginning with 'yes'",
-        )
-    offer = _read_daemon_offer(dags, offer_id)
-    if offer is None:
-        raise CairnError("invalid_arguments", f"{offer_id!r} names no daemon offer")
-    expected_repository = None if repository is None else str(repository.resolve())
-    if (
-        offer.scope != scope
-        or offer.dags != str(dags.resolve())
-        or offer.repository != expected_repository
-        or offer.plan != plan
-        or offer.disclosure_sha256 != disclosure_sha256
-    ):
-        raise CairnError(
-            "invalid_arguments",
-            f"daemon offer {offer_id} does not authorise this {scope} act",
-        )
-    accepted_at = (
-        datetime.now(UTC) if moment is None else moment.astimezone(UTC)
-    ).isoformat()
-    try:
-        if datetime.fromisoformat(accepted_at) <= datetime.fromisoformat(
-            offer.offered_at
-        ):
-            raise CairnError(
-                "invalid_arguments",
-                f"daemon acceptance does not postdate offer {offer_id}",
-            )
-    except ValueError as exc:
-        raise CairnError(
-            "invalid_arguments", f"daemon offer {offer_id} has an invalid timestamp"
-        ) from exc
-    marker = daemon_offer_path(dags, offer_id).with_suffix(".spent")
-    marker.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(
-        prefix=f".{marker.name}.", suffix=".tmp", dir=marker.parent
-    )
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            json.dump(
-                {
-                    "accepted_at": accepted_at,
-                    "reply": reply,
-                    "scope": scope,
-                    "offer": offer._asdict(),
-                },
-                handle,
-                sort_keys=True,
-                allow_nan=False,
-            )
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        try:
-            os.link(temporary, marker)
-        except FileExistsError as exc:
-            raise CairnError(
-                "invalid_arguments", f"daemon offer {offer_id} was already spent"
-            ) from exc
-    finally:
-        Path(temporary).unlink(missing_ok=True)
-    return DaemonAcceptance(offer, accepted_at, reply)
 
 
 class EngineRun(NamedTuple):
@@ -382,7 +203,7 @@ def assert_safe_to_start(
         )
         named = _named(would)
         # The holder's own message already names the file and the command that fixes it, so
-        # what is added here is the only thing it cannot know: what starting now would cost.
+        # what is added here is the only thing it cannot know: what starting now would do.
         counted = (
             f" Starting a scheduler now would re-execute {len(would)} failed run(s) "
             f"recorded in the last {RETRY_SCANNER_HOURS} hours"
@@ -577,23 +398,16 @@ def start(*, dags: Path | None = None) -> None:
 
 
 __all__ = [
-    "DAEMON_SCOPES",
     "RETRY_SCANNER_HOURS",
-    "DaemonAcceptance",
-    "DaemonOffer",
     "EngineRun",
     "assert_safe_to_start",
-    "daemon_offer_path",
-    "daemon_offers_directory",
     "describe_run",
     "failed_runs_since",
     "install",
     "installed",
-    "make_daemon_offer",
     "published_path",
     "queued_runs",
     "remove",
     "scheduler_command",
-    "spend_daemon_offer",
     "start",
 ]

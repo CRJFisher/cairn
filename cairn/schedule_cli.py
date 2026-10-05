@@ -1,18 +1,17 @@
-"""`python3 -m cairn schedule` — the recurring trigger, and the daemon it costs.
+"""`python3 -m cairn schedule` — the recurring trigger, and the daemon it needs.
 
 Like `cairn plan`, `cairn supervise`, `cairn workflow` and `cairn record`, these run outside
 any run: they take no runtime identity and leave no step report.
 
 The verbs are in one namespace with the daemon on purpose. Doc 13's argument is that the
-scheduler *is* the price of a recurring trigger — a cron schedule and an external webhook
-cost the same process — and separating the two is how a person ends up with a trigger that
+scheduler *is* what a recurring trigger runs on — a cron schedule and an external webhook
+need the same process — and separating the two is how a person ends up with a trigger that
 silently does nothing, or a daemon they did not know they had asked for.
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 from pathlib import Path
@@ -27,23 +26,21 @@ from cairn.schedule import (
     describe_run,
     install,
     installed,
-    make_daemon_offer,
     published_path,
     queued_runs,
     remove,
     scheduler_command,
-    spend_daemon_offer,
     start,
 )
 from cairn.workflow.gate import admit
 from cairn.workflow.stamp import stamp_path, workflow_path
 
-VERBS = frozenset({"offer", "install", "remove", "status", "start"})
+VERBS = frozenset({"install", "remove", "status", "start"})
 EXIT_REFUSED = 1
 
-# What a person is agreeing to. Printed wherever the escalation is made, because a schedule
-# is never a side effect of wanting a recurring plan.
-COST = f"""a schedule costs a persistent process, not just a line in a file:
+# What scheduling puts on this machine. Printed with the install, because it decides what
+# will execute; it is information and asks nothing.
+SCHEDULER_FACTS = f"""a schedule needs a persistent process, not just a line in a file:
 
   - `dagu scheduler` must be running for a cron schedule or a webhook to fire at all. A
     webhook does not execute a run — it enqueues one, and only the scheduler drains the
@@ -53,7 +50,6 @@ COST = f"""a schedule costs a persistent process, not just a line in a file:
   - while it is up, its retry scanner re-executes every failed run recorded on this machine
     in the previous {RETRY_SCANNER_HOURS} hours — including runs Cairn never wrote. That is
     asserted off before it starts, and `start` refuses otherwise, naming what it found."""
-COST_SHA256 = hashlib.sha256(COST.encode("utf-8")).hexdigest()
 
 
 def _triggers_path(repository: Path, plan: str) -> Path:
@@ -67,29 +63,6 @@ def _dags(args: argparse.Namespace) -> Path:
     return Path(args.dags).resolve() if args.dags else dags_directory().resolve()
 
 
-def _cmd_offer(args: argparse.Namespace) -> int:
-    dags = _dags(args)
-    if args.scope == "install" and (not args.repository or not args.plan):
-        raise CairnError(
-            "invalid_arguments",
-            "an install offer requires --repository and --plan",
-        )
-    repository = Path(args.repository).resolve() if args.repository else None
-    # The disclosure is written first. If output cannot be delivered, no persisted id
-    # exists for a caller to accept without having received the current cost.
-    print(COST)
-    offer = make_daemon_offer(
-        args.scope,
-        dags=dags,
-        repository=repository,
-        plan=args.plan,
-        disclosure_sha256=COST_SHA256,
-    )
-    print(f"\noffer   {offer.offer_id}")
-    print(f"scope   {offer.scope}")
-    return 0
-
-
 def _cmd_install(args: argparse.Namespace) -> int:
     repository = Path(args.repository).resolve()
     dags = _dags(args)
@@ -101,15 +74,6 @@ def _cmd_install(args: argparse.Namespace) -> int:
             f"{source} did not pass the execution gate: "
             + "; ".join(str(fault) for fault in faults),
         )
-    spend_daemon_offer(
-        dags,
-        args.offer,
-        scope="install",
-        reply=args.reply,
-        repository=repository,
-        plan=args.plan,
-        disclosure_sha256=COST_SHA256,
-    )
     # The record is written before the link, because the link is what arms the scheduler:
     # a failure between the two must leave a note about a schedule that does not fire
     # rather than a schedule nothing recorded.
@@ -129,7 +93,7 @@ def _cmd_install(args: argparse.Namespace) -> int:
     print(f"linked   {published} -> {record['workflow']}")
     print(f"recorded {_triggers_path(repository, args.plan)}")
     print(f"fires    {_fires(published)}")
-    print(COST)
+    print(SCHEDULER_FACTS)
     if args.webhook_token_sink:
         name = published.stem
         print(
@@ -213,13 +177,7 @@ def _cmd_start(args: argparse.Namespace) -> int:
         base_config=Path(args.base_config) if args.base_config else None,
         records=Path(args.engine_records) if args.engine_records else None,
     )
-    spend_daemon_offer(
-        dags,
-        args.offer,
-        scope="start",
-        reply=args.reply,
-        disclosure_sha256=COST_SHA256,
-    )
+    print(SCHEDULER_FACTS)
     for run in waiting:
         print(f"draining {describe_run(run)}")
     print(f"starting {' '.join(scheduler_command(dags=dags))}")
@@ -234,19 +192,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="cairn schedule", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    child = sub.add_parser("offer")
-    child.add_argument("--scope", choices=("install", "start"), required=True)
-    child.add_argument("--plan")
-    child.add_argument("--repository")
-    child.add_argument("--dags")
-    child.set_defaults(handler=_cmd_offer)
-
     child = sub.add_parser("install")
     child.add_argument("--plan", required=True)
     child.add_argument("--repository", default=".")
     child.add_argument("--dags")
-    child.add_argument("--offer", required=True)
-    child.add_argument("--reply", required=True)
     child.add_argument(
         "--webhook-token-sink",
         help="where the bearer token will be kept; recorded, never the token itself",
@@ -271,8 +220,6 @@ def main(argv: list[str] | None = None) -> int:
     child.add_argument("--dags")
     child.add_argument("--base-config")
     child.add_argument("--engine-records")
-    child.add_argument("--offer", required=True)
-    child.add_argument("--reply", required=True)
     child.add_argument("--dry-run", action="store_true")
     child.set_defaults(handler=_cmd_start)
 
@@ -290,4 +237,4 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_REFUSED
 
 
-__all__ = ["COST", "VERBS", "main"]
+__all__ = ["SCHEDULER_FACTS", "VERBS", "main"]

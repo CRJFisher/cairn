@@ -17,7 +17,6 @@ from collections.abc import Callable, Mapping
 from cairn.record.facts import ABSENT, NONE
 from cairn.record.vocabulary import (
     ATTENTION_BLOCKED,
-    ATTENTION_BUDGET,
     ATTENTION_DIVERGENCE,
     ATTENTION_EXCLUDED,
     ATTENTION_FAILURE,
@@ -52,7 +51,6 @@ from cairn.report.spine import (
     RULE_ACTOR,
     RULE_ASSERTION,
     RULE_LINK,
-    RULE_MONEY,
     RULE_VALUE,
     RULES,
     TONE_ALARM,
@@ -94,7 +92,7 @@ from cairn.verify import (
 )
 
 # What a report says instead of a number it does not have. Never `0`, never a blank: a run
-# that recorded no cost and a run that cost nothing are different facts, and one of them is
+# that recorded no turns and a run that took none are different facts, and one of them is
 # the crash.
 NOT_RECORDED = "not recorded"
 NOTHING_AT_ALL = "none"
@@ -138,7 +136,6 @@ LABEL_BY_ATTENTION: dict[str, str] = {
     ATTENTION_BLOCKED: "Blocked on a decision",
     ATTENTION_FAILURE: "Failed",
     ATTENTION_EXCLUDED: "Excluded",
-    ATTENTION_BUDGET: "Budget",
     ATTENTION_HOUSEKEEPING_FAILURE: "Housekeeping failed",
     ATTENTION_DIVERGENCE: "Divergence",
     ATTENTION_FOLLOW_UP: "Follow-up work",
@@ -220,20 +217,6 @@ def value(shown: str) -> str:
     return shown
 
 
-def money(cost: str, notional: str) -> str:
-    """A cost and whether it is money, in one string neither sink can separate.
-
-    On a subscription login the figure is an API-equivalent price rather than money spent, so
-    a rendering that printed the number alone would be inventing a payment. The qualifier
-    travels inside the same string because that is the only way a sink cannot drop it.
-    """
-    if _absent(cost):
-        return NOT_RECORDED
-    if notional == "yes":
-        return f"${cost} (an API-equivalent price, not money spent)"
-    return f"${cost}"
-
-
 def actor(name: str, started_by_cairn: str) -> str:
     """Who started the run — and an absent name is never rendered as unknown.
 
@@ -287,7 +270,6 @@ TOTAL_MAPS: tuple[tuple[Mapping[str, object], tuple[str, ...]], ...] = (
 RULE_TEXT.update(
     {
         RULE_VALUE: lambda shown: value(shown[0]),
-        RULE_MONEY: lambda shown: money(shown[0], shown[1]),
         RULE_ACTOR: lambda shown: actor(shown[0], shown[1]),
         # A link is still only text here; whether a sink may follow it is the sink's own
         # decision, and only one of them can follow anything at all.
@@ -309,6 +291,5 @@ __all__ = [
     "actor",
     "apply",
     "assertion",
-    "money",
     "value",
 ]

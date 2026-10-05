@@ -1,7 +1,7 @@
 """Where a plan's reviewed graph lives: one file per plan, beside the repository's workflows.
 
-A graph is the only record of what an author reviewed and answered, and workflows, offers
-and run records are all addressed by plan. A graph addressed by repository alone would let
+A graph is the only record of what an author reviewed and answered, and workflows and run
+records are both addressed by plan. A graph addressed by repository alone would let
 authoring a second plan overwrite the first plan's answers, so each lives under its own slug
 in git's admin directory, where no commit step can sweep it up and every worktree of the
 repository finds the same one.

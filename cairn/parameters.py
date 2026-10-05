@@ -20,7 +20,7 @@ statements of one rule where they could disagree.
 
 **So the parameters are judged at the run's first act rather than at any trigger surface.**
 `cairn lock acquire` is the one node every path passes through, and it runs before the
-first worktree and before the first paid session. A refusal there is a failed node carrying
+first worktree and before the first agent session. A refusal there is a failed node carrying
 its reason — which is what the engine's own view draws, what `dagu start` exits on, and
 what the run's record keeps.
 
@@ -218,7 +218,7 @@ def parent_branch(
 
     The value reaches git's argv directly — as a merge target, a worktree base and a delete
     operand — so a leading `-` is an option rather than a branch. That much is refused on
-    the text, at every read, because it costs nothing. The full grammar is git's own answer
+    the text, at every read, because it is a pure text check. The full grammar is git's own answer
     and is asked for only where a `directory` is given, which is the run's first act: it is
     a subprocess, and the steps that read this parameter afterwards are already past the
     point where a malformed one could have been acted on.

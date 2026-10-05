@@ -103,10 +103,9 @@ in the record, so the causes are named there and quoted here.
 
 ## What needs a person's attention
 
-Seven kinds, in one fixed order, highest concern first:
+Six kinds, in one fixed order, highest concern first:
 
-`blocked`, `failure`, `excluded`, `budget`, `housekeeping_failure`, `divergence`,
-`follow_up`.
+`blocked`, `failure`, `excluded`, `housekeeping_failure`, `divergence`, `follow_up`.
 
 Naming the order here is what makes every renderer conform to one definition rather than
 inventing a subset. It is deliberately **not** the verdict's order: a block outranks a
@@ -137,9 +136,9 @@ is derived from the record rather than composed as prose, and is one of:
 | ----------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
 | `decide`          | a step is blocked on a human decision                                                | none — a person decides, and no command does                                                               |
 | `settle_merge`    | a step or a census exclusion left work unlanded, in a run whose topology has a merge | none                                                                                                       |
-| `rerun`           | the run failed, or a merge-less run left work unlanded                               | `python3 -m cairn run offer --plan <plan> --repository <repository> --trigger recovery --recovering <run>` |
+| `rerun`           | the run failed, or a merge-less run left work unlanded                               | `python3 -m cairn run start --plan <plan> --repository <repository> --trigger recovery --recovering <run>` |
 | `fix_assertion`   | as `rerun`, where a signal ended the assertion of the step the fault is at           | the same recovery command, to use once what stopped the assertion has changed                              |
-| `start_scheduler` | the run is queued and nothing is draining the queue                                  | `cairn schedule offer --scope start`                                                                       |
+| `start_scheduler` | the run is queued and nothing is draining the queue                                  | `python3 -m cairn schedule start`                                                                          |
 | `wait`            | the run is still in flight                                                           | none                                                                                                       |
 | `nothing`         | the run is green, or every step no-opped                                             | none                                                                                                       |
 
@@ -156,11 +155,11 @@ than costing a person the record. `settle_merge` is prescribed only where the to
 a merge: a merge node in the engine's record, or a wave's census, which only a join in an
 isolated wave takes. A chain has neither, and re-running is its whole remedy.
 
-**A command is carried only where it can be spelled completely.** The recovery offer names
+**A command is carried only where it can be spelled completely.** The recovery command names
 the plan, the repository and the run, so a record missing the plan or the repository carries
 no command at all rather than one that fails when it is pasted. It is never `dagu retry`,
 which the skill refuses outright: re-running a plan is the whole recovery story, a continued
-occasion is what makes it cheap, and the engine's own verb refuses a run it still believes
+occasion is what lets finished steps no-op, and the engine's own verb refuses a run it still believes
 is going — which is every run whose orchestrator was killed.
 
 ## The exit-code contract
@@ -177,7 +176,7 @@ silently redefine what automation sees.
 | `5`  | `running` — the run has not finished, so it has no outcome        |
 | `6`  | no record could be produced; not a statement about the run at all |
 
-`2` is left alone: argparse spends it on usage, and a caller reading 2 as a verdict would be
+`2` is left alone: argparse reserves it for usage, and a caller reading 2 as a verdict would be
 reading a typo. `green_with_exclusions` carries a code of its own because that is the
 distinction automation most needs and the one the engine cannot make.
 
@@ -205,9 +204,9 @@ Four things the engine never supplies, and where each field's authority sits ins
 - **The exit code as a number.** It survives only inside an error string — `exit status 7`.
   The extraction parses it and marks it `derived`, never `recorded`. A verify step's exit
   code, where the number itself matters, is recorded by Cairn ([verify-gate.md](verify-gate.md)).
-- **Cost and session identity.** The engine holds none, so spend accounting rests entirely
-  on Cairn's own step reports ([step-protocol.md](step-protocol.md)). This is not a gap to
-  work around; it is the reason the reports are the primary source.
+- **Session identity.** The engine holds none, so which session did a step's work rests
+  entirely on Cairn's own step reports ([step-protocol.md](step-protocol.md)). This is not a
+  gap to work around; it is the reason the reports are the primary source.
 - **A per-step process id**, so a step cannot be traced to a process after the fact.
 - **A retry count** on a node, so attempts are counted from the engine's separate attempt
   records rather than read off one.
@@ -218,7 +217,7 @@ Declared in `cairn/record/model.py`. The run carries `record_version`, `run_id`,
 `graph_sha256`, `attempt_id`, `attempts`, `engine_version`, `engine_run_status`,
 `engine_run_status_name`, `engine_contradicted`, `owner_alive`, `verdict`, `exit_code`,
 `view_url`, `started_at`, `finished_at`, `trigger`, `lineage`, `steps`, `infrastructure`,
-`nodes`, `edges`, `waves`, `attention`, `budget`, `git`, `next_action` and `provenance`.
+`nodes`, `edges`, `waves`, `attention`, `git`, `next_action` and `provenance`.
 
 `view_url` is where the engine's own view serves this run — the same address live and cold,
 which is what makes a finished run readable from the surface that showed it running
@@ -237,8 +236,7 @@ becomes one a browser can actually reach.
 
 Each step carries `step_id`, `outcome`, `overlays`, `cause`, `position`, `asked`, `said`,
 `verified`, `divergence`, `freshness`, `completed_by_run`, `branch`, `commit`, `diffstat`,
-`left_uncommitted`, `cost_usd`, `cost_is_notional`, `turns`, `session_id`, `model`,
-`transcript`, `stderr_log`,
+`left_uncommitted`, `turns`, `session_id`, `model`, `transcript`, `stderr_log`,
 `resume_command`, `follow_up_work`, `started_at`, `finished_at`, `exit_code`,
 `assertion_exit`, `assertion_source`, `assertion_backed_by`, `timeout_seconds`,
 `elapsed_seconds`, `assertion_tail`, `remedy`, `nodes` and `provenance`.
@@ -269,10 +267,9 @@ assertion passed, never ran, or its log is gone.
 
 `remedy` is present only on a step that declared `remediate` and whose remedy node left an
 account. It carries the node's `status` and what it `said` — the remedy gate's reason for a
-decline, or the session's own summary — with the session's `cost_usd`, the `first_exit` of
-the assertion it answered, and the `resumed_session` it continued. Where a remedy reported its
-work `done` and the assertion ran again, `assertion_exit` is that second run's, and the
-remedy's cost counts toward the run's `budget` like any session's.
+decline, or the session's own summary — with the `first_exit` of the assertion it answered and the `resumed_session` it continued.
+Where a remedy reported its work `done` and the assertion ran again, `assertion_exit` is that
+second run's.
 
 `asked` is the command the engine recorded for the step, which for an agent step contains
 the prompt. The plan's own task text does not survive into a run — the generator consumes
@@ -400,8 +397,8 @@ that the process could not be checked, and `orchestrator_died` is reserved for a
 succeeded and found nothing. The engine's own record is the better witness then, and the
 reconciler leaves such a run alone rather than repairing one that may be working.
 
-What a crash costs is stated rather than discovered: the killed step's finish time, exit
-code, cost, turns and session identity are all absent, each carrying `absent` in its
+What a crash loses is stated rather than discovered: the killed step's finish time, exit
+code, turns and session identity are all absent, each carrying `absent` in its
 provenance map.
 
 This has a consequence worth stating plainly: **liveness is a property of now, not of the
@@ -444,9 +441,9 @@ else. A summary keeps neither newlines nor tabs and is capped at 200 characters,
 the committed marker has always held; prose that is allowed its own shape keeps `\n` and
 `\t` and is capped at 2000.
 
-Numbers get the same treatment for the same reason. A cost that is not a finite, non-negative
-number is absent rather than zero: `NaN` is a legal Python float and is not legal JSON, so
-admitting one would cost every reader the whole record rather than one field.
+Numbers get the same treatment for the same reason. A number that is not finite and
+non-negative is absent rather than zero: `NaN` is a legal Python float and is not legal JSON,
+so admitting one would break every reader of the whole record rather than one field.
 
 ## The canonical-facts projection
 
@@ -459,7 +456,7 @@ object's key order is incidental in some readers. Values are strings because con
 what an oracle test can assert. An absent value spells `absent` rather than an empty string,
 so a renderer that printed a zero disagrees with the oracle instead of agreeing quietly.
 
-Keys are `run.*`, `budget.*`, `git.*`, then `run.steps.<outcome>` — one count per step
+Keys are `run.*`, `git.*`, then `run.steps.<outcome>` — one count per step
 outcome, always present and zero where none — then `step.<id>.*` in the record's own order,
 then `attention.<n>.*` in the frozen attention order, then `infrastructure.<name>.*`, then
 `wave.<n>.*` with a nested `wave.<n>.excluded.<branch>.*` per declined branch.
@@ -490,8 +487,6 @@ a run with exclusions exits 3, whatever either of them printed.
 ```text
 <repository>/.git/cairn/
   workflows/<plan>.yaml            the generated definition
-  offers/<offer-id>.json             one run offered, with the price it was offered at
-  offers/<offer-id>.spent            that offer consumed, once
   runs/<run-id>/reports/<node>.json  every step's own account
   runs/<run-id>/assertions/<sha>.json  one proof per assertion command, keyed on the tree it ran against
   runs/<run-id>/occasion             the occasion every scoped step in this run keys on
@@ -538,8 +533,8 @@ exists, and any field set by hand. `scripts/record_runs.py` re-records them.
 
 Every state file is a real engine run, because the corpus exists to prove things about the
 engine and the fixture the exit criteria name is a claim only the engine can make. Every
-shape but one is a command step and costs nothing to re-record; `agent` runs a real provider
-and spends real money, which is why it is one step and not a plan.
+shape but one is a command step; `agent` runs a real provider, which is why it is one step
+and not a plan.
 
 | Shape                   | What it pins                                                                                                                                                                                                                                |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -551,7 +546,7 @@ and spends real money, which is why it is one step and not a plan.
 | `mid-run`               | five snapshot lines, uncompacted; a step running and a sibling `pending`                                                                                                                                                                    |
 | `crashed`               | the orchestrator was killed; the engine's record still says `running` with no finish time                                                                                                                                                   |
 | `timed-out`             | the engine killed a step at its bound with no report written, its assertion passed over what it left, and the step behind it was skipped: the record reads the kill over the gate's `not_reached`, and the halt over the engine's `skipped` |
-| `agent`                 | one real paid agent step, so a step's receipts — cost, turns, session identity, transcript, resume command — are carried populated rather than only absent                                                                                  |
+| `agent`                 | one real agent step, so a step's receipts — turns, session identity, transcript, resume command — are carried populated rather than only absent                                                                                             |
 
 `green`, `all-no-op` and `blocked` all carry engine run status `4`. That they extract to
 `green`, `all_no_op` and `blocked` is what proves the verdict is not read off the engine.

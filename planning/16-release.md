@@ -129,10 +129,8 @@ contributor does not casually cross it.
    actionable message rather than a failure at first run.
 10. **Write the README**, and let its shape be the deliverable rather than its length. It carries:
     what Cairn does in one sentence; the install path; the worked example; the posture section
-    above, including the trust-boundary sentence; the licensing boundary; what a run costs, using
-    the measured utilization figure a full run consumes ([02](02-agent-step-spike.md)) and the note
-    that a subscription cost figure is notional rather than money spent; and the skill's measured
-    installed context cost ([15](15-the-skill.md)).
+    above, including the trust-boundary sentence; the licensing boundary; and the skill's measured
+    installed context footprint ([15](15-the-skill.md)).
 11. **Ship the worked example, and make it the failing one.** [08](08-verify-gate.md)'s
     differentiating fixture — an agent that reports success and writes nothing, is excluded with
     its cause, and leaves the run not-clean — is the example, because the claim is invisible on a
@@ -163,7 +161,7 @@ contributor does not casually cross it.
 The public tree still does not carry an installable cold path: `pyproject.toml` configures
 Pyright but has no project metadata, build backend, or entry point, and the README assumes both
 Dagu and an installed `/cairn` skill. Task 10 therefore includes prerequisites, skill
-registration, and a no-spend discovery check, while tasks 14–15 include a real package manifest
+registration, and a discovery check that starts nothing, while tasks 14–15 include a real package manifest
 and Python 3.11 as the explicit minimum.
 
 The quality gate is also broader than the runtime suite:
@@ -193,7 +191,7 @@ owns the user-facing journey; this document owns proving that journey on a clean
   engine themselves, asserted rather than assumed.
 - No server Cairn starts is left with an unclaimed administrator account, asserted on the clean
   machine rather than reasoned about.
-- The README states the trust boundary, the licensing boundary, and what a run costs — none of them
+- The README states the trust boundary, the licensing boundary — neither of them
   softened.
 - The worked example is the failing fixture, and a reader who runs it sees an exclusion with its
   cause.

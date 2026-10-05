@@ -27,9 +27,7 @@
       "reads": [],
       "retries": 0,
       "kind": "agent.claude",
-      "timeout": 3600,
       "verify_timeout": 600,
-      "max_budget_usd": 5.0,
       "model": "sonnet",
       "remediate": false
     },
@@ -46,9 +44,7 @@
       "reads": [],
       "retries": 0,
       "kind": "agent.claude",
-      "timeout": 3600,
       "verify_timeout": 600,
-      "max_budget_usd": 5.0,
       "model": "sonnet",
       "remediate": false
     }

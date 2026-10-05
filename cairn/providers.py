@@ -27,7 +27,7 @@ from cairn.core import (
     stop_orphans,
 )
 from cairn.hooks import HOOK_VERB, STOP_EVENT
-from cairn.plan.schema import AGENT_REPORT_GRACE, AGENT_RESUME_MARGIN
+from cairn.plan.schema import AGENT_REPORT_GRACE, AGENT_RESUME_MARGIN, HANG_GUARD
 from cairn.protocol import RESUME_FOR_REPORT, STEP_REPORT_SCHEMA, compose_prompt
 from cairn.verify import PROVIDER_PROTOCOL, TIMED_OUT
 
@@ -40,10 +40,9 @@ ProviderRunner = Callable[
         Path,
         str,
         str | None,
-        float | None,
         list[str],
         PopenFactory,
-        float | None,
+        float,
         str | None,
     ],
     CommandResult,
@@ -51,7 +50,7 @@ ProviderRunner = Callable[
 
 
 class Deadline(Exception):
-    """The step's own bound stopped the provider before it gave its result."""
+    """The hang guard stopped the provider before it gave its result."""
 
 
 def _object(value: object, field: str) -> dict[str, Any]:
@@ -71,10 +70,9 @@ def _required(record: dict[str, Any], names: tuple[str, ...]) -> None:
 
 def _parse_lines(
     lines: Iterable[str], *, tee: TextIO | None = None
-) -> tuple[dict[str, Any], list[dict[str, Any]], str | None]:
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     result: dict[str, Any] | None = None
     rate_limits: list[dict[str, Any]] = []
-    api_key_source: str | None = None
     for number, raw_line in enumerate(lines, 1):
         if tee is not None:
             tee.write(raw_line)
@@ -96,9 +94,6 @@ def _parse_lines(
             break
         if message_type == "rate_limit_event":
             rate_limits.append(message)
-        if message_type == "system" and message.get("subtype") == "init":
-            source = message.get("apiKeySource")
-            api_key_source = source if isinstance(source, str) else None
     if result is None:
         raise CairnError("provider_protocol", "stream ended without a result message")
     _required(
@@ -106,12 +101,11 @@ def _parse_lines(
         (
             "subtype",
             "session_id",
-            "total_cost_usd",
             "num_turns",
             "permission_denials",
         ),
     )
-    return result, rate_limits, api_key_source
+    return result, rate_limits
 
 
 def _latest_reset(rate_limits: list[dict[str, Any]]) -> str | None:
@@ -138,7 +132,6 @@ def _translate_result(
     permission_mode: str,
     deny_patterns: list[str],
     model: str | None,
-    api_key_source: str | None,
 ) -> CommandResult:
     structured = result.get("structured_output")
     raw_terminal_reason: object = result.get("terminal_reason")
@@ -147,14 +140,6 @@ def _translate_result(
         "resets_at": _latest_reset(rate_limits),
         "session_id": result["session_id"],
         "generated_session_id": generated_session_id,
-        "total_cost_usd": result["total_cost_usd"],
-        # The stream's init message names what funded the session: "none" is the
-        # subscription login, whose figure is an API-equivalent recollection rather than
-        # money that moved, and any named key is money. A stream that never said is
-        # recorded as money, because the one lie this field must never tell is that real
-        # spend was notional — and the source rides beside it so the record shows its work.
-        "cost_is_notional": api_key_source == "none",
-        "api_key_source": api_key_source,
         "turn_count": result["num_turns"],
         "subtype": result["subtype"],
         "terminal_reason": terminal_reason,
@@ -174,7 +159,6 @@ def _translate_result(
     if process_exit != 0:
         causes: dict[str, str] = {
             "blocking_limit": "rate_limited",
-            "budget_exhausted": "budget_exhausted",
             "max_turns": "turn_limit",
             "structured_output_retry_exhausted": "provider_protocol",
         }
@@ -295,14 +279,14 @@ def _session_in(
     popen_factory: PopenFactory,
     *,
     deadline_seconds: float | None = None,
-) -> tuple[int, dict[str, Any], list[dict[str, Any]], str | None, bool]:
+) -> tuple[int, dict[str, Any], list[dict[str, Any]], bool]:
     """One provider invocation, drained to its result message.
 
     Factored out because a session may have to be opened twice — once for the work and once
     to collect a report it ended a turn without giving ([19 D]) — and the pipe handling here
     is exactly the part that must not be written twice.
 
-    `deadline_seconds` is the step's own bound. A timer stops the provider when it fires,
+    `deadline_seconds` is the hang guard. A timer stops the provider when it fires,
     and the stream then ends without a result, which is reported as `Deadline` rather than
     as a protocol fault: the session did not misbehave, it was stopped ([22 B]). The
     process group is signalled too, because a provider's own children can hold the pipe
@@ -341,12 +325,12 @@ def _session_in(
             target=_send_prompt, args=(process.stdin, prompt), daemon=True
         )
         writer.start()
-        result, rate_limits, api_key_source = _parse_lines(process.stdout, tee=sys.stdout)
+        result, rate_limits = _parse_lines(process.stdout, tee=sys.stdout)
         # The provider has answered, so the bound has nothing left to stop. Cancelled here
         # rather than in `finally`: a timer firing during the exit wait below would stop a
         # session that had already reported, and its negative exit status would be read as
-        # `provider_failed` — discarding paid work over a process that was merely slow to
-        # leave.
+        # `provider_failed` — discarding finished work over a process that was merely slow
+        # to leave.
         if timer is not None:
             timer.cancel()
         process.stdout.close()
@@ -384,14 +368,14 @@ def _session_in(
             process.stdin.close()
         if process.stdout is not None:
             process.stdout.close()
-    return return_code, result, rate_limits, api_key_source, exited_on_its_own
+    return return_code, result, rate_limits, exited_on_its_own
 
 
 def resume_bound_seconds() -> float:
     """How long a resume asking for a report may run.
 
     What is left of the report grace once the two things that must still happen inside it
-    are paid for: stopping the provider, which is the exit grace, and writing the report,
+    are provided for: stopping the provider, which is the exit grace, and writing the report,
     which is the margin. A resume bounded by the margin alone hands the exit wait the whole
     remainder and leaves nothing for the write the engine's own bound is about to land on.
     Read rather than precomputed, so a caller shortening the grace shortens this with it.
@@ -421,7 +405,6 @@ def ended_without_reporting(process_exit: int, result: dict[str, Any]) -> bool:
 # is sometimes `True` and sometimes a sentence, because a person reading the record has to
 # be able to tell a rescue that was declined from one that was tried and did not help.
 RESUME_ATTEMPTED = "attempted"
-RESUME_DECLINED_BUDGET = "declined_budget_exhausted"
 RESUME_FAILED = "resume_failed"
 RESUME_STILL_SILENT = "still_silent"
 
@@ -431,10 +414,10 @@ def _as_float(value: object) -> float:
 
     `bool` is excluded even though it is an `int` subtype, and `NaN`/`inf` are excluded even
     though `float()` accepts them without complaint — both would otherwise fold a malformed
-    provider figure into `both_costs`/`both_turns` as a plausible-looking number, masking the
-    protocol fault this rescue exists to surface rather than reporting it as the zero a
-    genuinely missing figure gets. `int(_as_float(...))` over an unfiltered `NaN` raises
-    `ValueError`, which is worse: it would escape as an unrelated crash rather than a cost.
+    provider figure into `both_turns` as a plausible-looking number, masking the protocol
+    fault this rescue exists to surface rather than reporting it as the zero a genuinely
+    missing figure gets. `int(_as_float(...))` over an unfiltered `NaN` raises `ValueError`,
+    which is worse: it would escape as an unrelated crash.
     """
     if isinstance(value, bool):
         return 0.0
@@ -454,18 +437,17 @@ def run_claude(
     working_directory: Path,
     permission_mode: str,
     model: str | None,
-    budget: float | None,
     tools: list[str],
     popen_factory: PopenFactory = subprocess.Popen,
-    deadline_seconds: float | None = None,
+    deadline_seconds: float = HANG_GUARD,
     resume_session: str | None = None,
 ) -> CommandResult:
     """Run the selected plain-CLI path and translate its two status channels.
 
-    `deadline_seconds` is the step's own bound ([22 B]). A session stopped at it is
-    resumed once, under what is left of the report grace, to ask for the account it owes;
-    a session that has done its work answers in a turn. Either way a report reaches the
-    run directory before the engine's own bound, which lands the grace later.
+    `deadline_seconds` is the hang guard ([22 B]). A session stopped at it is resumed once,
+    under what is left of the report grace, to ask for the account it owes; a session that
+    has done its work answers in a turn. Either way a report reaches the run directory
+    before the engine's own bound, which lands the grace later.
 
     `resume_session` continues an earlier session instead of opening one: a remedy, asked
     to fix what its own step's assertion found, in the tree only that step has touched.
@@ -476,7 +458,7 @@ def run_claude(
     # step back a tool whose contract the session cannot keep.
     denied = [*NEVER_DELIVERED, *tools]
 
-    def invocation(*, budget_usd: float | None, resuming: bool) -> list[str]:
+    def invocation(*, resuming: bool) -> list[str]:
         """The argv for one session — a fresh one, or the same one asked to report.
 
         Exactly one of `--session-id` and `--resume`, never both and never neither, so a
@@ -501,15 +483,13 @@ def run_claude(
         ]
         if model is not None:
             composed.extend(("--model", model))
-        if budget_usd is not None:
-            composed.extend(("--max-budget-usd", str(budget_usd)))
         for pattern in denied:
             composed.extend(("--disallowedTools", pattern))
         return composed
 
     try:
-        return_code, result, rate_limits, api_key_source, exited_on_its_own = _session_in(
-            invocation(budget_usd=budget, resuming=resume_session is not None),
+        return_code, result, rate_limits, exited_on_its_own = _session_in(
+            invocation(resuming=resume_session is not None),
             prompt,
             working_directory,
             popen_factory,
@@ -517,11 +497,11 @@ def run_claude(
         )
     except Deadline:
         return _report_after_deadline(
-            invocation(budget_usd=budget, resuming=True),
+            invocation(resuming=True),
             working_directory,
             popen_factory,
             session_id=session_id,
-            bound_seconds=cast(float, deadline_seconds),
+            bound_seconds=deadline_seconds,
             elapsed_seconds=time.monotonic() - started,
             permission_mode=permission_mode,
             deny_patterns=denied,
@@ -542,115 +522,89 @@ def run_claude(
     if ended_without_reporting(return_code, result):
         # A session that ended a turn without reporting is not a session that failed: it
         # may have done all of the work and simply stopped short of saying so. Measured,
-        # the alternative was discarding $10.89 of work an assertion had just proved.
-        spent = _as_float(result.get("total_cost_usd"))
-        remaining = None if budget is None else round(budget - spent, 6)
-        if remaining is not None and remaining <= 0:
-            # The offer priced one ceiling for this step and a second invocation carrying a
-            # fresh full budget would double the ceiling the person agreed to.
-            rescue = {
-                ENDED_WITHOUT_REPORTING: True,
-                "resumed_for_report": RESUME_DECLINED_BUDGET,
-            }
-        else:
-            # Recorded **before** the attempt. A resume that fails at the protocol level
-            # raises out of `_session_in`, and an account written afterwards would never
-            # reach the report — leaving nobody able to tell a rescue that failed from one
-            # never tried, which is the whole of what this key is for.
-            rescue = {
-                ENDED_WITHOUT_REPORTING: True,
-                "resumed_for_report": RESUME_ATTEMPTED,
-                "abandoned_cost_usd": spent,
-            }
-            # What the first pass is worth saying even if the resume never answers. Its
-            # cost is the figure the record is read for, and it is the money the rescue
-            # exists to protect.
-            first_detail: dict[str, Any] = {
-                "session_id": result.get("session_id"),
-                "total_cost_usd": spent,
-                "turn_count": result.get("num_turns"),
-            }
-            try:
-                (
-                    resumed_code,
-                    resumed,
-                    more_limits,
-                    more_source,
-                    resumed_exited,
-                ) = _session_in(
-                    invocation(budget_usd=remaining, resuming=True),
-                    RESUME_FOR_REPORT,
-                    working_directory,
-                    popen_factory,
-                    # Bounded like the deadline's own resume. This one opens at any point
-                    # in the step, so an unbounded ask for a report could itself outrun the
-                    # engine's bound and leave the step with no report at all — the very
-                    # loss the rescue exists to prevent ([22 B]).
-                    deadline_seconds=resume_bound_seconds(),
-                )
-            except CairnError as unreachable:
-                # The first session's account is now the only one there is, and its cost is
-                # the number the record is read for.
-                #
-                # **The cause is forced to `provider_protocol`, whatever the resume attempt's
-                # own reason was.** The fact this whole branch answers is "the step's session
-                # gave no report" — a resume that never reaches the provider (a launch failure,
-                # a broken pipe) leaves that fact exactly as true as a resume that reports
-                # nothing. Left as `unreachable.cause`, a cause like `process_launch_failed`
-                # would fall past `judge()`'s `provider_protocol` branch into the plain
-                # `reported == "failed"` one, reproducing the false "reported failure over a
-                # passing assertion" divergence this rescue exists to prevent. The original
-                # cause survives in `detail` under `resumed_for_report`/the exception's own
-                # message, so nothing about why the resume failed is lost.
-                unreachable.cause = PROVIDER_PROTOCOL
-                unreachable.detail = {
-                    **unreachable.detail,
-                    **first_detail,
-                    **rescue,
-                    "resumed_for_report": RESUME_FAILED,
-                }
-                raise
-            # A first process that had to be stopped after giving its result is a leak the
-            # record names; the resume's own exit must not erase it.
-            exited_on_its_own = exited_on_its_own and resumed_exited
-            rate_limits = [*rate_limits, *more_limits]
-            api_key_source = more_source or api_key_source
-            # Measured: a resumed session reports its **own invocation's** cost and turns
-            # rather than the session's cumulative totals (0.0168 then 0.0031 over two
-            # passes of one session), so a step's spend is the sum of the two.
-            # Both passes are one step's spend and one step's turns, whichever result is
-            # kept below — a record naming only one of them under-reports what was spent.
-            both_costs = spent + _as_float(resumed.get("total_cost_usd"))
-            both_turns = int(_as_float(result.get("num_turns"))) + int(
-                _as_float(resumed.get("num_turns"))
+        # the alternative was discarding four commits of work an assertion had just proved.
+        #
+        # Recorded **before** the attempt. A resume that fails at the protocol level raises
+        # out of `_session_in`, and an account written afterwards would never reach the
+        # report — leaving nobody able to tell a rescue that failed from one never tried,
+        # which is the whole of what this key is for.
+        rescue = {
+            ENDED_WITHOUT_REPORTING: True,
+            "resumed_for_report": RESUME_ATTEMPTED,
+        }
+        # What the first pass is worth saying even if the resume never answers.
+        first_detail: dict[str, Any] = {
+            "session_id": result.get("session_id"),
+            "turn_count": result.get("num_turns"),
+        }
+        try:
+            (
+                resumed_code,
+                resumed,
+                more_limits,
+                resumed_exited,
+            ) = _session_in(
+                invocation(resuming=True),
+                RESUME_FOR_REPORT,
+                working_directory,
+                popen_factory,
+                # Bounded like the deadline's own resume. This one opens at any point
+                # in the step, so an unbounded ask for a report could itself outrun the
+                # engine's bound and leave the step with no report at all — the very
+                # loss the rescue exists to prevent ([22 B]).
+                deadline_seconds=resume_bound_seconds(),
             )
-            # Every denial the step met, not only the resume's — a first session walled by
-            # a permission is a plausible reason it stopped short of reporting.
-            both_denials = [
-                *_as_list(result.get("permission_denials")),
-                *_as_list(resumed.get("permission_denials")),
-            ]
-            if resumed.get("structured_output") is None:
-                # The resume did not report either. Keep the **first** pass's result, so
-                # the step is still recorded `provider_protocol` rather than taking on
-                # whatever ended the resume — a budget exhausted a cent short, or a rate
-                # limit, would otherwise be read by the gate as a step that reported
-                # failure, which is the exact sentence this cause exists to remove.
-                result["total_cost_usd"] = both_costs
-                result["num_turns"] = both_turns
-                result["permission_denials"] = both_denials
-                # Nothing survived either pass, so the whole of the step's spend is what
-                # was abandoned — not only the first pass's share of it.
-                rescue = {
-                    **rescue,
-                    "resumed_for_report": RESUME_STILL_SILENT,
-                    "abandoned_cost_usd": both_costs,
-                }
-            else:
-                resumed["total_cost_usd"] = both_costs
-                resumed["num_turns"] = both_turns
-                resumed["permission_denials"] = both_denials
-                return_code, result = resumed_code, resumed
+        except CairnError as unreachable:
+            # The first session's account is now the only one there is.
+            #
+            # **The cause is forced to `provider_protocol`, whatever the resume attempt's
+            # own reason was.** The fact this whole branch answers is "the step's session
+            # gave no report" — a resume that never reaches the provider (a launch failure,
+            # a broken pipe) leaves that fact exactly as true as a resume that reports
+            # nothing. Left as `unreachable.cause`, a cause like `process_launch_failed`
+            # would fall past `judge()`'s `provider_protocol` branch into the plain
+            # `reported == "failed"` one, reproducing the false "reported failure over a
+            # passing assertion" divergence this rescue exists to prevent. The original
+            # cause survives in `detail` under `resumed_for_report`/the exception's own
+            # message, so nothing about why the resume failed is lost.
+            unreachable.cause = PROVIDER_PROTOCOL
+            unreachable.detail = {
+                **unreachable.detail,
+                **first_detail,
+                **rescue,
+                "resumed_for_report": RESUME_FAILED,
+            }
+            raise
+        # A first process that had to be stopped after giving its result is a leak the
+        # record names; the resume's own exit must not erase it.
+        exited_on_its_own = exited_on_its_own and resumed_exited
+        rate_limits = [*rate_limits, *more_limits]
+        # Measured: a resumed session reports its **own invocation's** turns rather than
+        # the session's cumulative total (two passes of one session reported separately),
+        # so a step's turns are the sum of the two. Both passes are one step's turns,
+        # whichever result is kept below.
+        both_turns = int(_as_float(result.get("num_turns"))) + int(
+            _as_float(resumed.get("num_turns"))
+        )
+        # Every denial the step met, not only the resume's — a first session walled by
+        # a permission is a plausible reason it stopped short of reporting.
+        both_denials = [
+            *_as_list(result.get("permission_denials")),
+            *_as_list(resumed.get("permission_denials")),
+        ]
+        if resumed.get("structured_output") is None:
+            # The resume did not report either. Keep the **first** pass's result, so
+            # the step is still recorded `provider_protocol` rather than taking on
+            # whatever ended the resume — a rate limit would otherwise be read by the
+            # gate as a step that reported failure, which is the exact sentence this
+            # cause exists to remove.
+            result["num_turns"] = both_turns
+            result["permission_denials"] = both_denials
+            rescue = {**rescue, "resumed_for_report": RESUME_STILL_SILENT}
+        else:
+            resumed["num_turns"] = both_turns
+            resumed["permission_denials"] = both_denials
+            return_code, result = resumed_code, resumed
 
     try:
         translated = _translate_result(
@@ -661,7 +615,6 @@ def run_claude(
             permission_mode=permission_mode,
             deny_patterns=denied,
             model=model,
-            api_key_source=api_key_source,
         )
     except CairnError as unreported:
         # The rescue's own account has to survive the failure it was trying to prevent:
@@ -687,17 +640,12 @@ def _report_after_deadline(
     deny_patterns: list[str],
     model: str | None,
 ) -> CommandResult:
-    """The one resume a session stopped at its bound is given, and what it comes to.
+    """The one resume a session stopped by the hang guard is given, and what it comes to.
 
-    The first pass gave no result message, so what it spent is unknown — a killed stream
-    carries no figure — and the resume therefore carries the step's **whole** ceiling
-    again rather than a remainder nobody can compute. That is a ceiling a stopped step can
-    exceed, and the offer says so in the sentence it prices the run with, because a run
-    whose stated ceiling is quietly wrong is worse than one whose ceiling is honest
-    ([skill/vocabulary.py]). Time is what bounds it instead: the resume runs under what is
-    left of the report grace. A resumed session that reports is recorded as it reported,
-    with the bound and the elapsed time beside it; one that does not is the step stopped at
-    its bound, with the session id and whatever the resume cost.
+    The first pass gave no result message, so the resume opens the same session again and
+    time is what bounds it: what is left of the report grace. A resumed session that reports
+    is recorded as it reported, with the bound and the elapsed time beside it; one that does
+    not is the step stopped by the hang guard, with the session id beside it.
     """
     stopped: dict[str, Any] = {
         "timed_out": True,
@@ -715,7 +663,7 @@ def _report_after_deadline(
         return CommandResult(
             EXIT_FAILED,
             "failed",
-            f"the session was stopped at its {bound_seconds:g} s bound and gave no report",
+            "stopped by the hang guard, and gave no report",
             [],
             False,
             TIMED_OUT,
@@ -723,7 +671,7 @@ def _report_after_deadline(
         )
 
     try:
-        return_code, resumed, rate_limits, api_key_source, _ = _session_in(
+        return_code, resumed, rate_limits, _ = _session_in(
             resume,
             RESUME_FOR_REPORT,
             working_directory,
@@ -734,12 +682,7 @@ def _report_after_deadline(
         return silence(RESUME_STILL_SILENT, {})
     except CairnError as unreachable:
         return silence(RESUME_FAILED, unreachable.detail)
-    account = {
-        "total_cost_usd": _as_float(resumed.get("total_cost_usd")),
-        "turn_count": int(_as_float(resumed.get("num_turns"))),
-        "cost_is_notional": api_key_source == "none",
-        "api_key_source": api_key_source,
-    }
+    account = {"turn_count": int(_as_float(resumed.get("num_turns")))}
     if resumed.get("structured_output") is None:
         return silence(RESUME_STILL_SILENT, account)
     try:
@@ -751,7 +694,6 @@ def _report_after_deadline(
             permission_mode=permission_mode,
             deny_patterns=deny_patterns,
             model=model,
-            api_key_source=api_key_source,
         )
     except CairnError as unreadable:
         return silence(RESUME_FAILED, {**account, **unreadable.detail})
@@ -783,14 +725,19 @@ def run_provider(
     working_directory: Path,
     permission_mode: str,
     model: str | None,
-    budget: float | None,
     tools: list[str],
     *,
     runners: dict[str, ProviderRunner] = PROVIDER_RUNNERS,
     popen_factory: PopenFactory = subprocess.Popen,
-    deadline_seconds: float | None = None,
+    deadline_seconds: float = HANG_GUARD,
     resume_session: str | None = None,
 ) -> CommandResult:
+    """Open one session under the hang guard.
+
+    The guard is Cairn's own constant and no caller chooses it: this is the one place a
+    session's deadline is applied, so every session in every run is stopped by the same
+    one.
+    """
     try:
         runner = runners[provider]
     except KeyError as exc:
@@ -800,7 +747,6 @@ def run_provider(
         working_directory,
         permission_mode,
         model,
-        budget,
         tools,
         popen_factory,
         deadline_seconds,

@@ -62,7 +62,7 @@ class Stated(NamedTuple):
     wrong in the same way.
 
     `label` is what makes it a binding rather than a bag of values. A rendering that shifted
-    every value one row against its labels — a cost against the turns, a session against the
+    every value one row against its labels — the turns against the commit, a session against the
     model — states every fact correctly and answers a different question about each one, and
     a log without the label cannot tell that from a correct document.
     """

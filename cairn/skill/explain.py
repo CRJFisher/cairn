@@ -136,7 +136,6 @@ class StepAccount(NamedTuple):
     subcommand: tuple[str, ...]
     working_directory: str | None
     depends: tuple[str, ...]
-    timeout_seconds: int | None
     assertion: str | None
 
 
@@ -219,7 +218,6 @@ def would_do(workflow: Path, plan: str | None = None) -> WouldDo:
             agents += 1
         naming = _named(node)
         depends = step.get("depends")
-        timeout = step.get("timeout_sec")
         working = step.get("working_dir")
         accounts.append(
             StepAccount(
@@ -231,7 +229,6 @@ def would_do(workflow: Path, plan: str | None = None) -> WouldDo:
                 depends=tuple(str(name) for name in cast(list[Any], depends))
                 if isinstance(depends, list)
                 else (),
-                timeout_seconds=timeout if isinstance(timeout, int) else None,
                 assertion=body if naming.role == "verify" and isinstance(body, str) else None,
             )
         )

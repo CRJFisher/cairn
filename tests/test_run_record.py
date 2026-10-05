@@ -78,7 +78,6 @@ from cairn.text import (
     LINE_LIMIT,
     TEXT_LIMIT,
     as_count,
-    as_money,
     flatten,
     normalise,
     normalise_all,
@@ -179,7 +178,6 @@ class TheVocabularyIsFrozen(unittest.TestCase):
                 "blocked",
                 "failure",
                 "excluded",
-                "budget",
                 "housekeeping_failure",
                 "divergence",
                 "follow_up",
@@ -521,7 +519,7 @@ class ARunIsReadableWithNothingRunning(unittest.TestCase):
         record = record_of("crashed")
         killed = record["steps"][0]
         self.assertEqual(killed["cause"], ORCHESTRATOR_DIED)
-        for field in ("finished_at", "exit_code", "cost_usd", "turns", "session_id"):
+        for field in ("finished_at", "exit_code", "turns", "session_id"):
             with self.subTest(field=field):
                 self.assertIsNone(killed[field])
                 self.assertEqual(killed["provenance"][field], PROVENANCE_ABSENT)
@@ -806,7 +804,6 @@ class EveryAbsentFieldCarriesProvenance(unittest.TestCase):
             found.append((f"node {node['name']}", cast(dict[str, Any], node)))
         for item in record["infrastructure"]:
             found.append((f"infra {item['name']}", cast(dict[str, Any], item)))
-        found.append(("budget", cast(dict[str, Any], record["budget"])))
         found.append(("git", cast(dict[str, Any], record["git"])))
         found.append(("trigger", cast(dict[str, Any], record["trigger"])))
         found.append(("lineage", cast(dict[str, Any], record["lineage"])))
@@ -909,12 +906,12 @@ class TheExitCodeIsItsOwnContract(unittest.TestCase):
 class TheNextCommandWorksWhenItIsPasted(unittest.TestCase):
     """A command that fails when pasted is worse than a report that carries none.
 
-    The command is the skill's own recovery offer and never `dagu retry`, which SKILL.md
+    The command is the skill's own recovery start and never `dagu retry`, which SKILL.md
     refuses outright: re-running a plan is the whole recovery story, and a continued
-    occasion is what makes it cheap.
+    occasion keeps it short.
     """
 
-    def test_the_rerun_carries_the_recovery_offer_for_this_run(self) -> None:
+    def test_the_rerun_carries_the_recovery_start_for_this_run(self) -> None:
         record = record_of("red")
         command = record["next_action"]["command"]
         assert command is not None
@@ -925,7 +922,7 @@ class TheNextCommandWorksWhenItIsPasted(unittest.TestCase):
                 "-m",
                 "cairn",
                 "run",
-                "offer",
+                "start",
                 "--plan",
                 record["plan"],
                 "--repository",
@@ -1077,7 +1074,7 @@ class TheHeadlineNamesTheFault(unittest.TestCase):
         }
         reports["remedy_b"] = {
             **common, "step_id": "remedy_b", "status": "done", "summary": "fixed the parser",
-            "detail": {"total_cost_usd": 0.5, "resumed_session": "session-7"},
+            "detail": {"resumed_session": "session-7"},
         }
         reports["recheck_b"] = {
             **common, "step_id": "recheck_b", "status": "failed", "summary": "exited 3",
@@ -1090,7 +1087,6 @@ class TheHeadlineNamesTheFault(unittest.TestCase):
             {
                 "status": "done",
                 "said": "fixed the parser",
-                "cost_usd": 0.5,
                 "first_exit": 1,
                 "resumed_session": "session-7",
             },
@@ -1100,8 +1096,6 @@ class TheHeadlineNamesTheFault(unittest.TestCase):
         self.assertIsNone(
             next(s for s in unremedied["steps"] if s["step_id"] == "b")["remedy"]
         )
-        before = unremedied["budget"]["cost_usd"] or 0.0
-        self.assertAlmostEqual((record["budget"]["cost_usd"] or 0.0) - before, 0.5)
 
     def test_a_remedied_steps_tail_follows_the_recheck_not_the_remedied_failure(
         self,
@@ -1131,7 +1125,7 @@ class TheHeadlineNamesTheFault(unittest.TestCase):
             }
             reports["remedy_b"] = {
                 **common, "step_id": "remedy_b", "status": "done", "summary": "fixed it",
-                "detail": {"total_cost_usd": 0.5, "resumed_session": "session-7"},
+                "detail": {"resumed_session": "session-7"},
             }
             reports["recheck_b"] = {
                 **common, "step_id": "recheck_b", "status": "failed", "summary": "exited 3",
@@ -1165,7 +1159,7 @@ class TheHeadlineNamesTheFault(unittest.TestCase):
             }
             reports["remedy_b"] = {
                 **common, "step_id": "remedy_b", "status": "done", "summary": "fixed it",
-                "detail": {"total_cost_usd": 0.5, "resumed_session": "session-7"},
+                "detail": {"resumed_session": "session-7"},
             }
             reports["recheck_b"] = {
                 **common, "step_id": "recheck_b", "status": "done", "summary": "exited 0",
@@ -1503,13 +1497,6 @@ class UntrustedTextIsNormalisedOnceAndEscapedNowhere(unittest.TestCase):
         """An escape is a property of where text is going, so it belongs at the sink."""
         self.assertEqual(normalise("<script>&amp;"), "<script>&amp;")
 
-    def test_a_cost_that_is_not_a_finite_number_is_absent_rather_than_zero(self) -> None:
-        """`NaN` is a legal float and is not legal JSON; one would cost every reader the record."""
-        for value in (float("nan"), float("inf"), -1.0, "3.00", True, None):
-            with self.subTest(value=value):
-                self.assertIsNone(as_money(value))
-        self.assertEqual(as_money(3), 3.0)
-
     def test_a_count_that_is_not_a_whole_number_is_absent(self) -> None:
         for value in (-1, 1.5, "2", True, None):
             with self.subTest(value=value):
@@ -1522,9 +1509,9 @@ class UntrustedTextIsNormalisedOnceAndEscapedNowhere(unittest.TestCase):
 
 
 class ARealAgentStepsReceiptsAreCarried(unittest.TestCase):
-    """The `agent` fixture is a real paid run, and it is the only one that can prove this.
+    """The `agent` fixture is a real agent run, and it is the only one that can prove this.
 
-    Every other recorded shape is a command step, so cost, turns, session identity and a
+    Every other recorded shape is a command step, so turns, session identity and a
     resume command can only ever appear there as absent. Proving the populated half against
     a synthesised report would be proving Cairn's reading of a file Cairn wrote; this reads
     what a real provider actually returned.
@@ -1534,19 +1521,7 @@ class ARealAgentStepsReceiptsAreCarried(unittest.TestCase):
         self.record = record_of("agent")
         self.step = self.record["steps"][0]
 
-    def test_a_paid_step_carries_what_it_cost(self) -> None:
-        cost = self.step["cost_usd"]
-        self.assertIsNotNone(cost)
-        self.assertGreater(cast(float, cost), 0)
-        self.assertNotEqual(
-            self.step["provenance"].get("cost_usd"), PROVENANCE_ABSENT
-        )
-        self.assertTrue(
-            self.step["cost_is_notional"],
-            "a subscription login prices an API equivalent, and the record must say so",
-        )
-
-    def test_a_paid_step_carries_the_session_a_person_can_reopen(self) -> None:
+    def test_an_agent_step_carries_the_session_a_person_can_reopen(self) -> None:
         session = cast(str, self.step["session_id"])
         self.assertTrue(session)
         resume = cast(str, self.step["resume_command"])
@@ -1554,17 +1529,10 @@ class ARealAgentStepsReceiptsAreCarried(unittest.TestCase):
         self.assertIn("--resume", resume)
         self.assertIsNotNone(self.step["transcript"])
 
-    def test_a_paid_step_carries_its_turns_and_its_own_account(self) -> None:
+    def test_an_agent_step_carries_its_turns_and_its_own_account(self) -> None:
         self.assertIsNotNone(self.step["turns"])
         self.assertGreater(cast(int, self.step["turns"]), 0)
         self.assertTrue(self.step["said"])
-
-    def test_the_run_totals_what_it_spent_and_flags_it_as_notional(self) -> None:
-        budget = self.record["budget"]
-        self.assertEqual(budget["cost_usd"], self.step["cost_usd"])
-        self.assertTrue(budget["notional"])
-        self.assertEqual(budget["priced_steps"], 1)
-        self.assertIn("budget", [item["kind"] for item in self.record["attention"]])
 
     def test_the_step_carries_what_its_commit_changed(self) -> None:
         self.assertTrue(self.step["commit"])
@@ -1586,10 +1554,10 @@ class ARealAgentStepsReceiptsAreCarried(unittest.TestCase):
 class AnAgentStepsReceiptsReachTheRecord(unittest.TestCase):
     """What no cheap real run produces: a divergence, a branch, and reported follow-up work.
 
-    The `agent` fixture supplies the receipts from a run that really paid for them. These
-    three need a step to disagree with its own assertion, to stand on a branch, or to find
-    work it declined to do — none of which a one-step green run does, and none of which is
-    worth paying an agent to stage.
+    The `agent` fixture supplies the receipts from a real run. These three need a step to
+    disagree with its own assertion, to stand on a branch, or to find work it declined to
+    do — none of which a one-step green run does, and none of which is worth staging with
+    a live agent.
     """
 
     def setUp(self) -> None:
@@ -1602,8 +1570,6 @@ class AnAgentStepsReceiptsReachTheRecord(unittest.TestCase):
             "follow_up_work": ["the migration still needs a backfill"],
             "detail": {
                 "session_id": "c44c6f6b-88da-4178-8d75-499c7c1d2f94",
-                "total_cost_usd": 0.25,
-                "cost_is_notional": True,
                 "turn_count": 7,
                 "model": "opus-4",
             },
@@ -1627,8 +1593,6 @@ class AnAgentStepsReceiptsReachTheRecord(unittest.TestCase):
         self.step = extract(self.state, self.reports, run_id=self.run_id)["steps"][0]
 
     def test_the_receipts_a_person_needs_to_open_the_session_are_all_there(self) -> None:
-        self.assertEqual(self.step["cost_usd"], 0.25)
-        self.assertTrue(self.step["cost_is_notional"])
         self.assertEqual(self.step["turns"], 7)
         self.assertEqual(self.step["session_id"], "c44c6f6b-88da-4178-8d75-499c7c1d2f94")
         self.assertEqual(self.step["model"], "opus-4")
@@ -1638,7 +1602,7 @@ class AnAgentStepsReceiptsReachTheRecord(unittest.TestCase):
         self.assertIn("--resume", resume)
 
     def test_a_populated_field_is_never_marked_absent(self) -> None:
-        for field in ("cost_usd", "turns", "session_id", "model", "resume_command"):
+        for field in ("turns", "session_id", "model", "resume_command"):
             with self.subTest(field=field):
                 self.assertNotEqual(
                     self.step["provenance"].get(field), PROVENANCE_ABSENT
@@ -1665,15 +1629,6 @@ class AnAgentStepsReceiptsReachTheRecord(unittest.TestCase):
         self.assertIn(OVERLAY_DIVERGENCE, self.step["overlays"])
         self.assertEqual(self.step["position"], "branch")
 
-    def test_the_run_totals_the_spend_it_can_see_and_says_it_is_notional(self) -> None:
-        record = extract(self.state, self.reports, run_id=self.run_id)
-        self.assertEqual(record["budget"]["cost_usd"], 0.25)
-        self.assertTrue(record["budget"]["notional"])
-        self.assertEqual(record["budget"]["turns"], 7)
-        self.assertEqual(record["budget"]["priced_steps"], 1)
-        self.assertEqual(record["budget"]["unpriced_steps"], 1)
-        self.assertIn("budget", [item["kind"] for item in record["attention"]])
-
     def test_the_follow_up_work_a_step_reported_becomes_an_attention_item(self) -> None:
         record = extract(self.state, self.reports, run_id=self.run_id)
         follow_ups = [
@@ -1684,7 +1639,6 @@ class AnAgentStepsReceiptsReachTheRecord(unittest.TestCase):
 
     def test_every_receipt_reaches_the_projection(self) -> None:
         facts = as_mapping(extract(self.state, self.reports, run_id=self.run_id))
-        self.assertEqual(facts["step.alpha.cost_usd"], "0.2500")
         self.assertEqual(facts["step.alpha.turns"], "7")
         self.assertEqual(facts["step.alpha.diffstat"], "2 files +8 -1")
         self.assertNotEqual(facts["step.alpha.resume_command"], ABSENT)
@@ -1720,7 +1674,6 @@ class TheProjectionIsTheDriftOracle(unittest.TestCase):
     def test_an_absent_fact_projects_as_absent_and_never_as_a_zero(self) -> None:
         facts = as_mapping(record_of("green"))
         self.assertEqual(facts["run.actor"], ABSENT)
-        self.assertEqual(facts["budget.cost_usd"], ABSENT)
 
     def test_the_projection_carries_no_presentation(self) -> None:
         forbidden = re.compile(r"colou?r|icon|emoji|width|markdown|html|indent")
@@ -1872,7 +1825,7 @@ class TheStepsOwnAccountIsTheRicherSource(unittest.TestCase):
         directory = CORPUS / "green" / "reports"
         self.assertEqual(read_reports(directory, "some-other-run"), {})
 
-    def test_a_report_that_cannot_be_parsed_costs_its_own_step_and_nothing_more(self) -> None:
+    def test_a_report_that_cannot_be_parsed_fails_its_own_step_and_nothing_more(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             for source in (CORPUS / "green" / "reports").glob("*.json"):

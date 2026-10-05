@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "mixed-kinds",
-    "cairn_generator": "8",
+    "cairn_generator": "9",
     "cairn_engine": "2.11.0",
-    "cairn_graph_sha256": "c2e357a3dd5c145d3eac41c45025a156dd07ad0ec261c6c65f12e70f7db7b326",
-    "cairn_body_sha256": "f0ec974e7a75e789f670fd7ea97f23525aa24d99a450cabb63ab7c4a0f2fad8a"
+    "cairn_graph_sha256": "ee127ac9bd22312901a2259efa1b8f8c19411ebee39dc7da551e6952006c9ac6",
+    "cairn_body_sha256": "454fc1ac39b31ef76abc7d809b4e4496416fb0687a02fa75b4496d16ca05d99e"
   },
   "params": [
     {
@@ -54,17 +54,17 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn lock acquire --plan mixed-kinds --run-timeout 15495"
+      "run": "python3 -m cairn lock acquire --plan mixed-kinds --run-timeout 49995"
     },
     {
       "name": "work_refresh_the_corpus",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 7380,
+      "timeout_sec": 14580,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `data/corpus/` to a state where it mirrors the current contents of the source bucket.' --model opus --max-budget-usd 8.0 --timeout 7200 --tool 'Bash(rm:*)'",
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `data/corpus/` to a state where it mirrors the current contents of the source bucket.' --model opus --tool 'Bash(rm:*)'",
       "preconditions": [
         {
           "condition": "python3 -m cairn marker absent --step refresh_the_corpus --scope weekly"
@@ -135,7 +135,7 @@
     {
       "name": "work_rebuild_the_index",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 600,
+      "timeout_sec": 14400,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
@@ -211,12 +211,12 @@
     {
       "name": "work_wait_for_the_index_to_settle",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 915,
+      "timeout_sec": 14415,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn wait --until 'bin/index-status --quiet' --timeout 900",
+      "run": "python3 -m cairn wait --until 'bin/index-status --quiet' --timeout 14400",
       "preconditions": [
         {
           "condition": "python3 -m cairn marker absent --step wait_for_the_index_to_settle --scope run"

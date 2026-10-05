@@ -79,7 +79,7 @@ SECTIONS: tuple[Question, ...] = (
         SECTION_RECEIPTS,
         "Receipts",
         "what are the receipts",
-        "No step reported a cost, a session or a transcript.",
+        "No step reported a session or a transcript.",
     ),
 )
 
@@ -95,13 +95,11 @@ TONE_PLAIN = "plain"
 # How a fact becomes text. The rule is declared at the leaf and applied by whichever sink is
 # rendering, so all three spell one fact one way and the oracle can assert they did.
 RULE_VALUE = "value"
-RULE_MONEY = "money"
 RULE_ACTOR = "actor"
 RULE_LINK = "link"
 RULE_ASSERTION = "assertion"
 RULES: tuple[str, ...] = (
     RULE_VALUE,
-    RULE_MONEY,
     RULE_ACTOR,
     RULE_LINK,
     RULE_ASSERTION,
@@ -121,9 +119,8 @@ class Fact(NamedTuple):
     through the one function that also logs it. That log is what makes "every rendering
     agrees with the projection" an assertion rather than a hope.
 
-    `keys` is a tuple because one shown string can rest on more than one fact — a cost and
-    whether it is notional are one sentence, and a rendering that could drop half of it would
-    be reporting money the run never spent.
+    `keys` is a tuple because one shown string can rest on more than one fact, and a rendering
+    that could drop half of it would be reporting something the record does not say.
     """
 
     keys: tuple[str, ...]
@@ -293,7 +290,6 @@ __all__ = [
     "RULE_ACTOR",
     "RULE_ASSERTION",
     "RULE_LINK",
-    "RULE_MONEY",
     "RULE_VALUE",
     "SECTIONS",
     "SECTION_ATTENTION",

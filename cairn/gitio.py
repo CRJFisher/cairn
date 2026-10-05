@@ -45,7 +45,7 @@ REDIRECTING_VARIABLES = (
 # Agents commit in their own worktrees while Cairn writes refs in the same repository, and
 # the write mutex deliberately does not cover them. git gives up after 100ms on a loose ref
 # and 1s on packed-refs; waiting instead turns a collision into a pause rather than a
-# spurious failure inside a paid step.
+# spurious failure inside an agent step.
 REF_LOCK_TIMEOUT_MILLISECONDS = 3000
 LOCK_CONFIGURATION = (
     "-c",
@@ -414,7 +414,7 @@ def tree_entries(
     Read NUL-terminated and with renames off, so a path holding a space, a quote or a byte
     outside ASCII is one entry rather than a line `line[3:]` would cut short, and a rename
     is two paths rather than one entry carrying an arrow. Two pairs of readers ask two
-    questions of this: the pre-spend refusal and the run's own both ask whether a tree is
+    questions of this: the pre-start refusal and the run's own both ask whether a tree is
     clean at all, and read `normal` so they refuse the same trees; the work step's snapshot
     and the commit that subtracts it both ask which paths that session dirtied, and read
     `all` so they subtract the same paths ([21]).

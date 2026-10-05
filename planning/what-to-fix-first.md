@@ -40,11 +40,10 @@ Build the correction to [21](21-commit-scope.md) together with
 This precedes further dogfood because each defect can write another plan's work, skip work absent
 from `HEAD`, or continue writing after another run acquired the repository.
 
-### 2 — Admit and bound exactly what will execute
+### 2 — Admit exactly what will execute
 
-[25](25-execution-admission-and-paid-bounds.md) re-gates the exact workflow bytes at offer,
-start, and schedule boundaries; validates finite positive bounds and disabled retries; prices
-and internally bounds merge-resolution sessions; and gives daemon consent a persisted offer.
+[25](25-execution-admission-and-paid-bounds.md) re-gates the exact workflow bytes at start
+and schedule boundaries.
 
 This comes before authoring improvements because a perfectly reviewed graph is not protection if
 the published workflow can change afterwards and still run.
@@ -65,8 +64,8 @@ can repair a green verdict derived from malformed evidence.
 ### 5 — Finish the original record and runtime repairs
 
 Complete the remaining internally ordered work from 22–24 below: liveness, timeout
-classification, next-action ranking, skipped downstream assertions, and paid-session deadline
-coverage. Merge-resolution deadlines are owned by 25 and tested with 22's protocol.
+classification, next-action ranking, skipped downstream assertions, and session deadline
+coverage. Merge-resolution deadlines are tested with 22's protocol.
 
 ### 6 — Close first-use and authoring friction
 
@@ -99,7 +98,7 @@ what one change teaches the next.
 
 ### 1 — Liveness is three values, not two ([23 A](23-reading-a-broken-run.md))
 
-First, and on its own: it is the only fault here that tells a person to spend money undoing a
+First, and on its own: it is the only fault here that tells a person to redo a
 run that is working. `cairn report` from a sandboxed shell answers **failed**, every unfinished
 step `orchestrator_died`, next action `rerun` — over a run that is mid-`work` and goes on to
 verify and commit. The trigger is the ordinary usage mode, because Cairn is driven from inside a
@@ -170,7 +169,7 @@ modules. The template is already in the tree — `cairn wait` carries `--timeout
 and `timeout_sec = bound + WAIT_REPORT_GRACE` on the engine step (`cairn/emitters.py:84-91`).
 
 It ranks last because 22 A already makes the record honest about a killed step. 22 B is what
-makes the step's report exist at all, and its value is partly pre-paid by step 2.
+makes the step's report exist at all, and its value is partly delivered by step 2.
 
 ## The one call worth reversing
 
@@ -190,8 +189,8 @@ answer took none: it is a sentence beside `retries`.
 - **May a verify retry once?** ([24 C](24-recovery-economics.md)) **No.** The engine records
   no per-node retry count, so a retried pass would read exactly like a first-try pass in the
   run record; the remedy for an assertion that flakes is the plan stating one that does not.
-  Recorded beside `retries` in [plan-contract.md](../docs/plan-contract.md), with the price
-  24 A puts on leaving a flaky assertion in: one shared proof closes every gate quoting it.
+  Recorded beside `retries` in [plan-contract.md](../docs/plan-contract.md), with what
+  24 A says leaving a flaky assertion in does: one shared proof closes every gate quoting it.
 - **Does a non-default timeout carry its evidence, the way an edge does?**
   ([22](22-timed-out-step.md)) **It warns.** A timeout that differs from the kind's default is
   a warning on the parse report naming the step and the bound, because nothing quotes the

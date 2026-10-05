@@ -12,13 +12,13 @@ defer its own completion survive that and one does not:
 | `Bash` with `run_in_background`          | **the process exits with the shell still running**              |
 
 The last is the leak, and it is the one that cannot be closed by denying a tool: denying
-`Bash` denies the step its work, and denying the *argument* would cost a step its concurrent
+`Bash` denies the step its work, and denying the *argument* would take from a step its concurrent
 shells — which is a capability the plan may need and which the other three prove is
-affordable. So it is closed here instead, at the moment the turn tries to end.
+safe to leave. So it is closed here instead, at the moment the turn tries to end.
 
 **This hook fails open, which is the exact inverse of the verify gate.** The gate closes on
 every fault because a marker over unverified work reaches git and rides every merge. This
-one holds a paid session open, so a fault in it spends money in a loop — and it protects
+one holds a session open, so a fault in it loops — and it protects
 nothing durable, because a session that ends without reporting is still caught by the
 resume ([providers.py]) and still refused by the gate. Nothing in Cairn may depend on the
 hook having run.

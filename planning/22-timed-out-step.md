@@ -31,44 +31,42 @@ The fact that distinguishes the two cases is already in the record. `record/extr
 
 ## B — The session has no bound of its own, so the engine's kill is the only one, and nothing survives it
 
-**Today.** `emit_agent` in `cairn/emitters.py` writes the session's model, ceiling and tool denials into its body and no timeout: the only bound on an agent step is the engine's `timeout_sec`. `cairn wait` is already emitted the other way — `--timeout <bound>` inside the body and `timeout_sec = bound + WAIT_REPORT_GRACE` on the engine step — so its own deadline fires first, inside the process, with headroom to say what happened.
+**Today.** `emit_agent` in `cairn/emitters.py` writes the session's model and tool denials into its body and no timeout: the only bound on an agent step is the engine's `timeout_sec`. `cairn wait` is already emitted the other way — `--timeout <bound>` inside the body and `timeout_sec = bound + WAIT_REPORT_GRACE` on the engine step — so its own deadline fires first, inside the process, with headroom to say what happened.
 
 The cancel path exists and is correct: `cancel_on_termination` turns a `SIGTERM` into `Cancelled`, `_dispatch` turns that into a `cancelled` report, and the write runs under `survive_termination`; `stop_child` gives the provider half a second before killing it. It was never reached. Whether the engine sent `SIGTERM` and then killed the group at its `max_clean_up_time_sec: 5`, or killed the group outright, is not established by the measurements above, and the change does not depend on which.
 
-**The change.** An agent step carries its own bound the way a wait does: `agent run --timeout <step.timeout>`, and an engine `timeout_sec` of `step.timeout + AGENT_REPORT_GRACE`. At the deadline the wrapper stops the provider, then does the one thing [19 §D](19-start-friction.md) built the machinery for: resumes the session once, under the remaining headroom and whatever is left of the step's ceiling, to ask for its report — a session that has committed its work and ticked its criteria answers that in a turn. Either way the wrapper writes a report before the engine's bound: `done` with the resumed session's account, or `timed_out` with the session id, turns and cost. The offer's sentence — _every step is killed at its own written timeout_ — stays true; what changes is who does the killing, and whether a record survives it.
+**The change.** An agent step carries its own bound the way a wait does: the wrapper's own deadline, the hang guard, and an engine `timeout_sec` of `HANG_GUARD + AGENT_REPORT_GRACE`. At the deadline the wrapper stops the provider, then does the one thing [19 §D](19-start-friction.md) built the machinery for: resumes the session once, under the remaining headroom, to ask for its report — a session that has committed its work and ticked its criteria answers that in a turn. Either way the wrapper writes a report before the engine's bound: `done` with the resumed session's account, or `timed_out` with the session id and turns. What changes is who does the killing, and whether a record survives it.
 
-**What must not change.** The priced bound is the bound. A session that would run past it is still stopped there; the grace is for the report, not for the work.
+**What must not change.** The hang guard is the bound. A session that would run past it is still stopped there; the grace is for the report, not for the work.
 
-**Touches.** `cairn/emitters.py` (`emit_agent`), `cairn/__main__.py` (`_agent`, the `agent run` parser), `cairn/providers.py` (`run_provider` under a deadline; the resume), `cairn/core.py`, `docs/step-kinds.md`, `docs/plan-contract.md` (the `timeout` paragraph), `tests/test_step_kinds.py`, `tests/test_providers.py`.
+**Touches.** `cairn/emitters.py` (`emit_agent`), `cairn/__main__.py` (`_agent`, the `agent run` parser), `cairn/providers.py` (`run_provider` under a deadline; the resume), `cairn/core.py`, `docs/step-kinds.md`, `tests/test_step_kinds.py`, `tests/test_providers.py`.
 
-## C — Recovery re-pays for work that landed and was asserted
+## C — Recovery re-runs work that landed and was asserted
 
-**Today.** Only the gate writes a marker, and `run_marker_write` reads the work node's report for the marker's one line (`cairn/marker.py`, `read_step_report(... node_name("work", step_id) ...)`). A step whose gate refused has no marker, so the next run re-runs it as a fresh paid session — the recovery story, _a step already done re-runs as a cheap no-op because its marker is committed alongside the work_, holds only where the gate wrote. There is no operator path to a marker, and `run_marker_write`'s docstring says why there must not be an unverified one.
+**Today.** Only the gate writes a marker, and `run_marker_write` reads the work node's report for the marker's one line (`cairn/marker.py`, `read_step_report(... node_name("work", step_id) ...)`). A step whose gate refused has no marker, so the next run re-runs it as a fresh session — the recovery story, _a step already done re-runs as a cheap no-op because its marker is committed alongside the work_, holds only where the gate wrote. There is no operator path to a marker, and `run_marker_write`'s docstring says why there must not be an unverified one.
 
-**The change.** None here beyond A and B. With B the session leaves its own account and the gate opens on it; with A a person who still meets this case reads that the work is in the tree and the assertion passed, and the re-run is a session that finds its criteria ticked and reports in minutes. The cost is stated in the report rather than removed by a marker nobody asserted.
+**The change.** None here beyond A and B. With B the session leaves its own account and the gate opens on it; with A a person who still meets this case reads that the work is in the tree and the assertion passed, and the re-run is a session that finds its criteria ticked and reports in minutes. The repeat is stated in the report rather than removed by a marker nobody asserted.
 
-## D — Merge resolution is still a paid session with only an outer bound
+## D — Merge resolution runs under the same guard
 
-Section B closes the ordinary agent-step path, but emitted `merge land` nodes omit the model,
-dollar ceiling, and internal timeout their command parser can accept. The merge implementation
-opens the provider without `deadline_seconds`, while consent counts only ordinary agent bodies.
-A conflict-resolution session is therefore undisclosed and can run until the engine's outer
-merge timeout kills it before it leaves a report.
+Emitted `merge land` nodes name their model and carry no bound of their own, and the merge
+implementation opens its provider under the hang guard like every other session. A
+conflict-resolution session is stopped inside its wrapper, leaves report grace before the
+engine's outer merge timeout, and leaves the same durable timeout account as an ordinary
+agent step.
 
-[25](25-execution-admission-and-paid-bounds.md) owns the implementation: every merge resolver is
-priced, carries an internal work deadline, receives report grace, and leaves the same durable
-timeout account as an ordinary agent step.
+## A plan sets no bound on a session
 
-## The bound came from nowhere the validator could see
-
-[plan-derivation.md](../docs/plan-derivation.md) sets a timeout _"exactly where the document states it"_ and leaves the kind's default everywhere else. Neither the epic document nor the step's own names a bound, and the step carried 9,000 s — a number the derivation supplied and nothing rechecked, on a step whose own criteria require eight full-corpus benchmark arms before any code is written. An edge carries the words that justify it; a timeout the derivation did not default carries nothing. Whether a non-default bound should carry its evidence like an edge — refused under `--source-root` when no document holds the words — is an open question for the plan contract, recorded here rather than decided.
+[plan-derivation.md](../docs/plan-derivation.md) derives no time limit for a step from a plan's
+sentences. A session is stopped only by the hang guard, a constant in Cairn, so no bound
+reaches the engine that nothing in a document could justify.
 
 ## Acceptance
 
 - A step the engine kills at its bound is recorded with cause `timed_out`, the bound and the elapsed time; `not_reached` appears only on a node the engine itself skipped, and the engine node and the record never disagree about whether a step ran.
 - **Such a step carries no assertion verdict and names no commits, and that is the shape rather than a gap in it.** The gate [24 B](24-recovery-economics.md) puts on every assertion declines it whenever the work node left no report of the run — which is how a killed step is defined — so nothing asserts over what the step left, and its commit node never runs. The record says the work is unproven rather than claiming it holds. A session the wrapper stops at its own bound is the other shape, and does leave a report: that is where a divergence over a stopped step comes from, and it is the common one now that an agent step owns its bound.
-- An agent step's session is stopped at the step's own bound inside the wrapper, before the engine's, and the step's report reaches the run directory carrying the session id, turns and cost — as `done` where the resumed session reported, as `timed_out` where it did not.
-- A merge-resolution session has the same disclosed model, ceiling, internal deadline, and
-  durable timeout report; no paid provider call relies only on an engine kill.
+- An agent step's session is stopped by the hang guard inside the wrapper, before the engine's bound, and the step's report reaches the run directory carrying the session id and turns — as `done` where the resumed session reported, as `timed_out` where it did not.
+- A merge-resolution session has the same model, internal deadline, and durable timeout
+  report; no provider call relies only on an engine kill.
 - The report's next action for a timed-out step with a passing assertion says the work is in the tree before it says re-run.
-- Reproduction: an agent step bounded at 60 s whose task cannot finish in 60 s. The run record names the timeout; the reports directory holds the step's report; the engine's own log shows the wrapper stopped the session before the engine did.
+- Reproduction: an agent step whose session stops making progress. The run record names the timeout; the reports directory holds the step's report; the engine's own log shows the wrapper stopped the session before the engine did.

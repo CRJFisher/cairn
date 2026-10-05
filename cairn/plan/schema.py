@@ -3,7 +3,7 @@
 import re
 from typing import Any, NotRequired, TypedDict, cast
 
-from cairn.bounds import nonnegative_integer, positive_finite, positive_integer
+from cairn.bounds import nonnegative_integer, positive_integer
 
 # 2 reads `tools` as deny patterns. A version-1 graph's allow list would silently invert
 # into a denial of exactly the tools its author meant to permit, so it is refused.
@@ -49,7 +49,7 @@ def cannot_fail(command: str) -> bool:
 # What a human answered when shown a proposed assertion. A step carries an answer only
 # once someone has been asked, so the field's absence is what "never asked" means — and
 # a declined step is the only way a step becomes unverified. `authored` is distinct from
-# `edited` because a command written where nothing was offered edited no proposal, and
+# `edited` because a command written where nothing was proposed edited no proposal, and
 # counting it as one overstates how often the proposals are carrying their weight.
 ASSERTION_OUTCOMES: tuple[str, ...] = ("accepted", "edited", "authored", "declined")
 
@@ -74,12 +74,12 @@ QUESTION_KINDS: tuple[str, ...] = (
 # depends on `dep` — so an answer can put the edge in the graph or take it out.
 EDGE_KINDS: tuple[str, ...] = (UNJUSTIFIED_EDGE, AMBIGUOUS_DEPENDENCY)
 
-# The kinds a derivation may attach an offer to: a command for an unasserted end state, and
-# a convergent restatement of a task that would duplicate on a resumed run.
+# The kinds a derivation may attach a proposal to: a command for an unasserted end state,
+# and a convergent restatement of a task that would duplicate on a resumed run.
 PROPOSING_KINDS: tuple[str, ...] = (MISSING_VERIFY, NON_CONVERGENT_TASK)
 
-# How a question other than `missing_verify` was closed. `accepted` adopts the reading on
-# offer — the derivation's proposal, or the edge the question names; `edited` adopts the
+# How a question other than `missing_verify` was closed. `accepted` adopts the reading
+# proposed — the derivation's own, or the edge the question names; `edited` adopts the
 # author's own text instead; `declined` refuses the reading and, where that is a waiver, says
 # why. A `missing_verify` answer is recorded on the step's own `assertion` instead, because
 # that is the fact it settles and a second record could disagree with it.
@@ -97,32 +97,30 @@ RESOLUTIONS_BY_KIND: dict[str, tuple[str, ...]] = {
     MISSING_VERIFY: (),
 }
 
-# I7 forbids an unbounded step, so a timeout is always present. The engine's own default
-# is none (01), and a 35m agent step ran uninterrupted there, so the agent bound is set
-# above any observed session rather than at the engine's.
-AGENT_TIMEOUT = 3600
-COMMAND_TIMEOUT = 600
+# The hang guard: the one internal deadline that kills a session which has stopped making
+# progress. It is Cairn's own constant, the same for every step, and no plan can set it. I7
+# forbids an unbounded step and the engine's own default is none (01), so this is what keeps
+# that guarantee. It sits above any observed session — a 35m agent step ran uninterrupted
+# against the engine's absent default — because its job is to catch a hang, not to shorten
+# work that is still going.
+HANG_GUARD = 14400
 
-# An agent step's other two bounds, and both are always present on one: a session with no
-# dollar ceiling is the one thing a run's offer cannot price, and a session whose model came
-# from the environment leaves a record that cannot say which model did the work. The plan
-# document sets either; a plan that says nothing gets these. The ceiling sits above any
-# observed step cost (17.3 measured $1.54) the way the timeout sits above any observed
-# session, and the model is the provider's own stable alias rather than a dated identifier,
-# so the default does not go stale with a release.
-AGENT_BUDGET_USD = 5.0
+# An agent step always names its model, because a session whose model came from the
+# environment leaves a record that cannot say which model did the work. The plan document
+# sets it; a plan that says nothing gets this one, which is the provider's own stable alias
+# rather than a dated identifier, so the default does not go stale with a release.
 AGENT_MODEL = "sonnet"
 
 # Nothing is retried. A step that failed because the provider blinked and one that failed
-# because the task is wrong are indistinguishable from outside, and a second paid session
-# would run against a repository the first one already changed.
+# because the task is wrong are indistinguishable from outside, and a second session would
+# run against a repository the first one already changed.
 #
 # A rate limit is distinguishable — the agent reports it on its own exit status — and was
 # the one case argued to be worth a bounded retry. It is not, because the engine's retry
 # policy is a static number in a file and cannot read the `resetsAt` the agent supplies.
 # A fixed wait short enough to be worth anything is far shorter than a real limit's reset,
-# so the retry would usually meet the same limit and pay a second session's tokens to find
-# out. The moment is reported instead: a run that stops on a limit says when it is worth
+# so the retry would usually meet the same limit and meet it again. The moment is reported
+# instead: a run that stops on a limit says when it is worth
 # starting again, and the committed marker means the re-run skips what already landed.
 AGENT_RETRIES = 0
 COMMAND_RETRIES = 0
@@ -139,7 +137,7 @@ SUPPORT_RETRIES = 0
 # 844 s against this default, so a plan asserting with a slow suite has to say so.
 VERIFY_TIMEOUT = SUPPORT_TIMEOUT
 
-# A support step's budget has to cover waiting for the git write mutex and then doing the
+# A support step's bound has to cover waiting for the git write mutex and then doing the
 # git work, and still leave room to write a report. These three are stated together
 # because that sum is the whole of the relation; separately they would drift until a
 # jammed mutex was killed by the engine with nothing recorded.
@@ -147,11 +145,11 @@ GIT_TIMEOUT = 240
 MUTEX_WAIT = 300
 REPORT_HEADROOM = SUPPORT_TIMEOUT - MUTEX_WAIT - GIT_TIMEOUT
 
-# Landing a wave is the one step that does both jobs: it may pay for a coding-agent session,
+# Landing a wave is the one step that does both jobs: it may open a coding-agent session,
 # because a conflict is a question about intent no command can answer, and it does the git
-# work of a support step on either side of that. So it is priced as the sum rather than as
-# the session alone — at `AGENT_TIMEOUT` the mutex wait and the merge in front of the
-# session come out of the session's own budget, and the engine's kill lands mid-resolution,
+# work of a support step on either side of that. So its bound is the sum rather than the
+# session alone — at `HANG_GUARD` the mutex wait and the merge in front of the session would
+# come out of the session's own deadline, and the engine's kill would land mid-resolution,
 # leaving exactly the unsettled tree the halt path exists to produce only deliberately.
 # A wait owns the step's declared bound, so the engine's own kill must land strictly after
 # it — otherwise the two fire together and `wait_timeout` never reaches a report. Every
@@ -167,18 +165,17 @@ WAIT_REPORT_GRACE = 15
 # and the alternative was a step with four commits and a passing assertion recorded as one
 # that never ran.
 AGENT_REPORT_GRACE = 180
-# What the resume may spend of the grace. The remainder is headroom for stopping the
+# How much of the grace the resume may take. The remainder is headroom for stopping the
 # provider and writing the report — the two things that must happen before the engine's
 # bound, whatever the resumed session does.
 AGENT_RESUME_MARGIN = 30
 
-# A merge resolver is a paid agent role with its own disclosed bounds. Its engine step also
-# leaves the same report grace as an ordinary agent session after the internal deadline.
+# A merge resolver is an agent role like any other, so it names its model and runs under the
+# same hang guard. Its engine step also leaves the same report grace as an ordinary agent
+# session after the internal deadline.
 MERGE_MODEL = AGENT_MODEL
-MERGE_BUDGET_USD = AGENT_BUDGET_USD
-MERGE_WORK_TIMEOUT = AGENT_TIMEOUT
 MERGE_TIMEOUT = (
-    MUTEX_WAIT + GIT_TIMEOUT + MERGE_WORK_TIMEOUT + AGENT_REPORT_GRACE
+    MUTEX_WAIT + GIT_TIMEOUT + HANG_GUARD + AGENT_REPORT_GRACE
 )
 MERGE_RETRIES = 0
 
@@ -197,7 +194,7 @@ VERIFY_PREFIX = "verify_"
 MARK_PREFIX = "mark_"
 MERGE_PREFIX = "merge_"
 # A step that declares `remediate` gains two nodes between its assertion and its marker:
-# one paid session that may fix what the assertion found, and the same assertion again.
+# one session that may fix what the assertion found, and the same assertion again.
 REMEDY_PREFIX = "remedy_"
 RECHECK_PREFIX = "recheck_"
 # `work_` is not reserved: a node name is `<role>_<subject>` and the role is the text before
@@ -238,16 +235,8 @@ def is_plan_kind(value: object) -> bool:
     )
 
 
-def default_timeout(kind: str) -> int:
-    return AGENT_TIMEOUT if kind.startswith(AGENT_FAMILY) else COMMAND_TIMEOUT
-
-
 def default_retries(kind: str) -> int:
     return AGENT_RETRIES if kind.startswith(AGENT_FAMILY) else COMMAND_RETRIES
-
-
-def default_budget(kind: str) -> float | None:
-    return AGENT_BUDGET_USD if kind.startswith(AGENT_FAMILY) else None
 
 
 def default_model(kind: str) -> str | None:
@@ -309,10 +298,8 @@ class Step(TypedDict):
     tools: list[str] | None
     scope: str
     reads: list[str]
-    timeout: int
     verify_timeout: int
     retries: int
-    max_budget_usd: float | None
     model: str | None
     remediate: bool
 
@@ -359,7 +346,7 @@ class Question(TypedDict):
     question: str
     evidence: str | None
     # The derivation's own reading, resting on the sentence `evidence` quotes: the command it
-    # would offer for an unasserted end state, or the convergent restatement of a task. Only
+    # would write for an unasserted end state, or the convergent restatement of a task. Only
     # the agent that read the plan may write one; code afterwards checks the quote, never
     # the reading.
     proposed: str | None
@@ -395,15 +382,8 @@ STEP_FIELDS: Spec = {
     "tools": {"type": list, "default": None, "nullable": True, "item_type": str},
     "scope": {"type": str, "enum": SCOPES, "default": "once"},
     "reads": {"type": list, "default": [], "item_type": str},
-    # Each bound is judged here, before a default or a conversion touches it: a float that
-    # is not finite, or an integer too large to become one, is refused as the value it is
-    # rather than crashing the normalisation that would have converted it ([25]).
-    "timeout": {
-        "type": int,
-        "default_from": "kind",
-        "nullable": True,
-        "check": positive_integer,
-    },
+    # The bound is judged here, before a default touches it: an integer that is not
+    # positive is refused as the value it is rather than crashing the normalisation ([25]).
     "verify_timeout": {
         "type": int,
         "default": VERIFY_TIMEOUT,
@@ -415,16 +395,10 @@ STEP_FIELDS: Spec = {
         "nullable": True,
         "check": nonnegative_integer,
     },
-    # Both null on a command step, which opens no session; both always resolved on an
-    # agent step, whose session cannot be priced without them.
-    "max_budget_usd": {
-        "type": float,
-        "default_from": "kind",
-        "nullable": True,
-        "check": positive_finite,
-    },
+    # Null on a command step, which opens no session; always resolved on an agent step,
+    # whose record could not otherwise say which model did the work.
     "model": {"type": str, "default_from": "kind", "nullable": True},
-    # One paid session, after an assertion that ran and exited nonzero, resuming the step's
+    # One session, after an assertion that ran and exited nonzero, resuming the step's
     # own session to fix what it found; then the same assertion again. Never after an
     # assertion a signal ended, which decided nothing a session could fix.
     "remediate": {"type": bool, "default": False},
@@ -432,9 +406,9 @@ STEP_FIELDS: Spec = {
 
 ASSERTION_FIELDS: Spec = {
     "outcome": {"type": str, "enum": ASSERTION_OUTCOMES, "required": True},
-    # What Cairn offered, kept whatever the answer was: a declined proposal is what the
-    # report shows beside an unverified step, and an accepted one is what tells an
-    # edit from an acceptance.
+    # What Cairn proposed, kept whatever the answer was: a declined proposal is what the
+    # report shows beside an unverified step, and an adopted one is what tells an edit
+    # from a plain accept.
     "proposed": {"type": str, "default": None, "nullable": True},
     "reason": {"type": str, "default": None, "nullable": True},
 }
@@ -526,13 +500,10 @@ def _check_fields(obj: object, spec: Spec, where: str, errors: list[str]) -> Non
                 errors.append(f"{where}.{name}: must not be null")
             continue
         expected: type = rule["type"]
-        if expected in (int, float) and isinstance(value, bool):
+        if expected is int and isinstance(value, bool):
             errors.append(f"{where}.{name}: expected {expected.__name__}, found bool")
             continue
-        # A whole-dollar ceiling arrives from JSON as an int, and rejecting it would make
-        # the honest spelling of "at most 5 dollars" a type error.
-        accepted: tuple[type, ...] = (int, float) if expected is float else (expected,)
-        if not isinstance(value, accepted):
+        if not isinstance(value, expected):
             errors.append(
                 f"{where}.{name}: expected {expected.__name__}, found {type(value).__name__}"
             )
@@ -658,12 +629,11 @@ def _check_graph(raw: Any, errors: list[str]) -> None:
                     f"{where}: command kind must not carry 'tools' — a tool policy is an "
                     "agent's blast radius and nothing translates it for a shell command"
                 )
-            for bound in ("max_budget_usd", "model"):
-                if kind == COMMAND_KIND and step_fields.get(bound) is not None:
-                    errors.append(
-                        f"{where}: command kind must not carry {bound!r} — it opens no "
-                        "agent session for the bound to apply to"
-                    )
+            if kind == COMMAND_KIND and step_fields.get("model") is not None:
+                errors.append(
+                    f"{where}: command kind must not carry 'model' — it opens no agent "
+                    "session for a model to do the work of"
+                )
             if (
                 isinstance(kind, str)
                 and kind.startswith(AGENT_FAMILY)
@@ -755,7 +725,7 @@ def _check_question(fields: dict[str, Any], where: str, errors: list[str]) -> No
                 )
         elif reading is not None:
             errors.append(
-                f"{where}.resolution: a {kind} question offers no reading, so an accept "
+                f"{where}.resolution: a {kind} question proposes no reading, so an accept "
                 "records none"
             )
         if kind not in PROPOSING_KINDS and not reason:
@@ -810,14 +780,8 @@ def normalise(raw: Any) -> Graph:
             step["assertion"] = cast(Assertion, assertion)
         if step.get("kind") is None:
             step["kind"] = plan["default_kind"]
-        if step.get("timeout") is None:
-            step["timeout"] = default_timeout(step["kind"])
         if step.get("retries") is None:
             step["retries"] = default_retries(step["kind"])
-        if step.get("max_budget_usd") is None:
-            step["max_budget_usd"] = default_budget(step["kind"])
-        else:
-            step["max_budget_usd"] = float(step["max_budget_usd"])
         if step.get("model") is None:
             step["model"] = default_model(step["kind"])
         deps: list[Dep] = []

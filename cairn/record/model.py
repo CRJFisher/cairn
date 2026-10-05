@@ -40,7 +40,7 @@ class Freshness(TypedDict):
 
 
 class Remedy(TypedDict):
-    """What a remedied step's remedy node did: declined, with why, or ran, with its cost.
+    """What a remedied step's remedy node did: declined, with why, or ran.
 
     `first_exit` is the assertion's exit before the remedy; the step's own
     `assertion_exit` is then the exit of the assertion run again after it.
@@ -48,7 +48,6 @@ class Remedy(TypedDict):
 
     status: str
     said: str | None
-    cost_usd: float | None
     first_exit: int | None
     resumed_session: str | None
 
@@ -73,8 +72,6 @@ class StepRecord(TypedDict):
     # Paths the step's commit left alone because they were already dirty when its session
     # started: somebody else's in-flight work, named rather than swept in or lost ([21]).
     left_uncommitted: list[str]
-    cost_usd: float | None
-    cost_is_notional: bool
     turns: int | None
     session_id: str | None
     model: str | None
@@ -183,22 +180,6 @@ class Attention(TypedDict):
     cause: str | None
 
 
-class Budget(TypedDict):
-    """What the run spent, and how much of that figure is money.
-
-    `notional` is not a footnote: on a subscription login the figure is an API-equivalent
-    price rather than money spent, and a rendering that dropped the flag would be inventing
-    a number the run never paid.
-    """
-
-    cost_usd: float | None
-    notional: bool
-    turns: int | None
-    priced_steps: int
-    unpriced_steps: int
-    provenance: dict[str, str]
-
-
 class GitFacts(TypedDict):
     """What the run left in the repository, as its own steps recorded it."""
 
@@ -227,7 +208,8 @@ class Lineage(TypedDict):
     """The runs this one rests on, and nothing that changes what it does.
 
     Completion authority stays with the marker in git. This is an observability contract:
-    a missing or corrupt lineage costs a reader an explanation, never a run its correctness.
+    a missing or corrupt lineage leaves a reader without an explanation, never a run
+    without its correctness.
     """
 
     occasion: str | None
@@ -275,7 +257,6 @@ class RunRecord(TypedDict):
     edges: list[Edge]
     waves: list[WaveCensus]
     attention: list[Attention]
-    budget: Budget
     git: GitFacts
     next_action: NextAction
     provenance: dict[str, str]
@@ -283,7 +264,6 @@ class RunRecord(TypedDict):
 
 __all__ = [
     "Attention",
-    "Budget",
     "Diffstat",
     "Divergence",
     "Edge",

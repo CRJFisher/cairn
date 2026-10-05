@@ -24,7 +24,6 @@ from cairn.plan.schema import (
     SchemaError,
     Step,
     cannot_fail,
-    default_timeout,
     has_assertion,
     is_unasserted,
     is_unverified,
@@ -494,20 +493,6 @@ def validate(raw: Any, source_root: str | None = None) -> Result:
                     step_id,
                 )
             )
-        if step["timeout"] != default_timeout(step["kind"]):
-            # An edge carries the words that justify it and the validator checks the
-            # quote; a bound carries nothing, so a non-default one is the derivation's
-            # own reading and the person confirming the parse is told so. Measured: a
-            # 9,000 s bound no document stated, on the step it then killed.
-            warnings.append(
-                Finding(
-                    "derived_timeout",
-                    f"step {step_id!r} is bounded at {step['timeout']} s rather than the "
-                    f"{default_timeout(step['kind'])} s its kind defaults to; the "
-                    "derivation supplied it and nothing quotes the document for it",
-                    step_id,
-                )
-            )
         if step["remediate"] and (
             not step["kind"].startswith(AGENT_FAMILY) or not has_assertion(step)
         ):
@@ -520,6 +505,9 @@ def validate(raw: Any, source_root: str | None = None) -> Result:
                 )
             )
         if step["verify_timeout"] != VERIFY_TIMEOUT:
+            # An edge carries the words that justify it and the validator checks the
+            # quote; a bound carries nothing, so a non-default one is the derivation's
+            # own reading and the person confirming the parse is told so.
             warnings.append(
                 Finding(
                     "derived_timeout",

@@ -328,8 +328,8 @@ class EveryRenderingAgreesWithTheProjection(unittest.TestCase):
     def test_every_fact_answers_the_same_label_in_every_rendering(self) -> None:
         """A value against the wrong label states a fact and answers a different question.
 
-        A rendering that shifted every receipt one row — the cost against the turns, the
-        session against the model — states every fact correctly and is wrong about all of
+        A rendering that shifted every receipt one row — the turns against the model, the
+        session against the commit — states every fact correctly and is wrong about all of
         them. Only the binding catches that, so the binding is what the log carries.
         """
         for shape in SHAPES:
@@ -591,7 +591,7 @@ class TheReceiptsArePasteable(unittest.TestCase):
             self.assertEqual(written[0], f"--resume {session}")
             self.assertEqual(Path(written[1]).resolve(), home.resolve())
 
-    def test_a_priced_step_carries_its_whole_receipt(self) -> None:
+    def test_an_agent_step_carries_its_whole_receipt(self) -> None:
         record = record_of("agent")
         step = record["steps"][0]
         for sink in SINKS:
@@ -602,18 +602,13 @@ class TheReceiptsArePasteable(unittest.TestCase):
                     assert value is not None
                     self.assertIn(loose(str(value)), text)
 
-    def test_a_notional_cost_never_reads_as_money_spent(self) -> None:
-        record = record_of("agent")
-        for sink in SINKS:
-            with self.subTest(sink=sink):
-                text = loose(rendered(record, sink).text)
-                self.assertIn("an API-equivalent price, not money spent", text)
-
-    def test_an_unpriced_run_states_no_cost_rather_than_a_zero(self) -> None:
-        for sink in SINKS:
-            with self.subTest(sink=sink):
-                text = rendered(record_of("green"), sink).text
-                self.assertNotIn("$0", text)
+    def test_a_report_on_any_run_shows_no_cost(self) -> None:
+        for shape in SHAPES:
+            for sink in SINKS:
+                with self.subTest(shape=shape, sink=sink):
+                    text = rendered(record_of(shape), sink).text
+                    self.assertNotRegex(text, r"\$\d")
+                    self.assertNotIn("API-equivalent", text)
 
     def test_the_engines_own_view_of_the_run_is_rendered(self) -> None:
         record = record_of("green")
@@ -681,7 +676,7 @@ class ABrokenRunReadsAsWhatHappened(unittest.TestCase):
             with self.subTest(sink=sink):
                 text = rendered(record, sink).text
                 self.assertIn("work it left", text)
-                self.assertLess(text.index("work it left"), text.index("run offer"))
+                self.assertLess(text.index("work it left"), text.index("run start"))
                 self.assertIn("9000", text)
 
     def test_the_steps_a_halt_left_behind_take_one_line_and_still_each_have_a_row(self) -> None:

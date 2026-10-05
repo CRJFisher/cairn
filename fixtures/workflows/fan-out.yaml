@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "fan-out",
-    "cairn_generator": "8",
+    "cairn_generator": "9",
     "cairn_engine": "2.11.0",
-    "cairn_graph_sha256": "624f94002a1d98ec14257f09d230da9f8272abfc418e5f5918b4edd08c1a82f6",
-    "cairn_body_sha256": "0de8506c8067126a2e4da7b12fd0b9cd992bf27b0ea4ce91c6e8e3d0f91087a4"
+    "cairn_graph_sha256": "e01051f3d799685929a7025788b8ece8192055c3f2d9d35434ea5e07da9dc267",
+    "cairn_body_sha256": "c57916f21788beaee841fa8b648d2a286235a17e927eb135110b748cf830957f"
   },
   "params": [
     {
@@ -54,17 +54,17 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn lock acquire --plan fan-out --run-timeout 30180"
+      "run": "python3 -m cairn lock acquire --plan fan-out --run-timeout 84180"
     },
     {
       "name": "work_extract_the_loader_interface",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 3780,
+      "timeout_sec": 14580,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/config/loader.py` to a state where it exposes a `load(path) -> dict` helper that every reader below uses.' --model sonnet --max-budget-usd 5.0 --timeout 3600",
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/config/loader.py` to a state where it exposes a `load(path) -> dict` helper that every reader below uses.' --model sonnet",
       "preconditions": [
         {
           "condition": "python3 -m cairn marker absent --step extract_the_loader_interface --scope once"
@@ -148,12 +148,12 @@
     {
       "name": "work_keymap_reader",
       "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/fan-out/keymap_reader",
-      "timeout_sec": 3780,
+      "timeout_sec": 14580,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/config/keymap.py` to a state where it reads `keys.toml` through the loader and rejects a duplicate binding.' --model sonnet --max-budget-usd 5.0 --timeout 3600",
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/config/keymap.py` to a state where it reads `keys.toml` through the loader and rejects a duplicate binding.' --model sonnet",
       "preconditions": [
         {
           "condition": "python3 -m cairn marker absent --step keymap_reader --scope once"
@@ -240,12 +240,12 @@
     {
       "name": "work_theme_reader",
       "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/fan-out/theme_reader",
-      "timeout_sec": 3780,
+      "timeout_sec": 14580,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/config/theme.py` to a state where it reads `theme.toml` through the loader and validates the palette keys.' --model sonnet --max-budget-usd 5.0 --timeout 3600",
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/config/theme.py` to a state where it reads `theme.toml` through the loader and validates the palette keys.' --model sonnet",
       "preconditions": [
         {
           "condition": "python3 -m cairn marker absent --step theme_reader --scope once"
@@ -333,12 +333,12 @@
     {
       "name": "merge_w2_1",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 4320,
+      "timeout_sec": 15120,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn merge land --slot 1 --provider claude --model sonnet --max-budget-usd 5.0 --timeout 3600 --branch step/keymap_reader --branch step/theme_reader",
+      "run": "python3 -m cairn merge land --slot 1 --provider claude --model sonnet --branch step/keymap_reader --branch step/theme_reader",
       "depends": [
         "join_w2"
       ]
@@ -359,12 +359,12 @@
     {
       "name": "merge_w2_2",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 4320,
+      "timeout_sec": 15120,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn merge land --slot 2 --provider claude --model sonnet --max-budget-usd 5.0 --timeout 3600 --branch step/keymap_reader --branch step/theme_reader",
+      "run": "python3 -m cairn merge land --slot 2 --provider claude --model sonnet --branch step/keymap_reader --branch step/theme_reader",
       "depends": [
         "verify_merge_w2_1"
       ]

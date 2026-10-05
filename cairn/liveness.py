@@ -8,7 +8,7 @@ and reclaim nothing, or worse, refuse to reclaim a lock whose owner died hours a
 **The answer has three values, not two.** A probe that could not look is not a probe that
 found nothing: Cairn is ordinarily driven from inside a coding-agent harness whose shell may
 not inspect processes at all, and a reader there that reported a live run as dead would
-send a person to spend money undoing work that is still going ([23 A]). So "I could not
+send a person to undo work that is still going ([23 A]). So "I could not
 look" is `None`, kept apart from "I looked and it is not there", which is `False` and is
 the only answer that ever reads as a death.
 """

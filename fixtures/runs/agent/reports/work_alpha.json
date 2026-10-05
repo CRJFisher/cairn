@@ -1,7 +1,6 @@
 {
   "cause": null,
   "detail": {
-    "cost_is_notional": true,
     "deny_patterns": [],
     "generated_session_id": "73429f28-2eef-4f96-8a54-fe8f1469a577",
     "model": null,
@@ -26,7 +25,6 @@
     "session_id": "73429f28-2eef-4f96-8a54-fe8f1469a577",
     "subtype": "success",
     "terminal_reason": "completed",
-    "total_cost_usd": 0.3193395,
     "turn_count": 5
   },
   "duration": 36.68695438106079,

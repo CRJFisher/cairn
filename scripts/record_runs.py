@@ -7,8 +7,8 @@ over an excluded step — is a claim only the engine can make. Hand-authoring it
 the author's belief and test nothing.
 
 The step reports are real too, written by real `python3 -m cairn exec` invocations inside
-those runs. What no free run can produce is an agent's own detail — cost, session identity,
-turns — so exactly one shape carries a hand-augmented work report, and its README says so.
+those runs. What no command step can produce is an agent's own detail — session identity,
+turns — so one shape carries a hand-augmented work report, and its README says so.
 
 Two shapes cannot come from a Cairn-generated workflow, because Cairn's emitted pattern is
 designed to make them impossible: a real exclusion always leaves a `failed` node behind, so
@@ -17,15 +17,8 @@ hand against the node-name grammar, and the fixture's README names the recipe. T
 extraction is the check that Cairn's own pattern still leaves that failed node; a corpus
 that could only express the safe shape could not perform that check.
 
-One shape spends money. `agent` runs a real coding-agent session, which is the only way a
-recorded run can carry a step's receipts — its cost, its session identity, its turns — rather
-than only their absence. It is therefore **not** recorded by default and refuses without an
-explicit opt-in, which is [17](17-paid-end-to-end.md)'s discipline applied to the one paid
-thing that exists today: the obvious command cannot spend a penny.
-
-    python3 -m scripts.record_runs                       # every free shape
-    python3 -m scripts.record_runs --shape green         # one of them
-    CAIRN_PAID=1 python3 -m scripts.record_runs --paid   # the agent shape, deliberately
+    python3 -m scripts.record_runs                  # every shape
+    python3 -m scripts.record_runs --shape green    # one of them
 """
 
 from __future__ import annotations
@@ -43,9 +36,6 @@ from pathlib import Path
 from typing import Any
 
 from cairn.assertions import command_digest
-from paid.redact import redact_reports
-from paid.spend import opted_in, refuse_unpaid
-from paid.vocabulary import PAID_OPT_IN
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = PACKAGE_ROOT / "fixtures" / "runs"
@@ -55,12 +45,6 @@ ENGINE = shutil.which("dagu")
 # enough that a recording session is not a coffee break.
 HOLD_SECONDS = 30
 SAMPLE_SECONDS = 3
-
-# Which shape spends is the recorder's own knowledge, and so is what one has cost. The gate
-# those two numbers are handed to belongs to the suite that spends ([paid/spend.py]), so
-# there is one refusal in this repository rather than one per caller.
-PAID_SHAPES = frozenset({"agent"})
-MEASURED_COST_USD = 0.32
 
 
 def cairn(*arguments: str) -> str:
@@ -156,43 +140,7 @@ def _excluded_step(name: str, *, after: list[str] | None = None) -> list[dict[st
     ]
 
 
-AGENT_TASK = (
-    "Bring this directory to a state where a file named note.txt exists and contains the "
-    "single word hello. If it already does, change nothing."
-)
-
 SHAPES: dict[str, dict[str, Any]] = {
-    "agent": {
-        "why": (
-            "one real paid agent step, so the corpus carries a step's receipts — its cost, "
-            "its session identity, its turn count and its model — rather than only their "
-            "absence. Everything else here is a command step, which can never populate them"
-        ),
-        "repository": True,
-        "steps": [
-            step(
-                "work_alpha",
-                cairn(
-                    "agent", "run", "--provider", "claude",
-                    "--prompt", AGENT_TASK,
-                    "--max-budget-usd", "1",
-                    "--timeout", "120",
-                ),
-            ),
-            step("verify_alpha", "test -f note.txt", depends=["work_alpha"]),
-            step(
-                "mark_alpha",
-                cairn("exec", "--command", "true"),
-                depends=["verify_alpha"],
-            ),
-            step(
-                "commit_alpha",
-                cairn("commit", "--message", "cairn(alpha): the note", "--step", "alpha"),
-                depends=["mark_alpha"],
-                continue_on={"skipped": True},
-            ),
-        ],
-    },
     "green": {
         "why": "every step verified, nothing excluded, nothing left to do",
         "steps": [*_verified_step("alpha"), *_verified_step("beta", after=["commit_alpha"])],
@@ -251,7 +199,7 @@ SHAPES: dict[str, dict[str, Any]] = {
         "why": (
             "a step is blocked on a human decision. The engine run and every other report "
             "are real; the work step's own `needs_user_decision` is set here after the "
-            "fact, because no free provider can produce an agent that asks for a decision"
+            "fact, because no command step can produce an agent that asks for a decision"
         ),
         "augment": {
             "work_alpha": {"needs_user_decision": True, "summary": "the schema change needs a call on the sentinel's default"}
@@ -418,8 +366,6 @@ def record(shape: str, definition: dict[str, Any]) -> None:
         subprocess.run(command, env=environment, capture_output=True, check=False)
         augment = definition.get("augment", {})
         _augment(runs / run_id / "reports", augment)
-        for name in redact_reports(runs / run_id / "reports"):
-            augment = {**augment, name: {**augment.get(name, {}), "rate_limits": "redacted"}}
         _publish(
             target, _find_state(home), runs, run_id, definition["why"], shape, augment
         )
@@ -514,22 +460,8 @@ def _publish(
 def main(arguments: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="record_runs", description=__doc__)
     parser.add_argument("--shape", action="append", choices=sorted(SHAPES))
-    parser.add_argument(
-        "--paid",
-        action="store_true",
-        help=f"record the shapes that spend money; also needs {PAID_OPT_IN}=1",
-    )
     args = parser.parse_args(arguments)
-    # Naming no shape means every free one. A paid shape is never swept in by a bare command,
-    # which is the whole of why it is a separate set rather than a flag on one.
-    free: set[str] = set(SHAPES) - set(PAID_SHAPES)
-    chosen: list[str] = args.shape or sorted(set(SHAPES) if args.paid else free)
-    paid = [shape for shape in chosen if shape in PAID_SHAPES]
-    refuse_unpaid(
-        paid,
-        opted_in=opted_in(args.paid),
-        measured_usd=MEASURED_COST_USD * len(paid),
-    )
+    chosen: list[str] = args.shape or sorted(SHAPES)
     for shape in chosen:
         record(shape, SHAPES[shape])
     return 0

@@ -36,16 +36,15 @@ step nobody has been asked to assert, and an assertion that cannot fail; and it 
 plan step's marker gate and `continue_on: {failure: true, skipped: true}` together
 ([step-protocol.md](step-protocol.md), [verify-gate.md](verify-gate.md)).
 
-An agent body carries the step's own bounds — `--model` and `--max-budget-usd`, from the
-step record's `model` and `max_budget_usd` ([plan-contract.md](plan-contract.md)), and
-`--timeout` from its `timeout` — and the emitter refuses an agent step without a model or
-a ceiling: the definition is what an offer prices, so a session bounded by the environment
-would be one nobody could price or attribute. The timeout is enforced inside the wrapper,
-the way a wait's is: the session is stopped at the step's own bound, resumed once under
-the report grace to say what it did, and its report reaches the run directory before the
-engine's own `timeout_sec`, which is the bound plus that grace and stops only a wrapper
-that never reported. The grace and the arithmetic are stated with every other bound in
-[supervision.md](supervision.md).
+An agent body carries `--model`, from the step record's `model`
+([plan-contract.md](plan-contract.md)), and the emitter refuses an agent step without one: a
+session whose model came from the environment would leave a record that cannot say which
+model did the work. Every session runs under the hang guard, a fixed Cairn constant enforced
+inside the wrapper, the way a wait's bound is: the session is stopped at the guard, resumed
+once under the report grace to say what it did, and its report reaches the run directory
+before the engine's own `timeout_sec`, which is the guard plus that grace and stops only a
+wrapper that never reported. The grace and the arithmetic are stated with every other bound
+in [supervision.md](supervision.md).
 
 The plan author owns an agent step's `tools` deny list as its blast-radius declaration — and
 it **adds** to a floor Cairn denies in every session, which the plan cannot take back
@@ -75,7 +74,7 @@ Every other document in this directory points here rather than restating any of 
 | Triggers and schedules                                        | [triggers.md](triggers.md)           | **built** |
 | The run report                                                | [report.md](report.md)               | **built** |
 | The skill surface a person invokes                            | `../SKILL.md`                        | **built** |
-| A step's model and spend defaults                             | [plan-contract.md](plan-contract.md) | **built** |
+| A step's model default                                        | [plan-contract.md](plan-contract.md) | **built** |
 | Binary resolution                                             | doc 16                               | to build  |
 
 Doc 09 resolves one path ahead of doc 16: the engine's `base.yaml`, because its retry policy

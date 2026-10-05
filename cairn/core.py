@@ -284,7 +284,7 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
 
     Escaped to ASCII, because a report carries paths and git hands back the bytes a
     filesystem holds: a name that is not valid UTF-8 arrives as lone surrogates, which
-    `utf-8` refuses to encode. Unescaped, one such name in the tree would cost the step its
+    `utf-8` refuses to encode. Unescaped, one such name in the tree would lose the step its
     whole report. The escapes read back as the same string, so nothing is lost but width.
     """
     write_text(

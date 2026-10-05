@@ -30,7 +30,7 @@ import tempfile
 from typing import Any, NamedTuple, cast
 
 from cairn.assertions import NEEDED_VERB, REMEDY_VERB
-from cairn.bounds import positive_finite, positive_integer, retry_policy_is
+from cairn.bounds import positive_integer, retry_policy_is
 from cairn.plan.schema import INPUTS_SCOPE, ONCE_SCOPE
 from cairn.topology import TopologyError, check_name, parse_node_name
 from cairn.verify import recheck_handle, verify_handle
@@ -44,7 +44,7 @@ from cairn.workflow.schema import (
     PARAMETERS,
     REFERENCE,
     ROOT_KEYS,
-    is_paid_body,
+    is_session_body,
     references_in,
     resolvable_names,
 )
@@ -105,7 +105,7 @@ RULES: tuple[Rule, ...] = (
     Rule("foreign_condition", "the gate runs a command Cairn did not write, and `dagu dry` runs it"),
     Rule("scope_without_occasion", "a recovery cannot continue the occasion it is recovering"),
     Rule("missing_timeout", "there is no default; the step can hang for ever"),
-    Rule("unbounded_session", "a paid session opens whose price and model nobody stated, so no offer can price the run"),
+    Rule("unnamed_model", "a session opens whose model nobody stated, so the record cannot say who did the work"),
     Rule("missing_working_dir", "the step runs in a scratch directory, not the repository"),
     Rule("wrong_graph_type", "one deletes the dependency graph, the other serialises it"),
     Rule("body_not_one_invocation", "logic in a generated file is untestable"),
@@ -113,11 +113,11 @@ RULES: tuple[Rule, ...] = (
     Rule("node_name", "the run model cannot parse the name back into a role and a step"),
     Rule("unexpected_id", "a step exempts its own body from the one-invocation rule"),
     Rule("unexpected_handler", "a lifecycle body runs that no rule has looked at"),
-    Rule("unbounded_retry", "the machine's own configuration decides how often paid work repeats"),
+    Rule("unbounded_retry", "the machine's own configuration decides how often session work repeats"),
     Rule("undeclared_parameter", "a caller can vary something the run cannot survive varying"),
     Rule("inherited_concurrency", "zero reads as unset, so the machine's cap decides the width"),
-    Rule("catchup_replay", "a cron slot missed while the machine slept replays as a paid session"),
-    Rule("inherited_overlap", "the machine decides what a firing arriving mid-run costs"),
+    Rule("catchup_replay", "a cron slot missed while the machine slept replays as an agent session"),
+    Rule("inherited_overlap", "the machine decides what a firing arriving mid-run does"),
     Rule("schedule_with_fixed_occasion", "every firing after the first no-ops into a clean success"),
     Rule("foreign_root_key", "the machine's own configuration decides a field no rule has read"),
     Rule("not_a_document", "there is nothing here a run could be built from"),
@@ -543,14 +543,14 @@ def _check_step(step: dict[str, Any], document: Any) -> list[Fault]:
             Fault(
                 "unbounded_retry",
                 name,
-                "paid and repository-mutating nodes must use the exact disabled retry policy",
+                "session and repository-mutating nodes must use the exact disabled retry policy",
             )
         )
 
     faults.extend(_check_routing(step, name, flags))
     faults.extend(_check_gates(step, document, name, flags))
     faults.extend(_check_body(step, name))
-    faults.extend(_check_bounds(step, name))
+    faults.extend(_check_model(step, name))
     if name is not None and not is_handler:
         faults.extend(_check_name(name))
     if _handle(step) is not None and not _is_plan_assertion(step):
@@ -573,7 +573,7 @@ def _is_merge_chain(name: str | None) -> bool:
 
 def _must_not_retry(name: str | None, step: dict[str, Any]) -> bool:
     body = step.get("run")
-    if isinstance(body, str) and is_paid_body(body):
+    if isinstance(body, str) and is_session_body(body):
         return True
     if not isinstance(name, str):
         return False
@@ -732,40 +732,19 @@ def _flag_values(words: list[str], flag: str) -> list[str]:
     ]
 
 
-def _check_bounds(step: dict[str, Any], name: str | None) -> list[Fault]:
-    """An agent body must state its own price and model, because the offer reads the file.
+def _check_model(step: dict[str, Any], name: str | None) -> list[Fault]:
+    """An agent body must state its own model, because the run record reads the file.
 
-    The timeout has its own rule; these are the two bounds only the body can carry. A body
-    that is not an agent invocation at all is another rule's business.
+    A body that is not an agent invocation at all is another rule's business.
     """
     body = step.get("run")
-    if not isinstance(body, str) or not is_paid_body(body):
+    if not isinstance(body, str) or not is_session_body(body):
         return []
-    words = _words(body) or []
-    faults: list[Fault] = []
-    ceilings = _flag_values(words, "--max-budget-usd")
-    ceiling = ceilings[0] if len(ceilings) == 1 else None
-    try:
-        priced = ceiling is not None and positive_finite(float(ceiling))
-    except (ValueError, OverflowError):
-        priced = False
-    if not priced:
-        faults.append(
-            Fault("unbounded_session", name, "the body names no positive --max-budget-usd")
-        )
-    models = _flag_values(words, "--model")
+    models = _flag_values(_words(body) or [], "--model")
     model = models[0] if len(models) == 1 else None
     if model is None or not model.strip():
-        faults.append(Fault("unbounded_session", name, "the body names no --model"))
-    timeouts = _flag_values(words, "--timeout")
-    timeout = timeouts[0] if len(timeouts) == 1 else None
-    try:
-        timed = timeout is not None and positive_finite(float(timeout))
-    except (ValueError, OverflowError):
-        timed = False
-    if not timed:
-        faults.append(Fault("unbounded_session", name, "the body names no positive --timeout"))
-    return faults
+        return [Fault("unnamed_model", name, "the body names no --model")]
+    return []
 
 
 def _check_body(step: dict[str, Any], name: str | None) -> list[Fault]:

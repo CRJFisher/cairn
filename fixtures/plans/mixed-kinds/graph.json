@@ -29,9 +29,7 @@
       ],
       "reads": [],
       "retries": 0,
-      "timeout": 7200,
       "verify_timeout": 600,
-      "max_budget_usd": 8.0,
       "model": "opus",
       "remediate": false
     },
@@ -58,9 +56,7 @@
       ],
       "tools": null,
       "retries": 0,
-      "timeout": 600,
       "verify_timeout": 600,
-      "max_budget_usd": null,
       "model": null,
       "remediate": false
     },
@@ -82,12 +78,10 @@
       "assertion": null,
       "kind": "command",
       "scope": "run",
-      "timeout": 900,
       "verify_timeout": 600,
       "tools": null,
       "reads": [],
       "retries": 0,
-      "max_budget_usd": null,
       "model": null,
       "remediate": false
     }

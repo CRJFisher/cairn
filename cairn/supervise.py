@@ -205,7 +205,7 @@ def _reconcile_node(node: dict[str, Any], finished: str) -> dict[str, Any]:
 def reconcile(root: Path, *, dry_run: bool = False) -> list[Reconciliation]:
     """Reconcile every attempt record under `root`.
 
-    One unreadable file costs its own verdict and nothing more: a sweep that stopped at the
+    One unreadable file loses its own verdict and nothing more: a sweep that stopped at the
     first damaged record would leave the rest of a crashed machine unrepaired, which is
     exactly the state it was called to clear.
     """

@@ -49,7 +49,7 @@ MUTEX_FILE = "git-write.lock"
 
 # How long a git write waits for the mutex before calling the repository stuck. The
 # relation that matters is stated where all three numbers live: this wait plus one git
-# invocation's own timeout fits inside a support step's budget with room to write the
+# invocation's own timeout fits inside a support step's bound with room to write the
 # report, so a jammed mutex reports itself rather than being killed with nothing recorded.
 MUTEX_WAIT_SECONDS = float(MUTEX_WAIT)
 LOCK_POLL_SECONDS = 0.05
@@ -215,7 +215,7 @@ def refuse_dirty_repository(directory: Path) -> None:
     what its own session dirtied — so a path that was already dirty when the step started
     is one the step cannot land, and a step that needed to change it would leave verified
     work uncommitted under a marker that says it is done ([21]). The same reader answers
-    this question before the offer is spent and again at the run's first act; asking it
+    this question before the run starts and again at the run's first act; asking it
     twice through one function is what keeps the two refusals the same refusal ([24 D]).
     """
     dirty = tree_state(directory, untracked="normal")
@@ -549,11 +549,11 @@ def acquire_run_lock(
 
 
 def refuse_lost_repository(directory: Path, run_id: str) -> None:
-    """Halt before spending or writing if this repository now belongs to a different run.
+    """Halt before starting a session or writing if this repository now belongs to a different run.
 
     A run whose lock was reclaimed while it queued would otherwise find out at its next
-    commit — an hour of paid agent time later, with a second run already writing to the
-    same repository. One ref read in front of that is cheap.
+    commit — an hour of agent work later, with a second run already writing to the
+    same repository. One ref read in front of that is enough.
 
     Only a lock held by *somebody else* is evidence of loss. An absent lock is not: these
     subcommands are the step vocabulary, exercisable on their own, and a working directory
@@ -569,7 +569,7 @@ def refuse_lost_repository(directory: Path, run_id: str) -> None:
     except CairnError as exc:
         # Only "there is no repository here" is silence. A repository that will not answer
         # is the case this module elsewhere insists must fail closed: reading it as "no
-        # lock, carry on" would spend a whole agent budget in a repository another run may
+        # lock, carry on" would run a whole agent session in a repository another run may
         # well own, which is the one outcome the guard exists to prevent.
         if exc.cause == "not_a_repository":
             return

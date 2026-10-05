@@ -28,14 +28,19 @@ from cairn.core import (
 )
 from cairn.emitters import KIND_EMITTERS, emit_step, emit_verify
 from cairn.layout import reports_directory
-from cairn.plan.schema import AGENT_REPORT_GRACE, GRAPH_VERSION, normalise
+from cairn.plan.schema import (
+    AGENT_REPORT_GRACE,
+    GRAPH_VERSION,
+    HANG_GUARD,
+    WAIT_REPORT_GRACE,
+    normalise,
+)
 from cairn.protocol import RESUME_FOR_REPORT, compose_prompt
 from cairn.providers import (
     ENDED_WITHOUT_REPORTING,
     NEVER_DELIVERED,
     PROVIDER_RUNNERS,
     RESUME_ATTEMPTED,
-    RESUME_DECLINED_BUDGET,
     RESUME_FAILED,
     RESUME_STILL_SILENT,
     ended_without_reporting,
@@ -51,13 +56,12 @@ def run_echo(
     working_directory: Path,
     permission_mode: str,
     model: str | None,
-    budget: float | None,
     tools: list[str],
     popen_factory: PopenFactory = subprocess.Popen,
     deadline_seconds: float | None = None,
     resume_session: str | None = None,
 ) -> CommandResult:
-    """A whole second provider: doc 05's seam claim is that this is all one costs."""
+    """A whole second provider: doc 05's seam claim is that this is all it takes."""
     del popen_factory, deadline_seconds, resume_session
     return CommandResult(
         EXIT_OK,
@@ -70,7 +74,6 @@ def run_echo(
             "working_directory_seen": str(working_directory),
             "permission_mode": permission_mode,
             "model": model,
-            "max_budget_usd": budget,
             "deny_patterns": list(tools),
         },
     )
@@ -78,7 +81,7 @@ def run_echo(
 
 # Neither of these waits is the subject of any test here: one waits for an interpreter to
 # start, the other for a signalled process to finish dying. So the bound is generous on
-# purpose. It costs nothing when the thing works, because every wait returns the moment it
+# purpose. It is harmless when the thing works, because every wait returns the moment it
 # does; a tight one only turns a loaded machine into a failing suite, which is what a
 # one-second bound on an interpreter start plus two git invocations had been doing.
 #
@@ -604,9 +607,7 @@ class ExecAndWait(unittest.TestCase):
         self.assertEqual(seen, [Path(temporary).resolve()])
 
     def test_agent_handler_carries_the_plan_tool_policy_to_the_provider(self) -> None:
-        seen: list[tuple[str, Path, str | None, float | None, list[str]]] = []
-
-        bounds: list[float | None] = []
+        seen: list[tuple[str, Path, str | None, list[str]]] = []
 
         def record(
             provider: str,
@@ -614,15 +615,12 @@ class ExecAndWait(unittest.TestCase):
             working_directory: Path,
             _permission_mode: str,
             model: str | None,
-            budget: float | None,
             tools: list[str],
             *,
-            deadline_seconds: float | None = None,
             resume_session: str | None = None,
         ) -> CommandResult:
             self.assertIsNone(resume_session)
-            seen.append((provider, working_directory, model, budget, tools))
-            bounds.append(deadline_seconds)
+            seen.append((provider, working_directory, model, tools))
             return CommandResult(0, "done", "", [], False, None, {})
 
         with tempfile.TemporaryDirectory() as temporary:
@@ -642,10 +640,6 @@ class ExecAndWait(unittest.TestCase):
                             "do work",
                             "--model",
                             "opus",
-                            "--max-budget-usd",
-                            "3",
-                            "--timeout",
-                            "600",
                             "--tool",
                             "Bash(rm:*)",
                             "--tool",
@@ -661,12 +655,10 @@ class ExecAndWait(unittest.TestCase):
                     "claude",
                     Path(temporary).resolve(),
                     "opus",
-                    3.0,
                     ["Bash(rm:*)", "Write"],
                 )
             ],
         )
-        self.assertEqual(bounds, [600.0])
 
     def test_a_remedy_resumes_the_steps_own_session_over_the_assertion_it_failed(
         self,
@@ -679,13 +671,10 @@ class ExecAndWait(unittest.TestCase):
             _working_directory: Path,
             _permission_mode: str,
             _model: str | None,
-            _budget: float | None,
             _tools: list[str],
             *,
-            deadline_seconds: float | None = None,
             resume_session: str | None = None,
         ) -> CommandResult:
-            del deadline_seconds
             asked.append((prompt, resume_session))
             return CommandResult(0, "done", "fixed it", [], False, None, {})
 
@@ -713,7 +702,7 @@ class ExecAndWait(unittest.TestCase):
             ):
                 code = main([
                     "agent", "run", "--provider", "claude", "--prompt", "Write the parser.",
-                    "--model", "sonnet", "--max-budget-usd", "5", "--timeout", "600",
+                    "--model", "sonnet",
                     "--remedy-of", "a", "--assertion", "pytest tests/test_parser.py",
                 ])
             self.assertEqual(code, 0)
@@ -766,7 +755,7 @@ class ExecAndWait(unittest.TestCase):
 
     def test_unknown_provider_is_a_typed_refusal(self) -> None:
         with self.assertRaises(CairnError) as caught:
-            run_provider("nobody", "x", Path.cwd(), "auto", None, None, [])
+            run_provider("nobody", "x", Path.cwd(), "auto", None, [])
         self.assertEqual(caught.exception.cause, "provider_unavailable")
 
     def test_a_signalled_command_reports_the_shell_status(self) -> None:
@@ -943,7 +932,6 @@ class FakeProcess:
             "type": "result",
             "subtype": "success",
             "session_id": session_id,
-            "total_cost_usd": 0.25,
             "num_turns": 2,
             "permission_denials": [],
             "structured_output": {
@@ -999,7 +987,7 @@ class ProviderBehavior(unittest.TestCase):
         stream = io.StringIO()
         with redirect_stdout(stream):
             result = run_claude(
-                "do work", Path("/tmp"), "auto", None, None, ["Bash(rm:*)"], factory
+                "do work", Path("/tmp"), "auto", None, ["Bash(rm:*)"], factory
             )
         self.assertEqual(
             result.detail["deny_patterns"], [*NEVER_DELIVERED, "Bash(rm:*)"]
@@ -1015,7 +1003,7 @@ class ProviderBehavior(unittest.TestCase):
 
         with redirect_stdout(io.StringIO()):
             result = run_claude(
-                "fix it", Path("/tmp"), "auto", "sonnet", 5.0, [], factory, None, "session-7"
+                "fix it", Path("/tmp"), "auto", "sonnet", [], factory, resume_session="session-7"
             )
         command = made[0].command
         self.assertEqual(command[command.index("--resume") + 1], "session-7")
@@ -1037,7 +1025,6 @@ class ProviderBehavior(unittest.TestCase):
                 Path("/tmp"),
                 "auto",
                 "opus",
-                2.5,
                 ["Bash(rm:*)"],
                 factory,
             )
@@ -1048,7 +1035,6 @@ class ProviderBehavior(unittest.TestCase):
         self.assertIn("--json-schema", command)
         self.assertEqual(command[command.index("--permission-mode") + 1], "auto")
         self.assertEqual(command[command.index("--model") + 1], "opus")
-        self.assertEqual(command[command.index("--max-budget-usd") + 1], "2.5")
         denied = [
             command[index + 1]
             for index, word in enumerate(command)
@@ -1067,37 +1053,6 @@ class ProviderBehavior(unittest.TestCase):
         self.assertEqual(result[1], "done")
         self.assertIsNone(result[5])
 
-    def test_the_stream_says_who_funded_the_session_and_the_record_keeps_it(self) -> None:
-        """`apiKeySource: none` is the subscription login, whose figure is an API
-        equivalent rather than money that moved; a named key is money."""
-
-        def funded(source: str) -> type[FakeProcess]:
-            class Funded(FakeProcess):
-                def __init__(self, command: list[str], **kwargs: object) -> None:
-                    super().__init__(command, **kwargs)
-                    init = {"type": "system", "subtype": "init", "apiKeySource": source}
-                    self.stdout = FakeOutput(
-                        json.dumps(init) + "\n" + json.dumps(self.output()) + "\n"
-                    )
-
-            return Funded
-
-        for source, notional in (("none", True), ("ANTHROPIC_API_KEY", False)):
-            with self.subTest(source=source):
-                with redirect_stdout(io.StringIO()):
-                    result = run_claude(
-                        "do work", Path("/tmp"), "auto", None, None, [], funded(source)
-                    )
-                self.assertEqual(result.detail["cost_is_notional"], notional)
-                self.assertEqual(result.detail["api_key_source"], source)
-
-    def test_a_stream_that_never_says_who_funded_it_is_recorded_as_real_spend(self) -> None:
-        """The one lie the field must never tell is that real spend was notional."""
-        with redirect_stdout(io.StringIO()):
-            result = run_claude("do work", Path("/tmp"), "auto", None, None, [], FakeProcess)
-        self.assertFalse(result.detail["cost_is_notional"])
-        self.assertIsNone(result.detail["api_key_source"])
-
     def test_structured_failure_translates_zero_exit(self) -> None:
         class Failed(FakeProcess):
             def output(self) -> dict[str, Any]:
@@ -1106,7 +1061,7 @@ class ProviderBehavior(unittest.TestCase):
                 return record
 
         result = run_claude(
-            "fail", Path.cwd(), "auto", None, None, [], Failed
+            "fail", Path.cwd(), "auto", None, [], Failed
         )
         self.assertNotEqual(result[0], 0)
         self.assertEqual(result[5], "reported_failure")
@@ -1119,12 +1074,11 @@ class ProviderBehavior(unittest.TestCase):
                 return record
 
         with self.assertRaisesRegex(CairnError, "num_turns"):
-            run_claude("x", Path.cwd(), "auto", None, None, [], Missing)
+            run_claude("x", Path.cwd(), "auto", None, [], Missing)
 
     def test_nonzero_provider_outcomes_keep_typed_causes_without_a_report(self) -> None:
         causes = {
             "blocking_limit": "rate_limited",
-            "budget_exhausted": "budget_exhausted",
             "max_turns": "turn_limit",
             "structured_output_retry_exhausted": "provider_protocol",
         }
@@ -1151,7 +1105,6 @@ class ProviderBehavior(unittest.TestCase):
                     Path.cwd(),
                     "auto",
                     None,
-                    None,
                     [],
                     failed_factory(terminal_reason),
                 )
@@ -1167,11 +1120,10 @@ class ProviderBehavior(unittest.TestCase):
 
         with self.assertRaises(CairnError) as caught:
             run_claude(
-                "x", Path.cwd(), "auto", None, None, [], Mismatched
+                "x", Path.cwd(), "auto", None, [], Mismatched
             )
         self.assertEqual(caught.exception.cause, "provider_protocol")
         self.assertEqual(caught.exception.detail["session_id"], "foreign-session")
-        self.assertEqual(caught.exception.detail["total_cost_usd"], 0.25)
 
     def test_protocol_failure_terminates_provider(self) -> None:
         made: list[subprocess.Popen[str]] = []
@@ -1192,7 +1144,7 @@ class ProviderBehavior(unittest.TestCase):
             redirect_stdout(io.StringIO()),
             self.assertRaisesRegex(CairnError, "not valid JSON"),
         ):
-            run_claude("x", Path.cwd(), "auto", None, None, [], factory)
+            run_claude("x", Path.cwd(), "auto", None, [], factory)
         self.assertIsNotNone(made[0].poll())
 
     def test_prompt_and_stream_larger_than_a_pipe_buffer_both_flow(self) -> None:
@@ -1203,7 +1155,6 @@ class ProviderBehavior(unittest.TestCase):
                     "type": "result",
                     "subtype": "success",
                     "session_id": session_id,
-                    "total_cost_usd": 0.0,
                     "num_turns": 1,
                     "permission_denials": [],
                     "structured_output": {
@@ -1233,7 +1184,7 @@ class ProviderBehavior(unittest.TestCase):
         def call() -> None:
             with redirect_stdout(io.StringIO()):
                 outcome.append(
-                    run_claude("x" + prompt, Path.cwd(), "auto", None, None, [], factory)
+                    run_claude("x" + prompt, Path.cwd(), "auto", None, [], factory)
                 )
 
         thread = threading.Thread(target=call, daemon=True)
@@ -1262,7 +1213,6 @@ class ProviderBehavior(unittest.TestCase):
                     "type": "result",
                     "subtype": "success",
                     "session_id": session_id,
-                    "total_cost_usd": 0.0,
                     "num_turns": 1,
                     "permission_denials": [],
                     "structured_output": {
@@ -1290,7 +1240,7 @@ class ProviderBehavior(unittest.TestCase):
                 patch("cairn.providers.PROVIDER_EXIT_GRACE_SECONDS", 0.5),
                 redirect_stdout(io.StringIO()),
             ):
-                result = run_claude("x", Path.cwd(), "auto", None, None, [], factory)
+                result = run_claude("x", Path.cwd(), "auto", None, [], factory)
             self.assertEqual(result.status, "done")
             self.assertEqual(result.summary, "answered then lingered")
             self.assertIsNone(result.cause)
@@ -1302,13 +1252,13 @@ class ProviderBehavior(unittest.TestCase):
                     process.kill()
                     process.wait()
 
-    def test_a_second_provider_costs_one_dictionary_entry(self) -> None:
+    def test_a_second_provider_is_one_dictionary_entry(self) -> None:
         self.assertEqual(set(PROVIDER_RUNNERS), {"claude"})
         with self.assertRaises(CairnError) as absent:
-            run_provider("echo", "hello", Path.cwd(), "auto", None, None, [])
+            run_provider("echo", "hello", Path.cwd(), "auto", None, [])
         self.assertEqual(absent.exception.cause, "provider_unavailable")
 
-        # One entry in the dictionary is the whole cost: the same step, unchanged,
+        # One entry in the dictionary is the whole change: the same step, unchanged,
         # now runs end to end through the CLI's own agent path.
         with tempfile.TemporaryDirectory() as temporary:
             env = runtime_env(Path(temporary))
@@ -1325,8 +1275,6 @@ class ProviderBehavior(unittest.TestCase):
                             "echo",
                             "--prompt",
                             "hello",
-                            "--timeout",
-                            "600",
                             "--tool",
                             "Bash(rm:*)",
                         ]
@@ -1373,12 +1321,10 @@ class ASessionThatEndedWithoutReportingIsResumedOnce(unittest.TestCase):
 
         return factory, made
 
-    def _ran(self, factory: Callable[..., FakeProcess], budget: float | None = 5.0):
+    def _ran(self, factory: Callable[..., FakeProcess]):
         stream = io.StringIO()
         with redirect_stdout(stream):
-            return run_claude(
-                "do work", Path("/tmp"), "auto", "sonnet", budget, [], factory
-            )
+            return run_claude("do work", Path("/tmp"), "auto", "sonnet", [], factory)
 
     UNREPORTED: ClassVar[dict[str, Any]] = {
         "stop_reason": "tool_use",
@@ -1421,8 +1367,8 @@ class ASessionThatEndedWithoutReportingIsResumedOnce(unittest.TestCase):
 
     def test_the_resume_asks_for_the_report_and_not_for_more_work(self) -> None:
         """The load-bearing half of the rescue: the step's assertion has already run or is
-        about to, so a resumed session that started editing again would be doing unpriced
-        work outside the shape the offer stated."""
+        about to, so a resumed session that started editing again would be doing
+        work outside the shape the plan stated."""
         factory, made = self._scripted(self.UNREPORTED)
         self._ran(factory)
         self.assertEqual(made[0].prompt.rstrip().endswith("do work"), True)
@@ -1432,7 +1378,7 @@ class ASessionThatEndedWithoutReportingIsResumedOnce(unittest.TestCase):
     def test_every_half_of_the_discrimination_is_load_bearing(self) -> None:
         """Measured: a correct report is itself a tool call, so `stop_reason` decides
         nothing alone. Each of the three facts is asserted, or a variant dropping one of
-        them would resume a session that failed and charge for it twice."""
+        them would resume a session that failed and run it twice."""
         silent = {"stop_reason": "tool_use", "structured_output": None}
         self.assertTrue(ended_without_reporting(0, silent))
         # A session that failed for its own typed reason is not a silence.
@@ -1449,14 +1395,14 @@ class ASessionThatEndedWithoutReportingIsResumedOnce(unittest.TestCase):
         )
 
     def test_a_resume_that_fails_for_its_own_reason_stays_the_silence_it_was(self) -> None:
-        """A budget exhausted a cent short must not overwrite the honest cause: the gate
-        would then read `reported_failure` and print the divergence line D exists to
-        remove — about a step that reported nothing."""
-        # The resume runs out of budget: it exits nonzero with its own terminal reason and
-        # reports nothing. Adopting its result would re-cause the step `budget_exhausted`.
+        """A resume that ends on its own terminal reason must not overwrite the honest cause:
+        the gate would then read `reported_failure` and print the divergence line D exists
+        to remove — about a step that reported nothing."""
+        # The resume hits its turn limit: it exits nonzero with its own terminal reason and
+        # reports nothing. Adopting its result would re-cause the step `turn_limit`.
         factory, made = self._scripted(
             self.UNREPORTED,
-            {**self.UNREPORTED, "exit": 1, "terminal_reason": "budget_exhausted"},
+            {**self.UNREPORTED, "exit": 1, "terminal_reason": "max_turns"},
         )
         with self.assertRaises(CairnError) as caught:
             self._ran(factory)
@@ -1465,12 +1411,10 @@ class ASessionThatEndedWithoutReportingIsResumedOnce(unittest.TestCase):
         self.assertEqual(
             caught.exception.detail["resumed_for_report"], RESUME_STILL_SILENT
         )
-        # And the step's spend is still both passes, not just the first.
-        self.assertAlmostEqual(caught.exception.detail["total_cost_usd"], 0.50)
 
     def test_a_resume_that_never_answers_keeps_the_first_passs_account(self) -> None:
-        """A resume can fail before it says anything. The first session's cost is then the
-        only figure there is, and it is the number the record is read for."""
+        """A resume can fail before it says anything. The first session's account is then
+        the only one there is, and it is what the record is read for."""
         made: list[FakeProcess] = []
         replies = [self.UNREPORTED]
 
@@ -1494,7 +1438,6 @@ class ASessionThatEndedWithoutReportingIsResumedOnce(unittest.TestCase):
         detail = caught.exception.detail
         self.assertEqual(detail["resumed_for_report"], RESUME_FAILED)
         # The first pass's account survived the failure of the second.
-        self.assertAlmostEqual(detail["total_cost_usd"], 0.25)
         self.assertTrue(detail["session_id"])
         self.assertIs(detail[ENDED_WITHOUT_REPORTING], True)
 
@@ -1506,31 +1449,11 @@ class ASessionThatEndedWithoutReportingIsResumedOnce(unittest.TestCase):
             self._ran(factory)
         self.assertIs(caught.exception.detail[ENDED_WITHOUT_REPORTING], True)
 
-    def test_the_resume_runs_under_what_is_left_of_the_steps_ceiling(self) -> None:
-        """The offer priced one ceiling for this step; a second pass carrying a fresh full
-        budget would double the ceiling the person agreed to."""
-        factory, made = self._scripted(self.UNREPORTED)
-        self._ran(factory, budget=5.0)
-        resumed = made[1].command
-        self.assertEqual(float(resumed[resumed.index("--max-budget-usd") + 1]), 4.75)
-
-    def test_a_step_with_nothing_left_to_spend_is_not_resumed(self) -> None:
-        factory, made = self._scripted({**self.UNREPORTED, "total_cost_usd": 5.0})
-        with self.assertRaises(CairnError) as caught:
-            self._ran(factory, budget=5.0)
-        self.assertEqual(len(made), 1)
-        self.assertEqual(caught.exception.cause, "provider_protocol")
-        self.assertEqual(
-            caught.exception.detail["resumed_for_report"], RESUME_DECLINED_BUDGET
-        )
-
-    def test_the_recorded_cost_and_turns_are_both_passes(self) -> None:
-        """A record naming only the second pass would under-report what the step spent."""
+    def test_the_recorded_turns_are_both_passes(self) -> None:
+        """A record naming only the second pass would under-report what the step did."""
         factory, _ = self._scripted(self.UNREPORTED)
         result = self._ran(factory)
-        self.assertAlmostEqual(result.detail["total_cost_usd"], 0.50)
         self.assertEqual(result.detail["turn_count"], 4)
-        self.assertAlmostEqual(result.detail["abandoned_cost_usd"], 0.25)
 
     def test_a_resume_that_also_reports_nothing_is_the_failure_it_was(self) -> None:
         """One resume, never a loop — and the outcome is never worse for having tried."""
@@ -1591,13 +1514,13 @@ class LingeringProcess(FakeProcess):
 
 class ASessionIsStoppedAtItsOwnBound(unittest.TestCase):
     """[22 B]: the engine's kill was the only bound on an agent step, and nothing survived
-    it — no report, no cost, no session id. The wrapper now stops the session itself, with
+    it — no report, no session id. The wrapper now stops the session itself, with
     headroom to ask it what it did."""
 
     def _run(self, factory: Callable[..., FakeProcess], deadline: float) -> CommandResult:
         stream = io.StringIO()
         with redirect_stdout(stream):
-            return run_claude("do work", Path("/tmp"), "auto", "sonnet", 5.0, [], factory, deadline)
+            return run_claude("do work", Path("/tmp"), "auto", "sonnet", [], factory, deadline)
 
     def test_a_session_that_outruns_its_bound_is_stopped_and_resumed_for_its_report(self) -> None:
         made: list[FakeProcess] = []
@@ -1646,7 +1569,7 @@ class ASessionIsStoppedAtItsOwnBound(unittest.TestCase):
     ) -> None:
         """The bound stops a session that will not answer, not one that is merely slow to
         leave after answering. Stopping it there would return a signal status the
-        translation reads as `provider_failed` — paid, proven work discarded."""
+        translation reads as `provider_failed` — proven work discarded."""
         made: list[FakeProcess] = []
 
         def factory(command: list[str], **kwargs: object) -> FakeProcess:
@@ -1686,14 +1609,13 @@ class ASessionIsStoppedAtItsOwnBound(unittest.TestCase):
 
 
 class EmitterContract(unittest.TestCase):
-    def test_an_agent_body_carries_its_own_bound_and_the_engine_allows_the_grace(self) -> None:
-        """The priced bound is the bound: the wrapper stops the session at `--timeout`, and
-        the engine's kill lands the report grace later ([22 B])."""
-        step = plan_step()
-        emitted = emit_step(step, "/repo")
+    def test_an_agent_body_states_no_bound_and_the_engine_allows_the_grace(self) -> None:
+        """The wrapper stops the session at the hang guard it owns, so the body carries no
+        bound, and the engine's kill lands the report grace later ([22 B])."""
+        emitted = emit_step(plan_step(), "/repo")
         tokens = shlex.split(emitted["run"])
-        self.assertEqual(float(tokens[tokens.index("--timeout") + 1]), step["timeout"])
-        self.assertEqual(emitted["timeout_sec"], step["timeout"] + AGENT_REPORT_GRACE)
+        self.assertNotIn("--timeout", tokens)
+        self.assertEqual(emitted["timeout_sec"], HANG_GUARD + AGENT_REPORT_GRACE)
 
     def test_table_handles_mixed_plan_kinds(self) -> None:
         self.assertEqual(set(KIND_EMITTERS), {"command", "agent.*"})
@@ -1715,26 +1637,23 @@ class EmitterContract(unittest.TestCase):
             self.assertIn("timeout_sec", item)
             self.assertIn("retry_policy", item)
 
-    def test_an_agent_body_writes_the_plans_own_ceiling_and_model(self) -> None:
-        """The definition is what an offer prices, so the bounds are in the body rather
-        than resolved from the environment at run time."""
+    def test_an_agent_body_writes_the_plans_own_model(self) -> None:
+        """The definition is what the record is read against, so the model is in the body
+        rather than resolved from the environment at run time."""
         fixture = Path(__file__).parents[1] / "fixtures/plans/mixed-kinds/graph.json"
         plan = normalise(json.loads(fixture.read_text()))
         tokens = shlex.split(emit_step(plan["steps"][0], "/repo")["run"])
         self.assertEqual(tokens[tokens.index("--model") + 1], "opus")
-        self.assertEqual(tokens[tokens.index("--max-budget-usd") + 1], "8.0")
+        self.assertNotIn("--max-budget-usd", tokens)
 
         defaulted = shlex.split(emit_step(step("agent.claude"), "/repo")["run"])
         self.assertEqual(defaulted[defaulted.index("--model") + 1], "sonnet")
-        self.assertEqual(defaulted[defaulted.index("--max-budget-usd") + 1], "5.0")
 
-    def test_an_agent_step_without_its_bounds_is_refused_at_emission(self) -> None:
-        for bound, value in (("max_budget_usd", None), ("max_budget_usd", 0.0), ("model", None)):
-            with self.subTest(bound=bound, value=value):
-                unbounded = dict(step("agent.claude"))
-                unbounded[bound] = value
-                with self.assertRaisesRegex(ValueError, "could not be priced"):
-                    emit_step(cast(Any, unbounded), "/repo")
+    def test_an_agent_step_without_its_model_is_refused_at_emission(self) -> None:
+        unnamed = dict(step("agent.claude"))
+        unnamed["model"] = None
+        with self.assertRaisesRegex(ValueError, "which model did the work"):
+            emit_step(cast(Any, unnamed), "/repo")
 
     def test_wait_step_outlives_the_bound_it_reports_on(self) -> None:
         fixture = Path(__file__).parents[1] / "fixtures/plans/mixed-kinds/graph.json"
@@ -1744,10 +1663,8 @@ class EmitterContract(unittest.TestCase):
         )
         emitted = emit_step(waiting, "/repo")
         tokens = shlex.split(emitted["run"])
-        self.assertEqual(
-            float(tokens[tokens.index("--timeout") + 1]), waiting["timeout"]
-        )
-        self.assertGreater(emitted["timeout_sec"], waiting["timeout"])
+        self.assertEqual(float(tokens[tokens.index("--timeout") + 1]), HANG_GUARD)
+        self.assertEqual(emitted["timeout_sec"], HANG_GUARD + WAIT_REPORT_GRACE)
 
     def test_every_run_is_one_safely_quoted_invocation(self) -> None:
         hostile = "printf '%s\\n' 'a b'; touch /tmp/not-executed && rm -rf /nope"
@@ -1813,7 +1730,7 @@ class EmitterContract(unittest.TestCase):
             engine_step(Path(temporary)),
             patch("cairn.__main__.run_provider", record),
         ):
-            main(["agent", "run", "--provider", "someone_else", "--prompt", "x", "--timeout", "600"])
+            main(["agent", "run", "--provider", "someone_else", "--prompt", "x"])
         self.assertEqual(seen, ["someone_else"])
 
 

@@ -2,12 +2,11 @@
 
 The first person to drive Cairn without having built it hit two walls, and neither is a bug in
 anything the invariants promise. Both are **defaults that make the person do work the tool could
-have offered to do** — one before a run can be described at all, one before a workflow can be
+have done for the person** — one before a run can be described at all, one before a workflow can be
 generated. This document owns those two and is the place the rest of the small ones land as they
 surface.
 
-**Serves** the capability surface of **Run** and **Author**. No invariant moves: consent stays a
-stated price and a qualifying yes ([15](15-the-skill.md)), and a verdict stays something a
+**Serves** the capability surface of **Run** and **Author**. No invariant moves: a verdict stays something a
 declared assertion proved ([08](08-verify-gate.md)).
 
 ## What a person hit, in the order they hit it
@@ -15,17 +14,18 @@ declared assertion proved ([08](08-verify-gate.md)).
 1. **Cairn asked which repository to run against**, from a conversation already sitting in one.
    The answer was obvious to the person and unavailable to the tool by rule.
 2. **Every step came back with `verify: null`**, so generation refused, so there was nothing to
-   run. The worksheet that resolves it offered a candidate for almost none of them.
+   run. The worksheet that resolves it proposed a candidate for almost none of them.
 
 Both read as the tool declining to participate. The second is the more expensive: it is the point
 where a plan that parsed correctly still produces nothing executable.
 
-## A — The target repository: infer it, and say so in the offer
+## A — The target repository: infer it, and say so
 
 **Moved to [31](31-the-repository-the-session-is-in.md)**, after the same wall was hit a
 second time and a case this section did not foresee turned up: a plan stated in the request,
 whose subjects are task IDs rather than a document on disk. The reasoning recorded here, that the
-path's three derivations are protected by the offer and not by the question, carries over there.
+path's three derivations are protected by saying which one was used and not by a question,
+carries over there.
 
 ## B — Every step arrives unasserted, and generation is a wall
 

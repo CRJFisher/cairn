@@ -3,7 +3,7 @@
 The engine's editing surface rewrites a workflow in place and records nothing about having
 done so: no version field, no content hash, no modification metadata, and the one facility
 that would have carried it is licensed and unavailable at the pin ([03]). So detection is
-Cairn's, and it costs one record and no engine cooperation.
+Cairn's, and it needs one record and no engine cooperation.
 
 The stamp lives in **two** places, and the second is what closes the cases a state record
 alone cannot see. In Cairn's state it carries the emitted file's own hash, which is byte

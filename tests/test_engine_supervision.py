@@ -143,7 +143,7 @@ class EngineCase(unittest.TestCase):
                         {"DAGU_HOME": str(self.home)},
                         {"CAIRN_PARENT_BRANCH": "main"},
                         # Judged at the run's first act, so a workflow that omitted it
-                        # would be refused before its first spend ([triggers.md]).
+                        # would be refused before its first session ([triggers.md]).
                         {"CAIRN_REPOSITORY": str(repository)},
                         # Where every step of this run writes its own account. There is no
                         # fallback, so a workflow that omitted it would have every step

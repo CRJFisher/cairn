@@ -238,21 +238,6 @@ class ValidatorMessages(unittest.TestCase):
         finding = self._first("cycle", "cycle")
         self.assertIn("checker -> emitter -> parser -> checker", finding.message)
 
-    def test_a_timeout_the_document_did_not_state_is_a_warning_naming_the_bound(self) -> None:
-        """A bound carries no quotation the way an edge does, so the person confirming the
-        parse is told the derivation supplied it — never refused ([22])."""
-        finding = self._first("mixed-kinds", "derived_timeout")
-        self.assertIn("7200 s", finding.message)
-        self.assertIn("3600 s", finding.message)
-        self.assertEqual(finding.step, "refresh_the_corpus")
-        result = validate(load("mixed-kinds", "graph.json"))
-        self.assertTrue(result.ok)
-        self.assertEqual(
-            sorted(str(f.step) for f in result.warnings if f.code == "derived_timeout"),
-            ["refresh_the_corpus", "wait_for_the_index_to_settle"],
-        )
-        self.assertNotIn("derived_timeout", [f.code for f in validate(load("linear-chain", "graph.json")).warnings])
-
     def test_an_assertion_bound_the_document_did_not_state_is_a_warning_too(self) -> None:
         graph = minimal()
         graph["steps"][0]["verify_timeout"] = 1800
@@ -391,12 +376,12 @@ class UncoveredCodes(unittest.TestCase):
         graph["steps"][0]["task"] = "   "
         self.assertIn("empty_task", [f.code for f in validate(graph).errors])
 
-    def test_a_non_positive_timeout_and_a_negative_retry_count_are_refused(self) -> None:
+    def test_a_non_positive_verify_timeout_and_a_negative_retry_count_are_refused(self) -> None:
         graph = minimal()
-        graph["steps"][0]["timeout"] = 0
+        graph["steps"][0]["verify_timeout"] = 0
         graph["steps"][0]["retries"] = -1
         messages = [f.message for f in validate(graph).errors if f.code == "schema"]
-        self.assertTrue(any("steps[0].timeout" in message for message in messages), messages)
+        self.assertTrue(any("steps[0].verify_timeout" in message for message in messages), messages)
         self.assertTrue(any("steps[0].retries" in message for message in messages), messages)
 
     def test_a_remedy_needs_an_agent_session_to_resume_and_an_assertion_to_rerun(self) -> None:
@@ -579,15 +564,13 @@ class StepRecord(unittest.TestCase):
         self.assertEqual(step["deps"], [])
         self.assertIsNone(step["tools"])
         self.assertEqual(step["retries"], 0)
-        self.assertEqual(step["timeout"], 3600)
 
-    def test_retry_and_timeout_defaults_follow_the_kind(self) -> None:
+    def test_retry_defaults_follow_the_kind(self) -> None:
         graph = minimal()
         graph["steps"][0]["kind"] = "command"
         graph["steps"][0]["command"] = "make build"
         graph["steps"][0]["command_type"] = "exec"
         step = normalise(graph)["steps"][0]
-        self.assertEqual(step["timeout"], 600)
         self.assertEqual(step["retries"], 0)
 
     def test_a_defaulted_list_is_never_shared_between_steps(self) -> None:
@@ -611,7 +594,6 @@ class StepRecord(unittest.TestCase):
         raw["steps"][0]["command_type"] = "exec"
         graph = normalise(raw)
         self.assertEqual(graph["steps"][0]["kind"], "command")
-        self.assertEqual(graph["steps"][0]["timeout"], 600)
 
     def test_command_text_is_explicit_and_command_only(self) -> None:
         raw = minimal(default_kind="command")
@@ -625,12 +607,6 @@ class StepRecord(unittest.TestCase):
         agent["steps"][0]["command"] = "printf done"
         with self.assertRaisesRegex(SchemaError, "agent kind must not carry"):
             normalise(agent)
-
-    def test_any_agent_provider_gets_the_agent_timeout_not_the_command_one(self) -> None:
-        """Adding a provider must not silently cut its steps to the command bound."""
-        graph = minimal(default_kind="agent.codex")
-        self.assertEqual(normalise(graph)["steps"][0]["timeout"], 3600)
-        self.assertTrue(validate(graph).ok)
 
     def test_a_missing_verify_key_is_rejected_while_a_null_one_is_recorded(self) -> None:
         base = minimal()
@@ -654,42 +630,24 @@ class StepRecord(unittest.TestCase):
                 with self.assertRaises(SchemaError):
                     normalise(graph)
 
-    def test_an_agent_step_resolves_its_own_ceiling_and_model(self) -> None:
-        """A plan that says nothing is still bounded: the session an agent step opens
-        cannot be priced without a ceiling, or attributed without a model."""
+    def test_an_agent_step_resolves_its_own_model(self) -> None:
+        """A plan that says nothing still names who does the work: the session an agent
+        step opens cannot be attributed without a model."""
         step = normalise(minimal())["steps"][0]
-        self.assertEqual(step["max_budget_usd"], 5.0)
         self.assertEqual(step["model"], "sonnet")
 
-    def test_a_command_step_carries_no_session_bounds(self) -> None:
+    def test_a_command_step_carries_no_model(self) -> None:
         raw = minimal(default_kind="command")
         raw["steps"][0]["command"] = "printf done"
         raw["steps"][0]["command_type"] = "exec"
         step = normalise(raw)["steps"][0]
-        self.assertIsNone(step["max_budget_usd"])
         self.assertIsNone(step["model"])
-        for bound, value in (("max_budget_usd", 2.0), ("model", "sonnet")):
-            with self.subTest(bound):
-                declared = copy.deepcopy(raw)
-                declared["steps"][0][bound] = value
-                with self.assertRaisesRegex(SchemaError, "command kind must not carry"):
-                    normalise(declared)
+        declared = copy.deepcopy(raw)
+        declared["steps"][0]["model"] = "sonnet"
+        with self.assertRaisesRegex(SchemaError, "command kind must not carry"):
+            normalise(declared)
 
-    def test_a_whole_dollar_ceiling_is_a_float_not_a_type_error(self) -> None:
-        raw = minimal()
-        raw["steps"][0]["max_budget_usd"] = 8
-        self.assertEqual(normalise(raw)["steps"][0]["max_budget_usd"], 8.0)
-        raw["steps"][0]["max_budget_usd"] = True
-        with self.assertRaisesRegex(SchemaError, "found bool"):
-            normalise(raw)
-
-    def test_an_unpriceable_agent_step_is_a_validation_error(self) -> None:
-        graph = minimal()
-        graph["steps"][0]["max_budget_usd"] = 0
-        self.assertIn(
-            "steps[0].max_budget_usd",
-            " ".join(f.message for f in validate(graph).errors if f.code == "schema"),
-        )
+    def test_a_blank_model_is_a_validation_error(self) -> None:
         graph = minimal()
         graph["steps"][0]["model"] = "   "
         self.assertIn("model", [f.code for f in validate(graph).errors])
@@ -702,19 +660,17 @@ class StepRecord(unittest.TestCase):
     def test_the_corpus_exercises_every_field_the_record_carries(self) -> None:
         kinds: set[str] = set()
         scopes: set[str] = set()
-        tools = reads = timeouts = ceilings = models = 0
+        tools = reads = models = 0
         for name in NAMES:
             for step in load(name, "graph.json")["steps"]:
                 kinds.add(step["kind"])
                 scopes.add(step["scope"])
                 tools += bool(step["tools"])
                 reads += bool(step["reads"])
-                timeouts += step["timeout"] not in (600, 3600)
-                ceilings += step.get("max_budget_usd") not in (None, 5.0)
                 models += step.get("model") not in (None, "sonnet")
         self.assertEqual(kinds, {"agent.claude", "command"})
         self.assertTrue({"once", "run", "weekly", "inputs"} <= scopes)
-        self.assertTrue(tools and reads and timeouts and ceilings and models)
+        self.assertTrue(tools and reads and models)
 
 
 class Identifiers(unittest.TestCase):
@@ -1217,7 +1173,7 @@ class AnsweringFromTheCommandLine(unittest.TestCase):
 
     def test_a_document_spelling_a_non_finite_number_is_refused_as_it_is_read(self) -> None:
         self.graph.write_text(
-            self.graph.read_text(encoding="utf-8").replace('"timeout": 3600', '"timeout": NaN'),
+            self.graph.read_text(encoding="utf-8").replace('"verify_timeout": 600', '"verify_timeout": NaN'),
             encoding="utf-8",
         )
         self.assertEqual(self.run_plan("validate", str(self.graph))[0], 2)
@@ -1234,12 +1190,11 @@ class TheVersionAndTheBounds(unittest.TestCase):
             " ".join(f.message for f in validate(graph).errors if f.code == "schema"),
         )
 
-    def test_a_bound_that_is_not_a_finite_number_is_refused_before_normalising(self) -> None:
+    def test_a_bound_that_is_not_an_integer_is_refused_before_normalising(self) -> None:
         for field, value in (
-            ("max_budget_usd", float("inf")),
-            ("max_budget_usd", float("nan")),
-            ("max_budget_usd", 10**400),
-            ("timeout", True),
+            ("verify_timeout", float("inf")),
+            ("verify_timeout", float("nan")),
+            ("verify_timeout", True),
         ):
             with self.subTest(field=field, value=value):
                 graph = minimal()

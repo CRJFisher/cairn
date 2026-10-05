@@ -50,8 +50,7 @@
       "scope": "once",
       "reads": [],
       "retries": 0,
-      "kind": "agent.claude",
-      "timeout": 3600
+      "kind": "agent.claude"
     },
     {
       "id": "hydration_hook",
@@ -75,8 +74,7 @@
       "scope": "once",
       "reads": [],
       "retries": 0,
-      "kind": "agent.claude",
-      "timeout": 3600
+      "kind": "agent.claude"
     },
     {
       "id": "hydrate_setup_command",
@@ -100,8 +98,7 @@
       "scope": "once",
       "reads": [],
       "retries": 0,
-      "kind": "agent.claude",
-      "timeout": 3600
+      "kind": "agent.claude"
     },
     {
       "id": "global_wiring",
@@ -130,8 +127,7 @@
       "scope": "once",
       "reads": [],
       "retries": 0,
-      "kind": "agent.claude",
-      "timeout": 3600
+      "kind": "agent.claude"
     },
     {
       "id": "ariadne_migration",
@@ -165,8 +161,7 @@
       "scope": "once",
       "reads": [],
       "retries": 0,
-      "kind": "agent.claude",
-      "timeout": 3600
+      "kind": "agent.claude"
     }
   ],
   "omissions": [

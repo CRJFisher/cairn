@@ -26,7 +26,6 @@ from cairn.baseconfig import (
     assert_dag_retry_disabled,
     base_config_path,
 )
-from cairn.bounds import positive_finite
 from cairn.commands import run_exec, run_wait_duration, run_wait_until
 from cairn.core import (
     EXIT_FAILED,
@@ -65,7 +64,7 @@ from cairn.merge import run_merge, verify_landed
 from cairn.parameters import parent_branch, refuse_misfiled_records
 from cairn.parameters import repository as declared_repository
 from cairn.plan.cli import main as plan_main
-from cairn.plan.schema import AGENT_BUDGET_USD, AGENT_MODEL, SCOPES
+from cairn.plan.schema import AGENT_MODEL, SCOPES
 from cairn.protocol import compose_remedy_task
 from cairn.providers import run_provider
 from cairn.record.cli import main as record_main
@@ -134,18 +133,13 @@ def _wait(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
 
 
 def _agent(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
-    # The cheapest moment this run can discover it no longer owns the repository: one ref
-    # read, against a session that is about to cost an hour of paid time.
+    # The earliest moment this run can discover it no longer owns the repository: one ref
+    # read, ahead of a session that may run for an hour.
     refuse_lost_repository(context.working_directory, context.run_id)
-    if (
-        not positive_finite(args.timeout)
-        or not positive_finite(args.max_budget_usd)
-        or not isinstance(args.model, str)
-        or not args.model.strip()
-    ):
+    if not isinstance(args.model, str) or not args.model.strip():
         raise CairnError(
             "invalid_arguments",
-            "an agent session requires a positive finite timeout and budget and a model",
+            "an agent session requires the model that is to do its work",
         )
     prompt: str = args.prompt
     resume: str | None = None
@@ -168,9 +162,7 @@ def _agent(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
         context.working_directory,
         "auto",
         args.model,
-        args.max_budget_usd,
         args.tool or [],
-        deadline_seconds=args.timeout,
         resume_session=resume,
     )
     if remedy:
@@ -222,8 +214,8 @@ def _lock(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
             None,
             {"released": dict(record)},
         )
-    # Checked before the run's first spend rather than trusted: a scheduler on this machine
-    # would re-execute every failed run of the last day, Cairn's or not (09).
+    # Checked at the run's first act rather than trusted: a scheduler on this machine would
+    # re-execute every failed run of the last day, Cairn's or not (09).
     assert_dag_retry_disabled(
         Path(args.base_config) if args.base_config else base_config_path()
     )
@@ -365,15 +357,10 @@ def _merge(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
             candidates=args.branch,
             context=context,
         )
-    if (
-        not positive_finite(args.timeout)
-        or not positive_finite(args.max_budget_usd)
-        or not isinstance(args.model, str)
-        or not args.model.strip()
-    ):
+    if not isinstance(args.model, str) or not args.model.strip():
         raise CairnError(
             "invalid_arguments",
-            "a merge resolution requires a positive finite timeout and budget and a model",
+            "a merge resolution requires the model that is to do the resolving",
         )
     return run_merge(
         context.working_directory,
@@ -382,8 +369,6 @@ def _merge(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
         candidates=args.branch,
         provider=args.provider,
         model=args.model,
-        max_budget_usd=args.max_budget_usd,
-        timeout_seconds=args.timeout,
         context=context,
     )
 
@@ -450,8 +435,6 @@ def _parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     child.add_argument("--provider", required=True)
     child.add_argument("--prompt", required=True)
     child.add_argument("--model", default=AGENT_MODEL)
-    child.add_argument("--max-budget-usd", type=float, default=AGENT_BUDGET_USD)
-    child.add_argument("--timeout", type=float, required=True)
     child.add_argument("--tool", action="append")
     # A remedy: the same session, resumed over the assertion it failed ([protocol.py]).
     child.add_argument("--remedy-of", dest="remedy_of")
@@ -499,12 +482,11 @@ def _parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     child.add_argument("--slot", type=int, required=True)
     child.add_argument("--branch", action="append", required=True)
     child.add_argument("--provider", required=True)
-    # A resolution is a paid session like any other, and until these existed it was the one
-    # session in a run that no caller could price or choose a model for. The emitter writes
-    # all three; these parser requirements also keep hand-written invocations bounded.
+    # A resolution is a session like any other, so the model that does it is named rather
+    # than inherited from the environment. The emitter writes it; the requirement here also
+    # keeps a hand-written invocation from leaving a record that cannot say which model
+    # resolved the conflict.
     child.add_argument("--model", required=True)
-    child.add_argument("--max-budget-usd", type=float, required=True)
-    child.add_argument("--timeout", type=float, required=True)
     child = merge_subcommands.add_parser("verify", add_help=add_help)
     child.add_argument("--merge", required=True)
     child.add_argument("--branch", action="append", required=True)
@@ -618,7 +600,7 @@ def gate_main(arguments: list[str]) -> int:
                 "recorded_scope": marker["scope"],
                 "recorded_key": marker["key"],
                 # Which run did the work this one is skipping. Without it a recovery run
-                # renders as a screen of no-ops with no account of who paid for them.
+                # renders as a screen of no-ops with no account of who did them.
                 "recorded_run": marker["run_id"],
             },
         )
@@ -654,8 +636,8 @@ def main(argv: list[str] | None = None) -> int:
         return occasion_main(arguments[1:])
     if arguments and arguments[0] == "supervise":
         return supervise_main(arguments[1:])
-    # Installing a schedule and starting the daemon it costs are one namespace, because the
-    # daemon *is* the price of a recurring trigger and separating them is how a person ends
+    # Installing a schedule and starting the daemon it needs are one namespace, because the
+    # daemon is what makes a recurring trigger fire and separating them is how a person ends
     # up with a trigger that silently does nothing ([triggers.md]).
     if arguments and arguments[0] == "schedule":
         return schedule_main(arguments[1:])
@@ -667,9 +649,8 @@ def main(argv: list[str] | None = None) -> int:
         return record_main(arguments[1:])
     if arguments and arguments[0] == "report":
         return report_main(arguments[1:])
-    # The skill's own two. `run` is the only path in Cairn's code that can begin a paid run,
-    # and it accepts an authorisation rather than a request; `explain` answers three
-    # questions and starts nothing ([skill/cli.py]).
+    # The skill's own two. `run` is the only path in Cairn's code that begins a run;
+    # `explain` answers three questions and starts nothing ([skill/cli.py]).
     if arguments and arguments[0] == "run":
         return run_main(arguments[1:])
     if arguments and arguments[0] == "explain":
@@ -685,8 +666,8 @@ def main(argv: list[str] | None = None) -> int:
     # hand the mark gate a `0` for it ([assertions.py]).
     if arguments[:2] == ["verify", NEEDED_VERB]:
         return needed_main(arguments[2:])
-    # The remedy gate fails closed in its own direction — a fault opens no paid session —
-    # and writes its own decline, so it is routed ahead of the mark gate's parser too.
+    # The remedy gate fails closed in its own direction — a fault opens no session — and
+    # writes its own decline, so it is routed ahead of the mark gate's parser too.
     if arguments[:2] == ["verify", REMEDY_VERB]:
         return remedy_main(arguments[2:])
     # The verify gate is a precondition too, and it is the fail-open gate's exact inverse:
@@ -746,7 +727,7 @@ def main(argv: list[str] | None = None) -> int:
             write_report(context, result, duration)
         except Exception as exc:  # noqa: BLE001 - the last chance to leave a record
             # A result the writer cannot serialise, or a status outside the vocabulary,
-            # would otherwise cost the router the whole report. Degrade to a shape that
+            # would otherwise leave the router no report at all. Degrade to a shape that
             # cannot fail rather than to nothing.
             traceback.print_exc()
             write_report(

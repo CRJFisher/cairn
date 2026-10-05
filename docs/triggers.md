@@ -1,7 +1,7 @@
 # Triggering a run, and the surface that watches one
 
 A run is a thing you can watch: the topology drawn, each step's state as it changes, its
-logs, its cost, and where a failure halted the graph. A finished run is a thing you can read
+logs, and where a failure halted the graph. A finished run is a thing you can read
 afterwards, from the same place. Most of that is the engine's, and Cairn links to it rather
 than rebuilding it.
 
@@ -10,23 +10,21 @@ them.** The commands below are what that skill invokes, and the link is the `vie
 run's record carries. (This is a different conversation from the authoring one that writes a
 plan graph, which is [plan-derivation.md](plan-derivation.md)'s.) The view answers _what is
 happening_ better than any prose can, and it reads a finished run identically to a live one.
-It will never answer _what did this cost_ or _has this workflow been edited since Cairn
-wrote it_ — there is no cost field anywhere in the engine's model, and the engine records
-nothing about an edit at all. Those two are Cairn's, and they live in the run record, which
-[report.md](report.md) renders.
+It will never answer _has this workflow been edited since Cairn wrote it_ — the engine
+records nothing about an edit at all. That one is Cairn's, and it lives in the run record,
+which [report.md](report.md) renders.
 
 ## The division of labour
 
-| Concern                            | Owner     | Why                                                                           |
-| ---------------------------------- | --------- | ----------------------------------------------------------------------------- |
-| The graph, live step state, logs   | Engine    | Drawn already, pushed over server-sent events, in place and without a reload  |
-| Timings and the halt point         | Engine    | Per-step start and duration, a Gantt, and the failed node drawn red           |
-| Cold reads                         | Engine    | A finished run renders identically and survives the server restarting         |
-| Manual, cron and external triggers | Engine    | Cairn supplies the safety and the parameter handling around them              |
-| **Cost**                           | **Cairn** | No field exists in the engine's model; it comes from Cairn's own step records |
-| **Divergence**                     | **Cairn** | The engine records nothing about an edit, and its audit log is licensed       |
-| The verdict                        | Cairn     | A run that dropped a branch reports a clean success at the engine level       |
-| The rendered report                | Cairn     | [report.md](report.md): one model, three renderings, one fixed answer order   |
+| Concern                            | Owner     | Why                                                                          |
+| ---------------------------------- | --------- | ---------------------------------------------------------------------------- |
+| The graph, live step state, logs   | Engine    | Drawn already, pushed over server-sent events, in place and without a reload |
+| Timings and the halt point         | Engine    | Per-step start and duration, a Gantt, and the failed node drawn red          |
+| Cold reads                         | Engine    | A finished run renders identically and survives the server restarting        |
+| Manual, cron and external triggers | Engine    | Cairn supplies the safety and the parameter handling around them             |
+| **Divergence**                     | **Cairn** | The engine records nothing about an edit, and its audit log is licensed      |
+| The verdict                        | Cairn     | A run that dropped a branch reports a clean success at the engine level      |
+| The rendered report                | Cairn     | [report.md](report.md): one model, three renderings, one fixed answer order  |
 
 One asymmetry worth knowing: the view labels a precondition-skipped step `Precondition
 unmet`, while the state file spells a chain halt and a branch exclusion with the same code.
@@ -60,12 +58,12 @@ manual trigger from the view needs nothing else running.
 
 **The scheduler's is not.** While it is up its retry scanner re-executes every failed run
 recorded on the machine in the previous 24 hours — including runs outside the directory it
-watches, three attempts each. For a tool whose failed runs are paid agent sessions against
+watches, three attempts each. For a tool whose failed runs are agent sessions against
 git repositories, that is unacceptable by default.
 
-**An external trigger costs the scheduler too**, which is the non-obvious one. A webhook does
+**An external trigger needs the scheduler too**, which is the non-obvious one. A webhook does
 not execute a run; it _enqueues_ one, and only the scheduler drains the queue. So a webhook
-is not a cheaper alternative to a schedule — it is the same escalation through a different
+is not a lighter alternative to a schedule — it is the same escalation through a different
 door.
 
 | Path                   | What must be running | Can vary parameters                               | Carries the retry hazard |
@@ -75,9 +73,9 @@ door.
 | Cron schedule          | `dagu scheduler`     | **nothing at all**                                | **yes**                  |
 | External webhook       | `dagu scheduler`     | **nothing** — the body arrives beside them        | **yes**                  |
 
-So a schedule or an external trigger is a deliberate, explained escalation from the one-shot
+So a schedule or an external trigger is a deliberate, stated escalation from the one-shot
 default, never a side effect of wanting a recurring plan. Wanting the _view_ is not that
-escalation and is never priced as one.
+escalation.
 
 ## What a caller may vary, and what is refused
 
@@ -92,7 +90,7 @@ re-authoring it.
 
 **They are judged at the run's first act rather than at any trigger surface.** Cairn owns
 none of the four surfaces that can set them, and `cairn lock acquire` is the one node every
-path passes through, before the first worktree and before the first paid session. A refusal
+path passes through, before the first worktree and before the first agent session. A refusal
 there is a failed node carrying its reason — which is what the view draws, what `dagu start`
 exits on, and what the record keeps.
 
@@ -133,26 +131,23 @@ Three properties follow, and the third is the one to remember:
   recurring plan does work every time it fires.
 - **`dagu retry` continues** the occasion it is recovering, because it reuses the run
   identity and the occasion is recorded under it.
-- A **fresh re-run under a new identity mints a new occasion and re-pays** every `run`-scoped
+- A **fresh re-run under a new identity mints a new occasion and re-does** every `run`-scoped
   step. To continue an earlier one deliberately, pass it:
   `--params CAIRN_OCCASION=<the record's lineage.occasion>`.
 
-## Installing a schedule, and the daemon it costs
+## Installing a schedule, and the daemon it needs
 
 ```text
-python3 -m cairn schedule offer --scope install --plan <slug> --repository <path>
-python3 -m cairn schedule install --plan <slug> --repository <path> \
-    --offer <id> --reply 'yes'
+python3 -m cairn schedule install --plan <slug> --repository <path>
 python3 -m cairn schedule status
-python3 -m cairn schedule offer --scope start
-python3 -m cairn schedule start --offer <id> --reply 'yes'
+python3 -m cairn schedule start
 python3 -m cairn schedule remove --plan <slug> --repository <path>
 ```
 
-Each `offer` prints the cost and mints a persisted, scope-specific id. Installation and
-process start spend separate offers, require an affirmative reply beginning with `yes`,
-record the accepting words, and accept each id once.
-A run offer never authorises either daemon act.
+`install` and `start` each print what a scheduler does on this machine, because it decides
+what will execute: it must be running for a cron schedule or a webhook to fire at all, and
+its retry scanner re-executes the failed runs recorded here. It is information and asks
+nothing; both then proceed.
 
 The cron expression goes into the file at authoring time, because a workflow is generated
 and never hand-maintained:
@@ -181,7 +176,7 @@ another plan is refused rather than replaced.
 **`start` becomes the scheduler.** It replaces itself with `dagu scheduler` and runs in
 the foreground until killed, so keeping a nightly plan firing means keeping that process
 alive — under `launchd`, `systemd`, or a terminal you leave open. Cairn supervises nothing
-and offers no `stop`: the process is the daemon.
+and has no `stop`: the process is the daemon.
 
 It asserts, at the moment of starting rather than at install, that the machine is safe
 to run a scheduler on, and refuses otherwise **naming every failed run it would have
@@ -216,7 +211,6 @@ the token went:
 
 ```text
 python3 -m cairn schedule install --plan <slug> --repository <path> \
-    --offer <id> --reply 'yes' \
     --webhook-token-sink '1password: cairn/webhooks'
 ```
 
@@ -236,8 +230,8 @@ it invokes the engine, launches the engine in its own session with its output go
 `runs/<run-id>/engine.log`, and returns once the engine's own history says it has the run.
 It does not wait for the run to end, and nothing is lost by not waiting: the release handler
 writes the run's record whether anyone is watching or not ([the run model](run-model.md)). The
-spent offer beside it records the run id and the engine command, so a start whose process
-died is still a run somebody can name. `--wait` is the exception, for a caller that wants
+run id and address are printed first, so a start whose process died is still a run
+somebody can name. `--wait` is the exception, for a caller that wants
 the engine's exit status in line.
 
 A run started at the view and a run started by Cairn are the same record but for one field:
@@ -272,8 +266,8 @@ The engine's own `overlap_policy` is a different question: it decides what happe
 DAG's firing arrives while that same DAG is still running, and every emitted file states
 `skip` rather than inheriting the machine's answer. **This is a knowing exception to "never
 silently dropped".** A firing skipped that way never dispatches a node, so Cairn's lock is
-never reached and nothing anywhere records that a firing was due — and the engine offers no
-spelling at this pin that avoids it, because the alternatives queue paid work against a
+never reached and nothing anywhere records that a firing was due — and the engine has no
+spelling at this pin that avoids it, because the alternatives queue work against a
 scheduler nobody started or discard all but the most recent. The refusal a person can see is
 Cairn's lock, and it covers the case that matters, which is two plans against one
 repository.
@@ -291,7 +285,7 @@ and proceeds; it never merges ([workflow.md](workflow.md)).
 Every run's release writes its record to `runs/<run-id>/record.json` in Cairn's own state,
 whether anyone was watching or not — the exit handler is the only body that runs however the
 run ends, because the engine never dispatches a step whose dependency failed. The record
-carries the run's verdict, its cost, and `view_url`, so a run is reachable from its identity
+carries the run's verdict and `view_url`, so a run is reachable from its identity
 alone:
 
 ```text

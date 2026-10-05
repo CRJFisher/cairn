@@ -7,7 +7,7 @@ leader and pairs it with a watcher that kills the group on EOF; `kill -9` on the
 orchestrator, on a step, and on the whole tree each leave zero surviving processes,
 grandchildren included. Cairn builds no process groups inside a run and no kill path — the
 one it does build is the detached engine's own session, so that a closing terminal and a
-caller's process-tree kill cannot reach a run that was already paid for
+caller's process-tree kill cannot reach a run that was already under way
 ([triggers.md](triggers.md)). What it owns is
 what the engine leaves behind.
 
@@ -83,10 +83,10 @@ repository out from under the retry.
 
 ## A step halts if the repository stopped being its own
 
-Every step that spends or writes — `agent`, `exec`, `commit`, `worktree` — reads the lock
+Every step that opens a session or writes — `agent`, `exec`, `commit`, `worktree` — reads the lock
 before it starts and halts if the repository is held by a different run. A run whose lock
 was reclaimed while it queued would otherwise discover it at its next commit, an hour of
-paid agent time later, with a second run already writing to the same repository.
+agent time later, with a second run already writing to the same repository.
 
 Only a lock held by somebody else counts. An absent lock does not: these subcommands are the
 step vocabulary and stand on their own, and a working directory that is no repository at all
@@ -99,7 +99,7 @@ crashed run holds a repository, which is the only job that window has.
 
 ## What a run's first step does
 
-`cairn lock acquire` is the run's first act, before its first spend:
+`cairn lock acquire` is the run's first act, before its first step:
 
 1. Assert DAG-level retry is disabled in the engine's base configuration.
 2. Refuse a bare repository, which has no working tree, and a submodule, whose admin
@@ -120,7 +120,7 @@ The owner check is what stays hard: a run that halted _because_ the repository w
 reaches this same code, and must never release the lock of the run it lost to.
 
 A run also refuses to start against a repository that already has uncommitted work in it —
-before the offer is spent, and again here as the backstop for a tree that dirtied itself in
+before the run starts, and again here as the backstop for a tree that dirtied itself in
 between ([../capabilities/running.md](../capabilities/running.md)). A chain step commits in
 the repository itself, and its commit stages only what its own session dirtied: it
 snapshots the dirty paths before the session and stages the paths dirty afterwards that
@@ -148,7 +148,7 @@ send a plan's every commit to a repository nobody named.
 
 Ref writes wait three seconds for a contended lock rather than git's own 100ms on a loose
 ref and one second on `packed-refs`. An agent commits in its own worktree outside the write
-mutex by design, so a collision is expected traffic; failing on it would end a paid step for
+mutex by design, so a collision is expected traffic; failing on it would end a session for
 a condition that clears itself.
 
 A path that is empty or relative is refused before git sees it. An unresolved engine
@@ -181,8 +181,8 @@ Three things are true, in this order:
 2. The lock comes free on its own once `acquired_at + max_duration × 1.25` has passed — the
    window the killed plan itself declared. That duration is the **sum** of every step's
    bound rather than its critical path, so a wide plan's window is longer than its likely
-   wall-clock by some margin: the price of never taking a lock from a run that is still
-   writing. A run killed at the _step_ level pays none of it — the orchestrator survives
+   wall-clock by some margin: the consequence of never taking a lock from a run that is still
+   writing. A run killed at the _step_ level waits for none of it — the orchestrator survives
    and reaches its exit handler, so the lock comes back at once.
 3. The engine's own record still says `running`, and stays that way. Repair it with
    `python3 -m cairn supervise reconcile`, which defaults to the engine's own run history.
@@ -220,11 +220,11 @@ report never describes a dead run's steps as running.
 A running `dagu scheduler` reconciles zombies for free, which is tempting, and it is the
 wrong trade. The same process re-executes every failed run recorded on the machine in the
 previous 24 hours, including runs from directories it does not watch. For Cairn a failed run
-is a paid agent session that mutated a repository.
+is an agent session that mutated a repository.
 
 There is a second hazard in the same file and it has the same shape. The engine ships
 `catchup_window: "6h"`, and a scheduler starting after downtime executes every cron slot
-missed inside that window — up to a thousand of them, each a paid agent session for Cairn.
+missed inside that window — up to a thousand of them, each an agent session for Cairn.
 Every file Cairn emits states the empty window that turns replay off, so this reaches only
 the DAGs Cairn did not write, which is exactly what the scanner reaches.
 
@@ -248,24 +248,31 @@ as unreadable rather than guessed at.
 --disable`. Without it every `lock acquire` refuses with `base_retry_enabled`, and every
 such refusal names this command.
 
-## Bounds on every emitted step
+## The hang guard on every emitted step
 
 I7 forbids an unbounded step, and the engine supplies neither bound by default: its own step
 timeout is none, and a step retries not at all while the _DAG_ around it retries three times.
 Both are written on every emitted step, and a test fails if any step is emitted without them.
 
-| Kind                     | Timeout                     | Retries |
-| ------------------------ | --------------------------- | ------- |
-| `agent.*`                | the step's own bound + 180s | 0       |
-| `command`                | 600s                        | 0       |
-| `command` (`wait_until`) | the wait's own bound + 15s  | 0       |
-| verify                   | 600s                        | 0       |
-| Cairn's own subcommands  | 600s                        | 0       |
+**One constant, `HANG_GUARD`, bounds every plan step.** It is Cairn's own: a plan cannot set
+it, and no report states it as a limit on a step. Its only job is to kill a session or a
+command that has stopped making progress, so it sits above any step that is still going. A
+session the guard stops is reported as stopped by the hang guard.
 
-An agent step's own bound is the `--timeout` its body carries, enforced by the wrapper: the
-session is stopped there, resumed once under the 180-second grace to give the account it
-owes, and its report is written before the engine's kill — which lands the grace later and
-erases nothing a report could have said. The grace is for the report, never the work.
+| Kind                     | Timeout                                                    | Retries |
+| ------------------------ | ---------------------------------------------------------- | ------- |
+| `agent.*`                | `HANG_GUARD` + 180s                                        | 0       |
+| `command`                | `HANG_GUARD`                                               | 0       |
+| `command` (`wait_until`) | `HANG_GUARD` + 15s                                         | 0       |
+| verify                   | the step's `verify_timeout` (600s unless the plan sets it) | 0       |
+| Cairn's own subcommands  | 600s                                                       | 0       |
+
+The wrapper enforces the guard on an agent session: the session is stopped there, resumed
+once under the 180-second grace to give the account it owes, and its report is written
+before the engine's kill — which lands the grace later and erases nothing a report could
+have said. The grace is for the report, never the work. A `wait` keeps its own `--timeout`,
+because how long to wait for a condition is what that step means; the emitter sets it to the
+guard.
 
 Two further bounds sit inside a support step's 600 seconds: a writer waits **300 seconds**
 for the git write mutex and then reports `git_mutex_timeout` rather than being killed by the
@@ -278,15 +285,14 @@ whenever a retry policy is present.
 
 **Nothing is retried**, and a plan that asks for retries gets exactly what it asked for.
 A step that failed because the provider blinked and one that failed because the task is
-wrong are indistinguishable from outside, and a second paid session would run against a
+wrong are indistinguishable from outside, and a second session would run against a
 repository the first one already changed. So a failure stops the step, once, loudly.
 
 A rate limit is the one distinguishable case — it arrives as a typed stream event carrying
 `resetsAt`, and `cairn agent run` leaves on exit **75** rather than 1 — and it is still not
 retried. The engine's retry policy is a static number in a file and cannot read `resetsAt`.
 A fixed wait short enough to be worth making is far shorter than a real limit's reset, so
-the retry would usually meet the same limit and pay a second session's tokens to discover
-it. The moment is reported instead: `detail.resets_at` says when the plan is worth running
+the retry would usually meet the same limit and meet it again. The moment is reported instead: `detail.resets_at` says when the plan is worth running
 again, and the committed marker means the re-run skips every step that already landed.
 
 Exit 75 survives as the distinction it always was — a report can say the run stopped

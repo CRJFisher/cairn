@@ -28,8 +28,8 @@ before either filed, and an unlocked read/check/write would let whichever finish
 decide what every later gate reads. Failure's dominance is what that lock protects, and it
 holds whatever order the two writers arrive in ([_publish]).
 
-**It fails open, like the marker gate.** Running an assertion that need not run costs
-minutes; skipping one that must run costs the step its record. Every fault, argument skew
+**It fails open, like the marker gate.** Running an assertion that need not run wastes
+minutes; skipping one that must run loses the step its record. Every fault, argument skew
 included, exits zero — which is also why this verb has its own routing arm rather than a
 place inside the fail-closed `verify gate` parser ([__main__.py]).
 
@@ -99,8 +99,8 @@ DECISIONS: tuple[str, ...] = (
 )
 
 # The remedy gate's two answers. It fails **closed**, the opposite of the assertion's own
-# gate: a remedy it wrongly declines costs a step that was failing anyway, while one it
-# wrongly opens is a paid session nobody needed.
+# gate: a remedy it wrongly declines loses nothing from a step that was failing anyway, while one it
+# wrongly opens is a session nobody needed.
 REMEDY_OPEN_IT = EXIT_OK
 REMEDY_DECLINE_IT = EXIT_FAILED
 
@@ -498,8 +498,8 @@ def _publish(
     not finish writing.
 
     A lock that cannot be taken publishes nothing, which is the one safe way to be without
-    one: an absent proof costs the next gate quoting this command its own execution, while
-    a write outside the critical section would cost a failure its dominance.
+    one: an absent proof makes the next gate quoting this command run it itself, while
+    a write outside the critical section would lose a failure its dominance.
     """
     path = assertion_result_path(context.runs_root, context.run_id, command)
     try:

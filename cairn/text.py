@@ -9,14 +9,13 @@ going rather than of what it is, and text escaped for one sink is wrong in the n
 So what these functions produce is **unescaped**. `<script>` survives here as itself and is
 escaped by whichever surface renders it ([14]).
 
-The numeric admissions belong with the text for one reason: they are the same job. A cost
+The numeric admissions belong with the text for one reason: they are the same job. A value
 of `NaN` serialises as a bare `NaN`, which is not JSON, so one provider's odd answer would
 make the whole record unreadable by every reader downstream.
 """
 
 from __future__ import annotations
 
-import math
 import unicodedata
 from typing import cast
 
@@ -43,9 +42,9 @@ def _unwritable(character: str) -> bool:
     """A codepoint no sink can carry, whatever it means.
 
     A lone surrogate is not text: it survives JSON, and then `str.encode` refuses it — so one
-    hostile node name would cost a run its whole report, in every format at once, as an
+    hostile node name would lose a run its whole report, in every format at once, as an
     uncaught error rather than a rendering. A noncharacter is legal to encode and illegal in
-    XML, which costs the drawn graph instead. Neither can be displayed by anything, so both
+    XML, which loses the drawn graph instead. Neither can be displayed by anything, so both
     go here rather than being handled by each surface that would choke on them.
 
     Only the noncharacters are taken, never the whole unassigned category: a codepoint this
@@ -100,19 +99,6 @@ def normalise_all(values: object, *, limit: int = LIST_LIMIT) -> list[str]:
     return [normalise(value) for value in items[:limit]]
 
 
-def as_money(value: object) -> float | None:
-    """A cost, or nothing. A figure that is not a finite number is not a figure.
-
-    `NaN` and `inf` are the sharp cases: both are legal Python floats and neither is legal
-    JSON, so admitting one would cost every reader the whole record rather than one field.
-    """
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    if not math.isfinite(value) or value < 0:
-        return None
-    return float(value)
-
-
 def as_count(value: object) -> int | None:
     """A count, or nothing."""
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
@@ -127,7 +113,6 @@ __all__ = [
     "LIST_LIMIT",
     "TEXT_LIMIT",
     "as_count",
-    "as_money",
     "flatten",
     "normalise",
     "normalise_all",

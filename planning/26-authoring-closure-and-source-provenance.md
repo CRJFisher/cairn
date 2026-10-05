@@ -54,8 +54,7 @@ An omitted `cairn_graph_version` is defaulted to the current version, silently u
 unknown document. Require the version at input boundaries. Any legacy migration is an explicit
 reader with an explicit source version, never normalisation into “current”.
 
-Apply the finite numeric rules from [25](25-execution-admission-and-paid-bounds.md) to plan
-budgets, timeouts, and retries before normalisation.
+Judge a plan's assertion timeouts and retries as finite integers before normalisation.
 
 ## E — Bind recovery to the run being recovered
 

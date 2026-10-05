@@ -214,7 +214,7 @@ class TheSessionIsHeldOpenForWhatItLeftRunning(unittest.TestCase):
 
     def test_a_turn_already_sent_back_once_is_let_go(self) -> None:
         """`stop_hook_active` is the harness's own bound, and it is what keeps this from
-        being a loop that spends a step's budget on its own refusal."""
+        being a loop that refuses the same turn over and over."""
         self.assertEqual(self._ran(_payload(stop_hook_active=True))[0], LET_IT_END)
 
     def test_every_running_shell_is_named(self) -> None:
@@ -228,8 +228,8 @@ class TheSessionIsHeldOpenForWhatItLeftRunning(unittest.TestCase):
         self.assertIn("pytest -q", said)
 
     def test_a_payload_it_cannot_read_lets_the_turn_end(self) -> None:
-        """Fail open, the exact inverse of the verify gate: this holds a paid session, so a
-        fault in it spends money in a loop, and it protects nothing durable."""
+        """Fail open, the exact inverse of the verify gate: this holds a session open, so a
+        fault in it loops, and it protects nothing durable."""
         unreadable: tuple[object, ...] = (
             None,
             [],
@@ -272,7 +272,7 @@ class TheSessionIsHeldOpenForWhatItLeftRunning(unittest.TestCase):
             raise AssertionError("the argv is the subject; nothing is launched")
 
         with contextlib.suppress(AssertionError):
-            run_claude("do work", Path("/tmp"), "auto", None, None, [], factory)
+            run_claude("do work", Path("/tmp"), "auto", None, [], factory)
         self.assertTrue(made)
         self.assertIn("--settings", made[0])
         self.assertEqual(
@@ -1097,7 +1097,7 @@ class TheThreeStates(unittest.TestCase):
         self.assertEqual(run_cli(["marker", "absent", "--step", "a", "--scope", "once"], env, self.root)[0], 1)
 
     def test_a_completed_step_starts_no_agent_session(self) -> None:
-        """The gate decides before any session is opened, so a no-op costs nothing."""
+        """The gate decides before any session is opened, so a no-op opens nothing."""
         sessions: list[str] = []
 
         def record(prompt: str, *_args: Any, **_kwargs: Any) -> CommandResult:
@@ -1106,7 +1106,7 @@ class TheThreeStates(unittest.TestCase):
 
         env = runtime_env(self.root)
         gate = ["marker", "absent", "--step", "a", "--scope", "once"]
-        agent = ["agent", "run", "--provider", "echo", "--prompt", "do the work", "--timeout", "600"]
+        agent = ["agent", "run", "--provider", "echo", "--prompt", "do the work"]
 
         def run_the_step() -> int:
             with patch.dict(PROVIDER_RUNNERS, {"echo": record}):
@@ -1189,7 +1189,7 @@ class TheThreeStates(unittest.TestCase):
         for arguments in (
             ["exec", "--command", "printf ok > out.txt"],
             ["wait", "--for", "0.01", "--timeout", "5"],
-            ["agent", "run", "--provider", "echo", "--prompt", "do it", "--timeout", "600"],
+            ["agent", "run", "--provider", "echo", "--prompt", "do it"],
         ):
             with (
                 self.subTest(subcommand=arguments[0]),

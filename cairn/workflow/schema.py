@@ -14,7 +14,7 @@ to check its own output, and the check would then measure the reader rather than
 load ([01]); a JSON string can never render as a bare `false`, whatever it holds. The same
 closes the engine's silent retyping of scalars, because JSON carries the type.
 
-The cost is that a person reading the file in the engine's own view reads JSON. That is
+The consequence is that a person reading the file in the engine's own view reads JSON. That is
 accepted: the file is generated, never hand-maintained, and an edit to it is a divergence
 [workflow.md] rather than a workflow.
 
@@ -79,11 +79,9 @@ ENGINE_VERSION = "2.11.0"
 # the first finds a fresh marker for each `run`- and period-scoped step, skips it, and
 # reports a clean success having done nothing ([triggers.md]) — a defect a person needs
 # naming rather than a shape difference they can ignore.
-# 4: every agent body carries `--model` and `--max-budget-usd`, so the definition states
-# every session's model and price and an offer can be composed from the file alone. A
-# workflow written by 3 opens sessions bounded only by their timeout, with the model left
-# to the environment — which is why the preflight refuses its agent bodies as unbounded
-# rather than running them ([17.3]).
+# 4: every agent body carries `--model`, so the definition states every session's model
+# from the file alone. A workflow written by 3 leaves the model to the environment — which
+# is why the preflight refuses its agent bodies rather than running them ([17.3]).
 # 5: every assertion node is gated on `cairn verify needed` and carries `continue_on:
 # {skipped: true}`, so an assertion behind a halt is declined and one already proven
 # against this tree is shared ([24 A], [24 B]); every agent body carries `--timeout` and
@@ -92,7 +90,7 @@ ENGINE_VERSION = "2.11.0"
 # anything to assert, and its agent and commit bodies are missing arguments this binary
 # requires — so those steps report `invalid_arguments` rather than opening a session or
 # staging anything. Re-author rather than re-run.
-# 6: every merge body carries its resolver model, dollar ceiling, and internal deadline.
+# 6: every merge body carries its resolver model and internal deadline.
 # Definitions written by 5 leave conflict resolution to provider defaults and the engine's
 # outer kill, so they must be re-authored before execution.
 # 7: every assertion is bounded by its step's `verify_timeout`, and its gate is handed that
@@ -102,7 +100,10 @@ ENGINE_VERSION = "2.11.0"
 # a single dash-led token reaches the remedy as its assertion rather than as a second flag
 # argparse cannot place. A remedy body written by 7 fails `invalid_arguments` before opening
 # a session wherever a plan's assertion takes that shape.
-GENERATOR_VERSION = 8
+# 9: no agent or merge body carries a budget or deadline flag, and every plan step is bounded
+# by the one hang guard, which is now four hours. Definitions written by 8 still pass
+# `--max-budget-usd` and `--timeout`, which this binary no longer accepts.
+GENERATOR_VERSION = 9
 
 # The one execution type. The alternative reading serialises the graph, which is the defect
 # Cairn exists to avoid — and `type: chain` without `depends` validates clean and silently
@@ -182,14 +183,14 @@ EngineStep = dict[str, Any]
 # reads "Empty = no catchup (missed runs discarded)". Omitting the field inherits whatever
 # the machine's `base.yaml` holds, and this machine's holds `"6h"`: every cron slot missed
 # while the machine slept would replay, up to a thousand of them, and for Cairn a replayed
-# slot is a paid agent session against a git repository.
+# slot is an agent session against a git repository.
 CATCHUP_DISABLED = ""
 
 # What the engine does with a firing that arrives while this workflow is still running.
-# `all` queues paid work against a scheduler nobody may have started and `latest` discards
+# `all` queues agent work against a scheduler nobody may have started and `latest` discards
 # all but one; `skip` drops it. None of the three is visible in a record, so the honest
-# refusal is Cairn's own run lock naming the holder ([triggers.md]) — this states the least
-# costly of the three rather than inheriting whichever the machine prefers.
+# refusal is Cairn's own run lock naming the holder ([triggers.md]) — this states the
+# quietest of the three rather than inheriting whichever the machine prefers.
 OVERLAP_SKIP = "skip"
 
 # Every root key Cairn emits, and the whole of it. A file carrying anything else is refused
@@ -278,7 +279,7 @@ def resolvable_names(document: Any) -> frozenset[str]:
     return frozenset(names)
 
 
-# How every emitted body begins, and the two words that make one a paid agent session. The
+# How every emitted body begins, and the two words that make one an agent session. The
 # writer and the readers share these: a body's shape is the emitted document's, so the
 # module that types the document owns it rather than each reader restating it.
 CAIRN_INVOCATION = ("python3", "-m", "cairn")
@@ -287,7 +288,7 @@ MERGE_SUBCOMMAND = ("merge", "land")
 
 
 def is_agent_body(body: str) -> bool:
-    """Whether this step body starts a paid agent session."""
+    """Whether this step body starts an agent session."""
     argv = split_argv(body)
     prefix = len(CAIRN_INVOCATION)
     return (
@@ -297,7 +298,7 @@ def is_agent_body(body: str) -> bool:
 
 
 def is_merge_body(body: str) -> bool:
-    """Whether this step may open the merge resolver's paid session."""
+    """Whether this step may open the merge resolver's session."""
     argv = split_argv(body)
     prefix = len(CAIRN_INVOCATION)
     return (
@@ -306,8 +307,8 @@ def is_merge_body(body: str) -> bool:
     )
 
 
-def is_paid_body(body: str) -> bool:
-    """Whether this body can open any paid provider session."""
+def is_session_body(body: str) -> bool:
+    """Whether this body can open any provider session."""
     return is_agent_body(body) or is_merge_body(body)
 
 
@@ -413,7 +414,7 @@ __all__ = [
     "declared_parameter",
     "is_agent_body",
     "is_merge_body",
-    "is_paid_body",
+    "is_session_body",
     "read",
     "reference",
     "references_in",

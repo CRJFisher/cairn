@@ -23,6 +23,7 @@ from cairn.plan.schema import (
     AGENT_REPORT_GRACE,
     DEFAULT_KIND,
     ENGINE_NAME_MAX_BYTES,
+    HANG_GUARD,
     MERGE_RETRIES,
     MERGE_TIMEOUT,
     RETRY_INTERVAL,
@@ -63,7 +64,7 @@ BRANCH_PREFIX = "step/"
 # Two numbers, because they answer two questions at different scales.
 #
 # The **critical path** is how long the run can plausibly take, and a plan whose slowest
-# chain runs past two working days is refused at generation time: past that, a repository
+# chain runs past two weeks is refused at generation time: past that, a repository
 # held against every other run is itself the failure, whatever the plan would achieve. This
 # is the number a plan author can act on — shorten the chain and it moves.
 #
@@ -71,7 +72,7 @@ BRANCH_PREFIX = "step/"
 # survive: the engine caps concurrent steps, so a wave wider than the cap outruns its own
 # critical path. Gating admission on the sum instead would refuse a plan of sixteen
 # ordinary agent steps, which is a plan-size cap nobody asked for.
-RUN_CEILING_SECONDS = 172800
+RUN_CEILING_SECONDS = 1209600
 
 
 class TopologyError(Exception):
@@ -250,7 +251,7 @@ def _step_seconds(step: Step) -> int:
         grace = AGENT_REPORT_GRACE
     else:
         grace = 0
-    return step_max_seconds(step["timeout"] + grace, step["retries"], RETRY_INTERVAL)
+    return step_max_seconds(HANG_GUARD + grace, step["retries"], RETRY_INTERVAL)
 
 
 def _support_seconds() -> int:
@@ -258,10 +259,10 @@ def _support_seconds() -> int:
 
 
 def _merge_seconds() -> int:
-    """A merge slot is priced as the agent step it can become, not as the git work it is.
+    """A merge slot is bounded as the agent step it can become, not as the git work it is.
 
-    Most slots merge cleanly and cost seconds. The one that meets a real conflict pays for
-    a session, and a bound that assumed the common case would kill it mid-merge.
+    Most slots merge cleanly in seconds. The one that meets a real conflict opens a
+    session, and a bound that assumed the common case would kill it mid-merge.
     """
     return step_max_seconds(MERGE_TIMEOUT, MERGE_RETRIES, RETRY_INTERVAL)
 
@@ -368,7 +369,7 @@ def _step_nodes(
             }
         )
         if step["remediate"]:
-            # Priced as the work session it resumes and bounded the same way, then the
+            # Bounded as the work session it resumes is bounded the same way, then the
             # same assertion under the same bound.
             nodes.append(
                 {
@@ -623,7 +624,7 @@ def critical_path_seconds(nodes: list[Node]) -> int:
     """How long the run plausibly takes: the slowest chain through it.
 
     This is what the ceiling is judged against, because it is the number a plan author can
-    do something about. Nodes are priced in dependency order, which `derive` produces.
+    do something about. Nodes are weighed in dependency order, which `derive` produces.
     """
     longest: dict[str, int] = {}
     for node in nodes:
@@ -644,9 +645,9 @@ def _refuse_over_ceiling(topology: Topology) -> None:
     raise TopologyError(
         f"plan {topology['plan']!r} has a worst-case duration of "
         f"{topology['critical_path_seconds'] / 3600:.1f} hours along its slowest chain, over the "
-        f"{RUN_CEILING_SECONDS / 3600:.0f}-hour ceiling. Every step's timeout counts once "
-        "per attempt plus the wait between attempts, and a declared wait counts in full; "
-        "shorten a wait, lower a timeout, or split the plan"
+        f"{RUN_CEILING_SECONDS / 3600:.0f}-hour ceiling. Every step counts the hang guard "
+        "once per attempt plus the wait between attempts; drop a step, drop a wait, or "
+        "split the plan"
     )
 
 

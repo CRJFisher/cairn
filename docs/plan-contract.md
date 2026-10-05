@@ -35,10 +35,8 @@ rejected rather than ignored.
 | `tools`          | no                               | `null`                                   |
 | `scope`          | no                               | `once`                                   |
 | `reads`          | no                               | `[]`                                     |
-| `timeout`        | no                               | 3600s for `agent.*`, 600s otherwise      |
 | `verify_timeout` | no                               | 600s                                     |
 | `retries`        | no                               | `0` for every kind                       |
-| `max_budget_usd` | no                               | 5.0 for `agent.*`, `null` otherwise      |
 | `model`          | no                               | `sonnet` for `agent.*`, `null` otherwise |
 | `remediate`      | no                               | `false`                                  |
 
@@ -59,47 +57,31 @@ rejected rather than ignored.
   deny patterns that narrow the blast radius.
 - `scope` is one of `once`, `run`, `inputs`, `hourly`, `daily`, `weekly`, `monthly`.
 - `reads` is required and non-empty only when `scope` is `inputs`.
-- `timeout` is always present: I7 forbids an unbounded step, and the engine's own default
-  is none. It bounds **each attempt**, not the step, so a step's worst case is every
-  attempt plus every wait between them — which is how the run's maximum duration and the
-  run lock's reclaim window are both derived. The plan document sets a step's own ("give
-  it two hours", "at most fifteen minutes"); a plan that says nothing gets the kind's
-  default. An agent step is stopped at its bound by the wrapper, with a report grace
-  after it that the engine's own bound allows for, so the priced bound is the bound and a
-  stopped session still leaves its account ([step-kinds.md](step-kinds.md)). A timeout
-  that differs from the kind's default is a warning on the parse report, because nothing
-  quotes the document's words for it the way an edge's evidence does.
 - `verify_timeout` bounds the step's assertion, which runs once and is never retried. The
   plan document sets it where the assertion is slow ("the suite takes twenty minutes"); a
-  plan that says nothing gets 600s. It counts toward the run's maximum duration like every
-  other bound, and a value differing from the default is the same `derived_timeout`
-  warning a step's own timeout raises.
+  plan that says nothing gets 600s. It counts toward the run's maximum duration, and a value
+  differing from the default is a `derived_timeout` warning on the parse report, because
+  nothing quotes the document's words for it the way an edge's evidence does.
 - `retries` is `0` for every kind. Arbitrary shell is not assumed idempotent, and an agent
-  failure is either a wrong task or a paid session that already changed the repository —
-  neither is worth paying for twice. A rate limit is reported with the moment it clears
+  failure is either a wrong task or a session that already changed the repository —
+  neither is worth running twice. A rate limit is reported with the moment it clears
   rather than waited out ([supervision.md](supervision.md)). A plan may set its own value;
   the wait between attempts is 1s. A step's **assertion never retries**, whatever the
   step's own value. The engine records no per-node retry count, so a retried pass would
   read exactly like a first-try pass in the run record, and an assertion that passes on
   its second asking has asserted less while looking like more. The remedy for an assertion
   that flakes is the plan stating one that does not — an explicit test timeout, a narrower
-  command — and the price of leaving one in is stated plainly: one proof is shared by
+  command — and what leaving one in does is stated plainly: one proof is shared by
   every gate quoting a command ([verify-gate.md](verify-gate.md)), so one flaky execution
   closes every one of them.
-- `remediate` gives an agent step one more paid session when its assertion ran and exited
+- `remediate` gives an agent step one more session when its assertion ran and exited
   nonzero: the step's own session, resumed, told the command and its exit and asked to fix
   the work and never the assertion ([step-protocol.md](step-protocol.md)). The assertion then
   runs again, unchanged, and only that second run can record the step. The remedy is never
   opened over an assertion that passed, never ran, or was ended by a signal, nor behind a
-  step that reported failure or is waiting on a person. It is bounded and priced as the step's
-  own session, so a run's offer counts it. A plan sets it where the document asks for a
+  step that reported failure or is waiting on a person. It is bounded by the hang guard like the
+  step's own session. A plan sets it where the document asks for a
   failing check to be fixed rather than halted on ("if its tests fail, have it fix them").
-- `max_budget_usd` is the dollar ceiling of the one session an agent step opens, written
-  into the emitted body as `--max-budget-usd`. It is always present on an agent step and
-  always `null` on a command step, which opens no session: a session with no ceiling is
-  the one thing an offer cannot price, so the emitter, the preflight and the offer each
-  refuse a step without one. The default sits above any observed step cost; the plan
-  document sets a step's own ("spend at most eight dollars on it").
 - `model` is the model that session is pinned to, written into the emitted body as
   `--model` — which is how the run's record can name the model that did each step's work
   instead of recording whatever the environment chose. Always present on an agent step,
@@ -108,21 +90,20 @@ rejected rather than ignored.
 
 Every default lives in the field spec in `cairn/plan/schema.py` and is applied from there,
 so a default stated in one place and applied in another cannot drift apart. `kind`,
-`timeout`, `retries`, `max_budget_usd` and `model` are the five whose value depends on
-another field, and `normalise` resolves those.
+`retries` and `model` are the three whose value depends on another field, and `normalise`
+resolves those.
 
-A bound a plan states is judged before any default or conversion touches it: `timeout` and `verify_timeout` are
-positive integers, `retries` a non-negative integer, and `max_budget_usd` a positive finite
-number. A value outside those — zero, a negative, a boolean, `NaN`, `Infinity`, or an integer
-too large to be a float — is a `schema` error naming the field, and a document spelling `NaN`
-or `Infinity` is refused as it is read.
+A bound a plan states is judged before any default or conversion touches it:
+`verify_timeout` is a positive integer and `retries` a non-negative integer. A value outside
+those — zero, a negative, a boolean, `NaN`, `Infinity`, or an integer too large to be a
+float — is a `schema` error naming the field, and a document spelling `NaN` or `Infinity` is
+refused as it is read.
 
 ### Kinds a plan can author
 
 `command`, and `agent.<provider>` matching `^agent\.[a-z][a-z0-9_]*$`. Nothing names a
 specific provider except the run-level default and the provider dictionary, so adding a
-provider is not a schema change and a new one gets the agent timeout rather than the
-command one.
+provider is not a schema change.
 
 The rest of the step-kind vocabulary — `worktree`, `verify`, `commit`, `merge`, `lock`,
 is emitted by the topology and the verify gate from the graph's own shape, so
@@ -322,14 +303,14 @@ With `--source-root`, six more:
 
 **Warnings** (recorded, reported, never blocking):
 
-| Code              | Meaning                                                                            |
-| ----------------- | ---------------------------------------------------------------------------------- |
-| `missing_verify`  | a step nobody has been asked about                                                 |
-| `unverified_step` | a step whose author declined an assertion for it                                   |
-| `redundant_edge`  | an edge already implied transitively                                               |
-| `unused_reads`    | `reads` declared under a scope that never hashes them                              |
-| `derived_timeout` | a timeout differing from the kind's default, which nothing quotes the document for |
-| `open_questions`  | questions the author has not answered                                              |
+| Code              | Meaning                                                                              |
+| ----------------- | ------------------------------------------------------------------------------------ |
+| `missing_verify`  | a step nobody has been asked about                                                   |
+| `unverified_step` | a step whose author declined an assertion for it                                     |
+| `redundant_edge`  | an edge already implied transitively                                                 |
+| `unused_reads`    | `reads` declared under a scope that never hashes them                                |
+| `derived_timeout` | a `verify_timeout` differing from the default, which nothing quotes the document for |
+| `open_questions`  | questions the author has not answered                                                |
 
 **At publication** `cairn workflow author` runs the validator with the source root it is
 given, in the same invocation that writes the definition, and two warnings become errors:
@@ -377,7 +358,7 @@ python3 -m cairn plan report <graph.json> [--source-root <dir>] [--out <path>]
 ```
 
 What Cairn understood, for a human to confirm before anything is generated: each step's
-kind, scope, verify command, timeout, dollar ceiling and model; **what each step is asked
+kind, scope, verify command, assertion timeout and model; **what each step is asked
 to do**, in full; every
 dependency marked declared or derived with the words that justify it; the waves the
 dependencies allow; what was left out and why; any id the engine forced a rename on; and

@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "linear-chain",
-    "cairn_generator": "8",
+    "cairn_generator": "9",
     "cairn_engine": "2.11.0",
-    "cairn_graph_sha256": "030b1390f1b9cf318d90bfc9fdfb2426ae94f7a381cb0ad4cdffa10591d2dbd1",
-    "cairn_body_sha256": "3e69c947a902f7eb7b2814e5b40e4df01970f0595e6fecc819ca0615a1658f3b"
+    "cairn_graph_sha256": "9a97b72f89684e8771c92e6c57859849a1228f0b49a4a211c83b703e91b4cb55",
+    "cairn_body_sha256": "295be120876c63196aec5102dbfcc618f6741ddcd3a496b5819c8e15823c1925"
   },
   "params": [
     {
@@ -54,17 +54,17 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn lock acquire --plan linear-chain --run-timeout 17940"
+      "run": "python3 -m cairn lock acquire --plan linear-chain --run-timeout 50340"
     },
     {
       "name": "work_bucket_store",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 3780,
+      "timeout_sec": 14580,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/limiter/store.py` to a state where it holds a `TokenBucket` dataclass and an in-memory store keyed by client id, with refill computed from elapsed time rather than a background timer.' --model sonnet --max-budget-usd 5.0 --timeout 3600",
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/limiter/store.py` to a state where it holds a `TokenBucket` dataclass and an in-memory store keyed by client id, with refill computed from elapsed time rather than a background timer.' --model sonnet",
       "preconditions": [
         {
           "condition": "python3 -m cairn marker absent --step bucket_store --scope once"
@@ -135,12 +135,12 @@
     {
       "name": "work_middleware",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 3780,
+      "timeout_sec": 14580,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/limiter/middleware.py` to a state where every inbound request consumes one token and a depleted bucket returns 429 with a `Retry-After` header.' --model sonnet --max-budget-usd 5.0 --timeout 3600",
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/limiter/middleware.py` to a state where every inbound request consumes one token and a depleted bucket returns 429 with a `Retry-After` header.' --model sonnet",
       "preconditions": [
         {
           "condition": "python3 -m cairn marker absent --step middleware --scope once"
@@ -211,12 +211,12 @@
     {
       "name": "work_gateway_wiring",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 3780,
+      "timeout_sec": 14580,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/gateway/app.py` to a state where the middleware is installed ahead of routing and its limits come from `config/limits.toml`.' --model sonnet --max-budget-usd 5.0 --timeout 3600",
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/gateway/app.py` to a state where the middleware is installed ahead of routing and its limits come from `config/limits.toml`.' --model sonnet",
       "preconditions": [
         {
           "condition": "python3 -m cairn marker absent --step gateway_wiring --scope once"

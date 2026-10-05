@@ -63,7 +63,7 @@ def _line(scribe: Scribe, cell: Cell) -> str:
 
     This rendering is line-delimited: a section is a heading on its own line and a field is
     a label and a value on one. So a value carrying a newline can draw a heading and a row
-    of its own — a fabricated receipts section with a fabricated cost, in the one document
+    of its own — a fabricated receipts section with a fabricated figure, in the one document
     whose premise is that a surface cannot invent a number. Prose keeps its shape; anything
     load-bearing for the layout does not.
     """

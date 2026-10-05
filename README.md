@@ -15,14 +15,11 @@ it and says what it will never tell you.
 
 Nothing else opens it. A sentence that describes the work without naming Cairn — "run my
 plan", "schedule this nightly" — reaches whatever else is installed, and Cairn stays silent
-rather than competing for it. That is the price of a tool that spends money and commits to a
-repository: it is entered on purpose, and naming it is itself the first consent.
+rather than competing for it. A tool that commits to a repository is entered on purpose, and
+naming it is the request.
 
-A run is never a default. Cairn prices it, asks you in so many words, and starts only on your
-answer: the offer states what the run costs before the question is put, the question has two
-answers, and one acceptance authorises exactly one execution. You never see the token that
-authorises a run — that is the skill's to carry. [SKILL.md](SKILL.md) is where those rules
-live.
+Asking for a run starts it: the run id and the engine's view link come back at once.
+[SKILL.md](SKILL.md) is where the rules for reading a request live.
 
 **What is under it:** derive a plan graph from a plan's documents, validate it, and
 read the parse report; answer the authoring conversation for a step whose plan named no
@@ -35,14 +32,11 @@ one the engine would run into a silent failure; and read back what one run did w
 is derived by walking every node — so a run the engine calls a clean success over a dropped
 step reads as exactly that; give a plan a cron schedule and install it where a scheduler
 watches, with `cairn schedule start` refusing on a machine whose retry or catchup policy
-would re-execute paid work; read any run at the engine's own view, from the address its
+would re-execute failed runs; read any run at the engine's own view, from the address its
 record carries; and render that record for a terminal, a repository or a browser with
 `python3 -m cairn report --run <run-id> --repository <path>`, which answers in order whether
-it worked, what to do next, what needs attention, what each step did, what shape the run was,
-and what it cost. Every run leaves that record whether anyone watched it or not. And offer a
-run, priced from
-the definition that would execute, then start exactly that one run against exactly the
-authorisation the offer minted.
+it worked, what to do next, what needs attention, what each step did, and what shape the run was. Every run leaves that record whether anyone watched it or not.
+And start a run of the definition that would execute, handing the engine exactly that one run.
 
 What is built is the plan contract, the execution core, the step protocol, the verify gate
 and its authoring conversation, the branch topology, the merge step, the locks and repairs
@@ -51,12 +45,12 @@ rendered surface reads, the triggers and schedules that start one, the three ren
 the skill that drives all of it.
 
 - [SKILL.md](SKILL.md) — what `/cairn` opens: the six capabilities, the table a request is
-  read against, the ask list, the consent rule, and where each procedure lives.
+  read against, the ask list, and where each procedure lives.
 - `capabilities/` — four documents holding six capabilities' procedures, read when one is
   selected: authoring (with editing), running, scheduling, and reading (with explaining).
   Each states its entry preconditions and what it is bound to on entry. **Adding a seventh**
   touches: `cairn/skill/vocabulary.py` (the constant, its rank in `CAPABILITY_ORDER` — which
-  must stay between the consent-gated prefix and the reads-only suffix — and
+  must stay between the mutating prefix and the reads-only suffix — and
   `DOCUMENT_BY_CAPABILITY`), `cairn/skill/dispatch.py` (the cells that reach it — a new verb class is a new
   row of `DISPATCH_RULES`, and a capability reached only by an ask needs a reason,
   a question and a family too),
@@ -78,7 +72,7 @@ the skill that drives all of it.
 - [docs/topology.md](docs/topology.md) — waves, branches and worktrees, the node-name
   contract, the four convergence cases, and the run's duration arithmetic.
 - [docs/supervision.md](docs/supervision.md) — the git write mutex, the repository run lock,
-  reconciling a killed run, and the bounds on every emitted step.
+  reconciling a killed run, and the hang guard on every emitted step.
 - [docs/merge-step.md](docs/merge-step.md) — landing a wave one branch at a time, what the
   prediction may decide, how a merge is proven, and the halt that a person settles.
 - [docs/run-model.md](docs/run-model.md) — start here for a run's record: the frozen run
@@ -94,7 +88,7 @@ the skill that drives all of it.
   how a hand-edited workflow is detected, and the recorded shapes in `fixtures/workflows/`
   with what moves the generator's version.
 - [docs/triggers.md](docs/triggers.md) — where a person goes to watch a run and what the
-  view will never answer, the four trigger paths and which of them costs a daemon, what a
+  view will never answer, the four trigger paths and which of them needs a daemon, what a
   caller may vary and what is refused, where a run's occasion comes from, installing a
   schedule safely, and the human gate.
 - `cairn/plan/` — the schema, the validator, the parse report, the id rules, and the
@@ -109,81 +103,30 @@ the skill that drives all of it.
   reader of the record, the per-sink escapes and the scribe every fact passes through, the
   graph layout, and the three renderings.
 - `cairn/skill/` — `vocabulary.py` the frozen words, `dispatch.py` the rule table and its
-  ask list, `resolve.py` the repository and the occasion, `consent.py` the offer ledger,
+  ask list, `resolve.py` the repository and the occasion,
   `trigger.py` the one path that starts a run, `explain.py` three answers, `surface.py` the
-  measurement below, `cli.py` the two commands. A run is authorised in one direction:
-  `cairn run offer` prices the definition and mints one token, `cairn run start` spends it
-  exactly once, and `trigger.start` is the only thing here that can invoke the engine.
+  measurement below, `cli.py` the two commands. `cairn run start` starts one run, and
+  `trigger.start` is the only thing here that can invoke the engine.
 - `fixtures/plans/` — sixteen plans with their golden graphs and expected verdicts, two of
   them carrying the answers their authoring conversation received.
 - `fixtures/workflows/` — the whole emitted file for six of those plans, one per topology
   shape, compared byte for byte by the suite.
-- `fixtures/runs/` — nine runs recorded from a real engine: green, red, blocked,
-  green-with-exclusions, all-no-op, mid-run, crashed, timed-out, and one real paid agent
-  step. Three of
+- `fixtures/runs/` — eight runs recorded from a real engine: green, red, blocked,
+  green-with-exclusions, all-no-op, mid-run, crashed, and timed-out. Three of
   them are the same clean success as far as the engine is concerned and none of them extracts
   the same way.
 - `scripts/record_runs.py` — re-records that corpus against the installed engine.
-- `scripts/measure_fanout.py` — what the fan-out buys and what the mutex costs, as numbers.
+- `scripts/measure_fanout.py` — what the fan-out buys and what the mutex adds, as numbers.
 - `fixtures/invocations/` — every phrasing the skill is held to, what each must resolve to,
   and what the corpus does and does not prove.
 - `scripts/regenerate_workflows.py` — rewrites the golden workflows, and refuses to when
   the emitted shape moved under a generator version that already described another.
-- `scripts/measure_surface.py` — the context cost below, and `--check` refuses when this
+- `scripts/measure_surface.py` — the context footprint below, and `--check` refuses when this
   file no longer carries it.
 
-- `paid/` — a second suite that drives real coding-agent sessions against real repositories,
-  run deliberately rather than on every change. It is unreachable from the command below,
-  refuses without `--paid` and `CAIRN_PAID=1`, prices the whole selection before the first
-  call, and leaves a committed record of what it cost and what it measured in
-  `paid/measurements.jsonl`. Every part of it that is not a session is a pure function over
-  recorded input and is proved for nothing by `tests/test_paid_suite.py`. See
-  [paid/README.md](paid/README.md).
-
-## What releasable means
-
-Stated 2026-08-25, before the sweep it judges — a bar picked after the sweep is in is an
-estimator's sin, and this one is dated so a reader can check.
-
-**A release cites one exit-0 sweep** of the paid suite, taken with nothing in flight. That
-one code is the whole bar, because a run reports three things and only one of them is a
-gate:
-
-- **critical functionality**, published as N/N and a percentage that must be **100%**. The
-  four scenario cases — the resolution keeps both sides' intent and its proof passes, a step
-  reporting success over a failing assertion is excluded with its cause, an acknowledgement
-  starts nothing, and one sentence becomes a priced offer, a real yes, a run and a verified
-  branch landed on the parent — plus the safety gate the reading bank alone can see: **no
-  misread reaches a priced or mutating command**. A tool defect anywhere fails this layer
-  too, because a benchmark score taken by a broken instrument is meaningless.
-- **the benchmark**, published as scores with their triage and gating nothing: the
-  75-sentence reading bank put to live sessions, as `reading_rate` and `ask_compliance`.
-  100% is not an achievable steady state at n=220 live sessions — the record shows
-  consecutive sweeps failing disjoint sets of single draws, and `authoring_acceptance`
-  swinging 3/3 → 0/3 → 3/3 across one day on an identical instrument. Trends are the signal.
-- **negative impacts**, always **zero** on a green run and the count a release reader checks
-  first: every breach that reached a gate, with what it reached, and any repository mutation
-  or spend nobody authorised.
-
-The four exit codes say which of those failed. **0 is releasable.** 1 is a tool defect — the
-instrument's own fault, never releasable whatever the scores. 3 is a critical-functionality
-miss that is the model's doing. 4 is refused, or aborted on an environment fault, which is
-the run not having happened rather than a verdict about anything.
-
-**The citation is `20260825T163830Z-099d11e5`** — critical functionality 9/9, benchmark
-`reading_rate` 74/75 and `ask_compliance` 167/170, negative impacts zero, $45.44 notional
-over 220 units. A free test rescores that sweep's own committed lines and holds it to exit 0,
-so the citation is checkable from the record rather than remembered.
-
-Every price in that record is **notional**: the suite's sessions run against a
-subscription allowance, so each figure is an API-equivalent price rather than money that
-moved.
-
-Run everything with `python3 -m unittest discover -s tests -t .` from this directory —
-around 1,580 tests, roughly eight minutes. They kill real processes, wait on real locks and
-drive a real Dagu 2.11.0; stray provider output during the run is expected. **The command
-cannot spend a penny**, and the paid suite asserts that against the loader rather than
-claiming it.
+Run everything with `python3 -m pytest -q` from this directory. The tests kill real
+processes, wait on real locks and drive a real Dagu 2.11.0; stray provider output during the
+run is expected.
 
 Two suites treat a missing `dagu` differently on purpose. `test_step_protocol.py` **fails**
 without it, because it covers the one failure mode that otherwise reports success; set
@@ -210,19 +153,19 @@ One is refused rather than useful: **never `dagu retry`**. Re-running a plan is 
 recovery story, a continued occasion is what makes it cheap, and a retry reuses the run
 identity in a way Cairn's own recovery already handles.
 
-## What it costs to have installed
+## What is read when it is installed
 
 Measured by `python3 -m scripts.measure_surface`. Tokens are an estimate at 4 characters each, not a tokenizer's count.
 
-| Paid                          | What                                   | Characters | Lines | Tokens (est.) |
+| Read                          | What                                   | Characters | Lines | Tokens (est.) |
 | ----------------------------- | -------------------------------------- | ---------: | ----: | ------------: |
 | when Cairn is named           | the skill's description                |      `211` |   `1` |          `53` |
-| when Cairn is named           | `SKILL.md`                             |    `13602` | `192` |        `3401` |
-| when a capability is selected | `capabilities/running.md`, the largest |    `11613` | `171` |        `2904` |
+| when Cairn is named           | `SKILL.md`                             |    `11120` | `158` |        `2780` |
+| when a capability is selected | `capabilities/running.md`, the largest |     `8996` | `137` |        `2249` |
 
-**None of it is unavoidable.** Cairn declares `disable-model-invocation: true`, so its
-description stays out of a session's context until someone types `/cairn` — a session that
-never names it pays nothing for having it installed. The suite recomputes all three figures
+**None of it is read unless asked for.** Cairn declares `disable-model-invocation: true`, so
+its description stays out of a session's context until someone types `/cairn` — a session
+that never names it reads nothing of it. The suite recomputes all three figures
 on every run and fails if this table has drifted from them.
 
 Python 3, standard library only. No code in this directory imports anything outside it. The

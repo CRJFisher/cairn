@@ -39,7 +39,6 @@ from cairn.report.spine import (
     RULE_ACTOR,
     RULE_ASSERTION,
     RULE_LINK,
-    RULE_MONEY,
     SECTION_ATTENTION,
     SECTION_NEXT,
     SECTION_RECEIPTS,
@@ -512,7 +511,7 @@ def _shape(record: RunRecord) -> list[Block]:
 
 
 def _receipts(record: RunRecord) -> list[Block]:
-    """What the run cost and what it left behind, per step and for the run.
+    """What the run did and what it left behind, per step and for the run.
 
     The resume command is a `Verbatim` block rather than a field, because every sink must
     agree not to wrap it, fold it into prose or decorate it. The working directory sits
@@ -525,10 +524,6 @@ def _receipts(record: RunRecord) -> list[Block]:
             "fields",
             "The run",
             (
-                ("cost", Fact(("budget.cost_usd", "budget.notional"), RULE_MONEY)),
-                ("turns", Fact(("budget.turns",))),
-                ("steps with a price", Fact(("budget.priced_steps",))),
-                ("steps without one", Fact(("budget.unpriced_steps",))),
                 ("repository", Fact(("git.repository",))),
                 ("parent branch", Fact(("git.parent_branch",))),
                 ("commits", Fact(("git.commits",))),
@@ -548,10 +543,6 @@ def _receipts(record: RunRecord) -> list[Block]:
                 "fields",
                 step["step_id"],
                 (
-                    (
-                        "cost",
-                        Fact((f"{key}.cost_usd", f"{key}.cost_is_notional"), RULE_MONEY),
-                    ),
                     ("turns", Fact((f"{key}.turns",))),
                     ("model", Fact((f"{key}.model",))),
                     ("session", Fact((f"{key}.session",))),
@@ -567,7 +558,6 @@ def _receipts(record: RunRecord) -> list[Block]:
                     ("remedy", Fact((f"{key}.remedy",))),
                     ("the remedy said", Fact((f"{key}.remedy_said",))),
                     ("assertion exit before the remedy", Fact((f"{key}.remedy_first_exit",))),
-                    ("remedy cost", Fact((f"{key}.remedy_cost_usd",))),
                     ("stopped at its bound of", Fact((f"{key}.timeout_seconds",))),
                     ("after running for", Fact((f"{key}.elapsed_seconds",))),
                     ("where a failure routes", Fact((f"{key}.position",))),

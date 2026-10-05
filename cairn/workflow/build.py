@@ -50,7 +50,7 @@ def disabled_retry() -> RetryPolicy:
     """The DAG-level policy, off, spelled with the interval the schema demands.
 
     The engine's shipped configuration carries an active `limit: 3`, and its scheduler's
-    retry scanner reaches every failed run on the machine — for Cairn a failed run is a paid
+    retry scanner reaches every failed run on the machine — for Cairn a failed run is an
     agent session that already changed a repository ([01]).
     """
     return {"limit": 0, "interval_sec": RETRY_INTERVAL}
@@ -117,7 +117,7 @@ def envelope(
     place where a default is either overridden or inherited.
 
     A `schedule` is the one thing here a caller asks for rather than receives. It is an
-    escalation with a stated cost — a persistent daemon, a watched directory, and a retry
+    escalation — a persistent daemon, a watched directory, and a retry
     policy neutralised before it starts ([triggers.md]) — so it is never a side effect of
     wanting a recurring plan.
     """
@@ -133,7 +133,7 @@ def envelope(
         "retry_policy": disabled_retry(),
         # Both of these exist only to stop the machine deciding. Measured on this machine,
         # the engine's shipped `base.yaml` carries `catchup_window: "6h"` — so a scheduler
-        # restarting after downtime replays every missed slot as a fresh paid agent session
+        # restarting after downtime replays every missed slot as a fresh agent session
         # — and an `overlap_policy` a file does not state is whatever that same file holds.
         "catchup_window": CATCHUP_DISABLED,
         "overlap_policy": OVERLAP_SKIP,

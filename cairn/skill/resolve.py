@@ -1,7 +1,7 @@
 """Which repository a run targets, and which occasion it keys on.
 
 Both are run-level decisions that come from the invocation, and both have a wrong answer
-that costs money quietly. They live together because they are the two questions
+that goes quietly unnoticed. They live together because they are the two questions
 [trigger.py] must have settled before it can compose an engine invocation, and because
 neither may be defaulted.
 
@@ -26,7 +26,7 @@ from cairn.gitio import common_directory, refuse_unusable_repository
 from cairn.marker import occasion_moment
 from cairn.record.model import RunRecord
 from cairn.skill.vocabulary import (
-    COST_BY_READING,
+    CONSEQUENCE_BY_READING,
     OCCASION_CONTINUE,
     OCCASION_NEW,
     READING_BY_TRIGGER,
@@ -173,11 +173,11 @@ def refuse_foreign_recovery(
 ) -> None:
     """Refuse a recovery whose run and whose workflow are not one lineage.
 
-    A recovery continues the named run's occasion but prices and executes the workflow it
-    is offered through. Through another plan's workflow, or through this plan's after it was
+    A recovery continues the named run's occasion but executes the workflow it is started
+    through. Through another plan's workflow, or through this plan's after it was
     re-authored from different content, the markers that occasion left would be read by
     steps that are not the steps that wrote them — so the run's own record must name the
-    plan and the graph being offered, and a record that cannot say is refused as one that
+    plan and the graph being started, and a record that cannot say is refused as one that
     disagrees.
     """
     recorded_plan = record["plan"]
@@ -228,17 +228,17 @@ class OccasionDecision(NamedTuple):
 def decide_occasion(
     signal: OccasionSignal, record: RunRecord | None = None
 ) -> OccasionDecision:
-    """Whether this trigger mints an occasion or continues one, and what that costs.
+    """Whether this trigger mints an occasion or continues one, and what that means.
 
-    A new occasion re-pays for every scoped step; a continued one may act on work whose
-    answer has moved. Both are the operator's to decide rather than Cairn's to infer, so
-    where the invocation does not settle it the decision is disclosed with both prices.
+    A new occasion redoes every scoped step; a continued one may act on work whose answer
+    has moved. Both are the operator's to decide rather than Cairn's to infer, so where the
+    invocation does not settle it the decision is disclosed with both consequences.
     """
     if signal.pinned is not None and signal.trigger != TRIGGER_PINNED:
         raise CairnError(
             "invalid_occasion",
             f"an occasion was given with a {signal.trigger!r} trigger, which does not "
-            "continue one. Dropping it would silently re-pay for every run-scoped step; "
+            "continue one. Dropping it would silently redo every run-scoped step; "
             "pass --trigger pinned to continue that occasion",
         )
     if signal.named_run is not None and signal.trigger != TRIGGER_RECOVERY:
@@ -248,10 +248,10 @@ def decide_occasion(
             "Pass --trigger recovery to continue that run",
         )
     reading = READING_BY_TRIGGER[signal.trigger]
-    forgone = COST_BY_READING[
+    forgone = CONSEQUENCE_BY_READING[
         OCCASION_CONTINUE if reading == OCCASION_NEW else OCCASION_NEW
     ]
-    taken = COST_BY_READING[reading]
+    taken = CONSEQUENCE_BY_READING[reading]
 
     if signal.trigger == TRIGGER_SCHEDULED:
         if signal.pinned is not None:
@@ -285,13 +285,12 @@ def decide_occasion(
             )
         recorded = record["lineage"]["occasion"]
         if not recorded:
-            # Minting here would present as a recovery while silently re-paying for every
-            # scoped step, which is the more expensive of the two wrong answers and the one
-            # the operator would not see.
+            # Minting here would present as a recovery while silently redoing every scoped
+            # step, which is the wrong answer the operator would not see.
             raise CairnError(
                 "invalid_occasion",
                 f"run {signal.named_run} recorded no occasion, so there is nothing to "
-                "continue. Starting a fresh run instead re-pays every run-scoped step; say "
+                "continue. Starting a fresh run instead redoes every run-scoped step; say "
                 "so explicitly if that is what you want",
             )
         occasion_moment(recorded)

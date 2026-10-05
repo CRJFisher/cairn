@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from typing import Any
 
-# The measured value of this text is 69 percentage points of re-run cost (02): a resumed
+# The measured value of this text is 69 percentage points of re-run work (02): a resumed
 # session without it never inspected the tree, rewrote six files that were already correct,
-# and cost 152% of doing the work from scratch. It is what makes the fresh-session rule
-# affordable, so it is mandatory rather than advisory.
+# and did 152% of the work of starting from scratch. It is what makes the fresh-session rule
+# workable, so it is mandatory rather than advisory.
 PREAMBLE = """\
 Before you change anything, work out how much of this task's end state already holds.
 
@@ -45,7 +45,7 @@ The task:
 # What a session that ended a turn without reporting is asked, once. It is a request for
 # the account it owes, never an instruction to do more work: the step's assertion has
 # already run or is about to, and a resumed session that started editing again would be
-# doing unpriced work outside the shape the offer stated.
+# doing work outside the shape the plan stated.
 RESUME_FOR_REPORT = """\
 This session is ending now and nothing will re-invoke it. Do no further work.
 

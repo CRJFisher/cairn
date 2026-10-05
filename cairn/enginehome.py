@@ -18,7 +18,7 @@ this output is human-readable text with no schema behind it.
 **The base configuration is deliberately *not* resolved this way**, and the asymmetry is the
 point. Its directory is `os.UserConfigDir` on every platform the engine supports, so the
 arithmetic is right where the data directory's is wrong. And asking the binary would put a
-subprocess in front of the one check that must run before a run's first spend — a check on
+subprocess in front of the one check that must run before a run's first session — a check on
 a file that **invoking the engine creates**, carrying `retry_policy: {limit: 3}` active.
 Reading where things are must not arm the hazard the reader is about to judge.
 """
@@ -39,7 +39,7 @@ from cairn.core import CairnError
 ENGINE_BINARY = "dagu"
 
 # One short subprocess that prints paths and exits. Bounded well under a support step's own
-# budget, so a wedged binary reports itself rather than being killed with nothing recorded.
+# bound, so a wedged binary reports itself rather than being killed with nothing recorded.
 CONFIG_TIMEOUT = 30
 
 # The labels `dagu config` prints, and the field each answers — only the two Cairn reads.

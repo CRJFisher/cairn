@@ -123,18 +123,18 @@ declared by the generated workflow and required, so a step that cannot say where
 goes fails loudly rather than writing one somewhere nothing will look
 ([run-model.md](run-model.md)).
 
-| Field                 | Meaning                                                           |
-| --------------------- | ----------------------------------------------------------------- |
-| `step_id`             | the engine's own name for the step that wrote it                  |
-| `run_id`              | the run it belongs to, so a report cannot speak for a later one   |
-| `status`              | exactly `done`, `noop`, or `failed`                               |
-| `duration`            | seconds the subcommand ran                                        |
-| `working_directory`   | where it ran, resolved                                            |
-| `summary`             | one human-readable line                                           |
-| `follow_up_work`      | a list, required, never null                                      |
-| `needs_user_decision` | a boolean, required                                               |
-| `cause`               | an enum value from the closed vocabulary, or null                 |
-| `detail`              | everything kind-specific: model, session, cost, turns, scope, key |
+| Field                 | Meaning                                                         |
+| --------------------- | --------------------------------------------------------------- |
+| `step_id`             | the engine's own name for the step that wrote it                |
+| `run_id`              | the run it belongs to, so a report cannot speak for a later one |
+| `status`              | exactly `done`, `noop`, or `failed`                             |
+| `duration`            | seconds the subcommand ran                                      |
+| `working_directory`   | where it ran, resolved                                          |
+| `summary`             | one human-readable line                                         |
+| `follow_up_work`      | a list, required, never null                                    |
+| `needs_user_decision` | a boolean, required                                             |
+| `cause`               | an enum value from the closed vocabulary, or null               |
+| `detail`              | everything kind-specific: model, session, turns, scope, key     |
 
 **`failed` means the step could not reach its end state on this attempt** — a crash, an
 unrecoverable error, a bounded resource exhausted, or a timeout. It never means "not
@@ -169,10 +169,10 @@ parsed:
 
 Every agent step's prompt is this text followed by the step's task. Measured against a
 resumed step: without it a fresh session never inspected the tree, rewrote six files that
-were already correct, and cost 152% of doing the work from scratch; with it the same resume
-cost 83% and finished in a third of the time. That 69-percentage-point difference is what
-makes running every step as a fresh session affordable, so the preamble is mandatory rather
-than advisory.
+were already correct, and took 152% of the time of doing the work from scratch; with it the
+same resume took 83% and finished in a third of the time. That difference is what makes
+running every step as a fresh session practical, so the preamble is mandatory rather than
+advisory.
 
 ```text
 Before you change anything, work out how much of this task's end state already holds.
@@ -238,7 +238,7 @@ The original task:
 
 The marker check is a **precondition**. A `condition:` with no `expected:` executes as a
 command and gates the step on its exit status; a step whose precondition fails records
-`skipped` and never starts, so no agent session begins and nothing is spent. Because the
+`skipped` and never starts, so no agent session begins. Because the
 condition is a real command against real repository state, it works across separate
 `dagu start` invocations — which is exactly what "there is no separate resume mode"
 requires.
@@ -253,9 +253,9 @@ env:
   - PYTHONPATH: /path/to/cairn
 steps:
   - name: config_schema
-    run: python3 -m cairn agent run --provider claude --prompt '…' --model sonnet --max-budget-usd 5.0 --timeout 3600
+    run: python3 -m cairn agent run --provider claude --prompt '…' --model sonnet
     working_dir: ${CAIRN_REPOSITORY}
-    timeout_sec: 3780 # the step's own bound plus the report grace
+    timeout_sec: 3780 # the hang guard plus the report grace
     retry_policy: { limit: 0, interval_sec: 1 }
     preconditions:
       - condition: python3 -m cairn marker absent --step config_schema --scope once
@@ -323,23 +323,20 @@ than a recovery problem.
 session that ends a turn without producing its structured output has not failed — it may
 have done every bit of the work and simply stopped short of saying so. Measured: a step
 that did exactly this had made its edit, and the assertion that followed it passed; what
-the missing report cost was $10.89 of proven work, the chain behind it, and a run record
+the missing report lost was proven work, the chain behind it, and a run record
 claiming the step had "reported failure" when it had reported nothing at all.
 
 So such a session is continued exactly once, with one message asking for the account it
-owes and telling it to do no further work. It runs under **what is left** of the step's own
-dollar ceiling, because the offer priced one ceiling for the step and a second pass carrying
-a fresh one would double what the person agreed to; both passes are summed into the record's
-cost and turn count. It is bounded in time as well, by what is left of the report grace once
-stopping the provider and writing the report are paid for, so asking for a report can never
-itself outrun the bound and cost the step the report entirely.
+owes and telling it to do no further work. It is bounded in time by what is left of the
+report grace once stopping the provider and writing the report are provided for, so asking
+for a report can never itself outrun the engine's bound and lose the step the report
+entirely; both passes' turns are summed into the record's turn count.
 
-**A session stopped at its own bound is resumed the same way and is the one exception to
-the ceiling rule** ([22 B]). Its first pass was killed mid-stream and reported no cost, so
-there is no remainder to compute and the resume carries the step's whole ceiling again. That
-is a ceiling such a step can exceed, and the offer says so in the sentence it prices the run
-with, because a stated ceiling that is quietly wrong is worse than one that is honest. If it reports, the step is recorded as it should have been. If it does
-not, the outcome is exactly the `provider_protocol` failure it already was, with the attempt
+**A session stopped by the hang guard is resumed the same way.** Its first pass was killed
+mid-stream, so the resume asks the same session for its account under the same time bound
+([22 B]). If it reports, the step is recorded as it should have been. If it does not, the
+step ends as stopped by the hang guard, with the attempt recorded beside it. A session that
+ended without a report is the `provider_protocol` failure it already was, with the attempt
 recorded beside it — the rescue can never make the outcome worse than not attempting it.
 
 The discrimination is narrow and it is measured: a **correct** structured report is itself a
@@ -364,8 +361,8 @@ second completion authority competing with the marker, and two authorities drift
 completed steps no-op via the committed marker, a plain re-`start` is idempotent by
 construction and `dagu retry` is an optimisation rather than a requirement.
 
-Two things are never paid twice: a step whose work is verified never starts an agent session
-again, and a step killed mid-flight never redoes work that reached the disk. What is paid
+Two things never happen twice: a step whose work is verified never starts an agent session
+again, and a step killed mid-flight never redoes work that reached the disk. What does happen
 twice is the killed step's re-orientation, and the plan author's lever against it is step
 size.
 

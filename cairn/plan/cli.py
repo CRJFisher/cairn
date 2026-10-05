@@ -123,7 +123,7 @@ def _answer_missing_verify(args: argparse.Namespace, graph: Graph) -> Graph:
     if args.accept or args.edit is not None:
         raise UsageError(
             "a missing_verify answer is --command (the assertion, whether it accepts the "
-            "offer or not) or --decline"
+            "proposal or not) or --decline"
         )
     if args.decline and not (args.reason or "").strip():
         raise UsageError("--decline needs --reason: an unverified step must say why")
@@ -165,7 +165,7 @@ def _cmd_answer(args: argparse.Namespace) -> int:
         return 1
     if args.out:
         # The graph is the only record of every answer already given, and the conversation
-        # rewrites it once per answer, so a half-written file would cost the whole of it.
+        # rewrites it once per answer, so a half-written file would lose the whole of it.
         write_json(Path(args.out), cast(dict[str, Any], answered))
     else:
         json.dump(answered, sys.stdout, indent=2, sort_keys=True, ensure_ascii=False)
@@ -228,7 +228,7 @@ def main(argv: list[str] | None = None) -> int:
     child.add_argument("--dep", help="the other end of an edge question: --step depends on it")
     form = child.add_mutually_exclusive_group(required=True)
     form.add_argument("--command", help="missing_verify: the assertion the author gave")
-    form.add_argument("--accept", action="store_true", help="adopt the reading on offer")
+    form.add_argument("--accept", action="store_true", help="adopt the reading proposed")
     form.add_argument("--edit", help="the author's own restatement of the step's task")
     form.add_argument("--decline", action="store_true")
     child.add_argument("--reason", help="why: required to decline, and to accept an edge")

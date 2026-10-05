@@ -4,10 +4,11 @@ Every emitted step carries an explicit timeout and an explicit retry bound. I7 f
 unbounded step, and the engine supplies neither by default — its own step timeout is none,
 and a step it inherits nothing from retries not at all while the *DAG* around it retries
 three times ([01]). Neither default is one Cairn is willing to run on, so both are written
-on every step and a test fails if any step is emitted without them. An agent step carries
-two bounds more, its model and its dollar ceiling, because its body opens a paid session:
-a session with no ceiling is the one thing an offer cannot price, and one whose model the
-environment chose leaves a record that cannot say which model did the work ([17.3]).
+on every step and a test fails if any step is emitted without them. The timeout on a work
+step is the hang guard plus the grace its report needs; no body states a bound of its own,
+and no plan can vary one. An agent step carries its model as well, because a session whose
+model the environment chose leaves a record that cannot say which model did the work
+([17.3]).
 """
 
 from __future__ import annotations
@@ -18,16 +19,15 @@ from pathlib import Path
 from typing import Any
 
 from cairn.assertions import NEEDED_VERB, REMEDY_VERB, command_digest
-from cairn.bounds import nonnegative_integer, positive_finite, positive_integer
+from cairn.bounds import nonnegative_integer, positive_integer
 from cairn.plan.schema import (
     AGENT_FAMILY,
     AGENT_REPORT_GRACE,
+    HANG_GUARD,
     INPUTS_SCOPE,
-    MERGE_BUDGET_USD,
     MERGE_MODEL,
     MERGE_RETRIES,
     MERGE_TIMEOUT,
-    MERGE_WORK_TIMEOUT,
     RETRY_INTERVAL,
     SUPPORT_RETRIES,
     SUPPORT_TIMEOUT,
@@ -71,9 +71,9 @@ def _base(step: Step, working_directory: str) -> EngineStep:
     return {
         "name": step["id"],
         "working_dir": working_directory,
-        "timeout_sec": step["timeout"],
+        "timeout_sec": HANG_GUARD,
         # Zero unless the plan asked for more. Every failure an agent step can have is
-        # either a wrong task or a paid session that already changed the repository, and
+        # either a wrong task or a session that already changed the repository, and
         # retrying either buys nothing; a rate limit is reported with the moment it clears
         # rather than waited out blind (09).
         "retry_policy": retry_policy(step["retries"], RETRY_INTERVAL),
@@ -88,32 +88,35 @@ def emit_command(step: Step, working_directory: str) -> EngineStep:
     if command_type is None:
         raise ValueError(f"command step {step['id']!r} has no command type")
     if command_type == "wait_until":
+        # A wait owns a bound of its own, because how long to wait for a condition is what
+        # the step means. It is the hang guard, like every other step's, and the engine's
+        # own kill lands the grace later so `wait_timeout` reaches a report ([22 B]).
         arguments = (
             *CAIRN_INVOCATION,
             "wait",
             "--until",
             command,
             "--timeout",
-            str(step["timeout"]),
+            str(HANG_GUARD),
         )
     else:
         arguments = (*CAIRN_INVOCATION, "exec", "--command", command)
     emitted = _base(step, working_directory)
     if command_type == "wait_until":
-        emitted["timeout_sec"] = step["timeout"] + WAIT_REPORT_GRACE
+        emitted["timeout_sec"] = HANG_GUARD + WAIT_REPORT_GRACE
     emitted["run"] = shlex.join(arguments)
     return emitted
 
 
 def emit_agent(step: Step, working_directory: str) -> EngineStep:
-    """One paid session, with every bound it runs under written into its own body.
+    """One session, with the model that is to do its work written into its own body.
 
-    The model and the ceiling are written here and not resolved at run time, because the
-    definition is what an offer prices: a bound the environment supplied would let a person
-    accept a run whose price and model nobody had stated ([17.3]).
+    The model is written here and not resolved at run time, because the definition is what
+    the record is read against: a model the environment supplied would leave a record that
+    could not say which model did the work ([17.3]).
     """
     emitted = _base(step, working_directory)
-    emitted["timeout_sec"] = step["timeout"] + AGENT_REPORT_GRACE
+    emitted["timeout_sec"] = HANG_GUARD + AGENT_REPORT_GRACE
     emitted["run"] = shlex.join(_agent_arguments(step))
     return emitted
 
@@ -121,11 +124,10 @@ def emit_agent(step: Step, working_directory: str) -> EngineStep:
 def _agent_arguments(step: Step) -> list[str]:
     provider = step["kind"][len(AGENT_FAMILY) :]
     model = step.get("model")
-    budget = step.get("max_budget_usd")
-    if not model or not positive_finite(budget):
+    if not model:
         raise ValueError(
-            f"agent step {step['id']!r} carries no model or no positive dollar ceiling, "
-            "so the session it opens could not be priced"
+            f"agent step {step['id']!r} carries no model, so its record could not say "
+            "which model did the work"
         )
     arguments = [
         *CAIRN_INVOCATION,
@@ -137,13 +139,6 @@ def _agent_arguments(step: Step) -> list[str]:
         step["task"],
         "--model",
         model,
-        "--max-budget-usd",
-        str(budget),
-        # The step's own bound, enforced inside the wrapper, so the session is stopped
-        # with headroom to say what it did. The engine's kill lands the grace later, and
-        # erases nothing a report could have said ([22 B]).
-        "--timeout",
-        str(step["timeout"]),
     ]
     for deny_pattern in step["tools"] or []:
         arguments.extend(("--tool", deny_pattern))
@@ -153,10 +148,10 @@ def _agent_arguments(step: Step) -> list[str]:
 def emit_remedy(step: Step, working_directory: str) -> EngineStep:
     """The step's own session, resumed once to fix what its assertion found.
 
-    The same body as the work, bounded and priced the same, so an offer counts it as the
-    paid session it is; the two flags make it a remedy. Its gate opens it only over an
-    assertion that ran and exited nonzero, and both flags absorb: a remedy that fails or is
-    declined still lets the second assertion's gate and the marker's gate run.
+    The same body as the work, bounded the same; the two flags make it a remedy. Its gate
+    opens it only over an assertion that ran and exited nonzero, and both flags absorb: a
+    remedy that fails or is declined still lets the second assertion's gate and the
+    marker's gate run.
     """
     command = step["verify"]
     if not step["remediate"] or command is None:
@@ -303,7 +298,7 @@ def assertion_gate(step: Step) -> str:
     """The command whose exit status decides whether this step's assertion runs at all.
 
     The command's bytes never reach argv; their digest does, computed here so the key
-    sharing is looked up under is the command the offer priced ([assertions.py]).
+    sharing is looked up under is the command the plan declared ([assertions.py]).
     """
     command = step["verify"]
     if command is None:
@@ -492,7 +487,7 @@ def emit_join(node: Node) -> EngineStep:
 
 
 def emit_merge(node: Node) -> EngineStep:
-    """One slot of a wave's landing, bounded like the session it may have to pay for.
+    """One slot of a wave's landing, bounded like the session it may have to open.
 
     Every slot carries the whole candidate list, because which branch it lands is its own
     decision on evidence that does not exist until run time — the prediction compares
@@ -510,10 +505,6 @@ def emit_merge(node: Node) -> EngineStep:
         str(detail["provider"]),
         "--model",
         MERGE_MODEL,
-        "--max-budget-usd",
-        str(MERGE_BUDGET_USD),
-        "--timeout",
-        str(MERGE_WORK_TIMEOUT),
     ]
     for branch in list(detail["candidates"]):
         arguments.extend(("--branch", str(branch)))

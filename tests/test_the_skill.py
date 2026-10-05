@@ -5,16 +5,16 @@ the right capability — is not settled here and this suite does not pretend it 
 settled here is everything the prose rests on:
 
 - **the rules**, disjoint over their whole domain, total over it, and never resolving a
-  costly ambiguity to the likelier reading;
+  ambiguity to the likelier reading;
 - **the document**, checked cell by cell against the rules, so what a model reads and what is
   proved here cannot drift apart;
-- **the gate**, which does not depend on the classification being right at all: nothing in
-  Cairn's own code can start a run except through an offer that was priced and an
-  authorisation that is spent exactly once.
+- **the chokepoint**, which does not depend on the classification being right at all: nothing
+  in Cairn's own code can start a run except `run start`, and the classification cannot
+  reach it.
 
 That last one is the shape of the whole answer to doc 15 task 11. A corpus can be gamed by
-omission and a classifier can be wrong; a chokepoint that has never been handed the material
-to start a run cannot start one either way.
+omission and a classifier can be wrong; a chokepoint a classification cannot reach cannot be
+reached by a wrong one.
 
 What is **not** proved here, stated so nobody reads a green suite as more than it is: that a
 model reads an English sentence into the right verb class and object shape. The corpus
@@ -23,7 +23,6 @@ doc 17's.
 """
 
 import ast
-import hashlib
 import io
 import json
 import re
@@ -42,13 +41,13 @@ from unittest.mock import patch
 from cairn.core import CairnError
 from cairn.enginehome import ENGINE_BINARY
 from cairn.gitio import runs_root
-from cairn.layout import check_run_id
+from cairn.layout import RECORD_FILE, check_run_id
 from cairn.marker import mint_occasion
 from cairn.parameters import refuse_misfiled_records
 from cairn.parameters import repository as declared_repository
 from cairn.record.vocabulary import VERDICT_PRECEDENCE
 from cairn.report import phrases
-from cairn.skill import consent, explain, resolve, surface, trigger
+from cairn.skill import explain, resolve, surface, trigger
 from cairn.skill.cli import explain_main, run_main
 from cairn.skill.dispatch import (
     ASK_REASONS,
@@ -69,29 +68,15 @@ from cairn.skill.vocabulary import (
     CAPABILITY_EXPLAIN,
     CAPABILITY_ORDER,
     CAPABILITY_RUN,
-    CAPABILITY_SCHEDULE,
-    CONSENT_ASK_ANSWERS,
-    CONSENT_ASK_HEADER,
-    CONSENT_ASK_QUESTION,
-    CONSENT_GATED,
-    CONSENT_NOTHING_YET,
-    CONSENT_OUTCOMES,
-    CONSENT_RELAY_CLOSE,
-    CONSENT_RELAY_OPEN,
-    COST_BY_READING,
-    COST_BY_ROLE,
-    COST_SENTENCES,
+    CONSEQUENCE_BY_READING,
     DOCUMENT_BY_CAPABILITY,
     FAMILY_HARMLESS_CHOICE,
     FAMILY_NOTHING_APPLIES,
     FAMILY_OBJECT_UNCLEAR,
     FAMILY_VERB_UNCLEAR,
-    HEADLINE_COST,
-    HEADLINE_DAEMON_COST,
     OCCASION_READINGS,
     QUALIFIER_SHAPES,
     READING_BY_TRIGGER,
-    RUN_COST_FACTS,
     SUBJECT_SHAPES,
     TRIGGER_SCHEDULED,
     TRIGGER_SHAPES,
@@ -100,9 +85,7 @@ from cairn.skill.vocabulary import (
     VERB_RECOUNTING,
     WRITES_NOTHING,
 )
-from cairn.topology import ROLES, worktrees_parent
 from cairn.verify import EXCLUSION_CAUSES
-from cairn.workflow.gate import Admission
 from cairn.workflow.schema import (
     LABEL_GRAPH_DIGEST,
     PARENT_BRANCH_PARAM,
@@ -221,9 +204,8 @@ class TheRulesAreDisjoint(unittest.TestCase):
     def test_an_object_shape_is_never_also_a_qualifier(self) -> None:
         self.assertEqual(set(SUBJECT_SHAPES) & set(QUALIFIER_SHAPES), set())
 
-    def test_the_two_capability_subsets_are_contiguous_slices_of_the_order(self) -> None:
-        """The order means what it claims: worst-to-dispatch-here-wrongly, first."""
-        self.assertEqual(CAPABILITY_ORDER[: len(CONSENT_GATED)], CONSENT_GATED)
+    def test_the_reading_only_subset_is_a_contiguous_slice_of_the_order(self) -> None:
+        """The order means what it claims: furthest-reaching to dispatch here wrongly, first."""
         self.assertEqual(CAPABILITY_ORDER[-len(WRITES_NOTHING) :], WRITES_NOTHING)
 
 
@@ -254,14 +236,6 @@ class TheRulesAreTotal(unittest.TestCase):
                     self.assertEqual(len(invocation.verbs), 1)
                     self.assertEqual(len(invocation.subjects), 1)
 
-    def test_no_costly_ambiguity_is_ever_resolved(self) -> None:
-        """The rule doc 15 exists for: a reading that spends money is asked about."""
-        for invocation in DOMAIN:
-            decision = dispatch(invocation)
-            if isinstance(decision, Selected) and decision.rule.startswith("safe:"):
-                with self.subTest(invocation=invocation):
-                    self.assertNotIn(decision.capability, CONSENT_GATED)
-
     def test_every_capability_is_reachable(self) -> None:
         reached = {
             decision.capability
@@ -289,44 +263,21 @@ class EveryQuestionIsWorthAsking(unittest.TestCase):
                 if asked.ask.family == FAMILY_NOTHING_APPLIES:
                     self.assertEqual(asked.ask.readings, ())
                 elif asked.ask.family == FAMILY_VERB_UNCLEAR:
-                    # At least one reading, at least one of them costly. A single reading
+                    # At least one reading, at least one of them writing. A single reading
                     # still earns the question when the alternative is "nothing applies":
                     # what is unclear is whether anything was asked for at all.
                     self.assertGreaterEqual(len(readings), 1)
                     self.assertFalse(readings <= set(WRITES_NOTHING))
                 elif asked.ask.family == FAMILY_HARMLESS_CHOICE:
-                    # Asked for the order or the object, not for permission: no branch of
-                    # this question costs anything.
+                    # Asked for the order or the object: no branch of this question
+                    # writes anything.
                     self.assertGreaterEqual(len(readings), 1)
                     self.assertTrue(readings <= set(WRITES_NOTHING))
                 else:
                     self.assertEqual(asked.ask.family, FAMILY_OBJECT_UNCLEAR)
                     self.assertGreaterEqual(len(readings), 1)
 
-    def test_a_question_offering_a_costly_reading_names_what_it_costs(self) -> None:
-        """Task 5's 'wherever it is made', reaching the point where a run or a daemon is one
-        branch of a question rather than the subject of an offer."""
-        for asked in ASKS:
-            with self.subTest(reason=asked.ask.reason, readings=asked.ask.readings):
-                if CAPABILITY_RUN in asked.ask.readings:
-                    self.assertIn(HEADLINE_COST, asked.ask.question)
-                if CAPABILITY_SCHEDULE in asked.ask.readings:
-                    self.assertIn(HEADLINE_DAEMON_COST, asked.ask.question)
-
-    def test_a_question_that_offers_a_run_in_prose_states_the_cost_in_its_own_text(
-        self,
-    ) -> None:
-        """The appender covers questions computed from the table. A tabled question that
-        offers a run in words has to carry the cost itself, or stripping it from the text
-        would be repaired invisibly."""
-        for reason, question in QUESTION_BY_ASK.items():
-            if reason not in READINGS_BY_TABLED_ASK:
-                continue
-            offers_a_run = CAPABILITY_RUN in READINGS_BY_TABLED_ASK[reason]
-            with self.subTest(reason=reason):
-                self.assertEqual(offers_a_run, HEADLINE_COST in question)
-
-    def test_a_question_that_applies_to_nothing_offers_no_capability(self) -> None:
+    def test_a_question_that_applies_to_nothing_puts_forward_no_capability(self) -> None:
         """`nothing_applies` means there is no reading, so a question of that family must
         not present one as a choice."""
         for asked in ASKS:
@@ -420,16 +371,16 @@ class TheDocumentAndTheTableAreOneRuleSet(unittest.TestCase):
         self.assertEqual(keys, {"name", "description", "disable-model-invocation"})
 
     def test_nothing_but_a_person_naming_it_can_open_this_skill(self) -> None:
-        """A run takes the repository lock, spends on sessions and commits. Being reached
-        from a sentence that never named Cairn is the wrong default for that, and a bundled
-        skill answering the same sentence is a contest no description is guaranteed to win —
-        so there is no contest: the invocation is the first consent."""
+        """A run takes the repository lock and commits. Being reached from a sentence that
+        never named Cairn is the wrong default for that, and a bundled skill answering the
+        same sentence is a contest no description is guaranteed to win — so there is no
+        contest: the invocation is the person asking."""
         self.assertIn("disable-model-invocation: true", self.text)
 
     def test_a_person_can_find_out_the_command_exists_without_reading_the_source(
         self,
     ) -> None:
-        """The whole price of user invocation is discoverability, and this is what pays it.
+        """The whole drawback of user invocation is discoverability, and this is what answers it.
 
         Two places, because they are the two doors: the README a person opens, and the
         internal command line somebody finds by going looking and mistakes for the surface.
@@ -451,13 +402,12 @@ class TheDocumentAndTheTableAreOneRuleSet(unittest.TestCase):
             text = (CAPABILITIES / document).read_text(encoding="utf-8")
             with self.subTest(document=document):
                 self.assertIn("Where the engine's view is better", text)
-                self.assertIn("cost", text)
                 self.assertIn("divergence", text)
                 self.assertIn("verdict", text)
 
     def test_a_run_is_started_from_exactly_one_place(self) -> None:
         """Across the surface a model reads. The README names the command too, for a
-        maintainer tracing how a run is authorised — but no capability the skill can select
+        maintainer tracing how a run is started — but no capability the skill can select
         may reach a start except the one that owns it."""
         holders = {
             path.name
@@ -468,7 +418,7 @@ class TheDocumentAndTheTableAreOneRuleSet(unittest.TestCase):
 
     def test_reading_a_run_can_start_nothing(self) -> None:
         text = (CAPABILITIES / "reading.md").read_text(encoding="utf-8")
-        for starter in ("cairn run start", "cairn run offer", "dagu start"):
+        for starter in ("cairn run start", "dagu start"):
             with self.subTest(starter=starter):
                 self.assertNotIn(starter, text)
 
@@ -538,409 +488,6 @@ class EveryCapabilityDocumentDeclaresItsContract(unittest.TestCase):
                 self.assertNotIn("](../../", text)
 
 
-class TheConsentRuleIsStatedOnce(unittest.TestCase):
-    """Exit criterion 3, as a search over every file that could restate it."""
-
-    CLAUSES = (
-        "The yes is the answer to a question you asked",
-        "A bare acknowledgement is not one, and neither is the request",
-        "A yes that predates the offer is not one",
-        "One acceptance authorises exactly one execution",
-    )
-
-    def test_each_clause_is_stated_in_the_skill_file_and_nowhere_else(self) -> None:
-        for clause in self.CLAUSES:
-            holders = {
-                path.name for path in sources() if clause in path.read_text("utf-8")
-            }
-            with self.subTest(clause=clause):
-                self.assertEqual(holders, {"SKILL.md"})
-
-    def test_every_document_that_can_offer_a_run_points_at_it(self) -> None:
-        for document in ("authoring.md", "running.md"):
-            text = (CAPABILITIES / document).read_text(encoding="utf-8")
-            with self.subTest(document=document):
-                self.assertIn("../SKILL.md", text)
-
-    def test_the_run_document_names_the_tool_and_both_answers_the_offer_prints(self) -> None:
-        """One spelling, shared by the code and the document a session reads.
-
-        The labels are composed by `run offer` so that a session retypes nothing; a document
-        naming different ones would put the printed question and the asked question out of
-        step, and the person would be the only one to notice.
-        """
-        text = (CAPABILITIES / "running.md").read_text(encoding="utf-8")
-        self.assertIn("AskUserQuestion", text)
-        for label in CONSENT_ASK_ANSWERS:
-            with self.subTest(label=label):
-                self.assertIn(label, text)
-
-    def test_the_run_document_claims_no_refusal_the_ledger_does_not_make(self) -> None:
-        """`spend` asks one thing of a reply — whether there is anything in it — so a
-        document promising that a start turns away an acknowledgement or a decline describes
-        a gate that does not exist, and describes it exactly where a session is deciding how
-        much care to take. The rule binding that judgement is the session's, and claiming the
-        code keeps it is how it stops being kept."""
-        text = (CAPABILITIES / "running.md").read_text(encoding="utf-8")
-        for absent in (
-            "refuses a bare acknowledgement",
-            "a reply that acknowledges or declines",
-        ):
-            with self.subTest(absent=absent):
-                self.assertNotIn(absent, text)
-
-    def test_the_run_cost_is_composed_from_the_definition_rather_than_retyped(self) -> None:
-        """Task 5. A cost typed into prose is a cost that goes stale silently, so the only
-        statement of it is built from the file that is about to run."""
-        self.assertEqual(set(COST_SENTENCES), set(RUN_COST_FACTS))
-        self.assertLessEqual(set(COST_BY_ROLE), set(RUN_COST_FACTS))
-        self.assertLessEqual(set(COST_BY_ROLE.values()), set(ROLES))
-        stated = consent.disclosure(GOLDEN_WORKFLOW)
-        for sentence in stated:
-            with self.subTest(sentence=sentence):
-                self.assertNotIn("{", sentence)
-        joined = " ".join(stated)
-        self.assertIn("/srv/work/product", joined)
-        self.assertIn("run lock", joined)
-        self.assertIn("commits", joined)
-
-    def test_a_chain_is_priced_for_no_worktrees_and_no_merge(self) -> None:
-        """A wave holding one step runs in the repository itself ([07]), so a chain creates
-        no worktree and lands no merge — and a price for what a definition cannot do is a
-        price nobody agreed to."""
-        chain = " ".join(consent.disclosure(WORKFLOWS / "mixed-kinds.yaml"))
-        self.assertNotIn(str(worktrees_parent(Path("/srv/work/product"))), chain)
-        self.assertNotIn("it merges", chain)
-        # The facts that are every run's are still all there, the branch among them.
-        self.assertIn("run lock", chain)
-        self.assertIn("lands on main", chain)
-        self.assertIn("unix socket", chain)
-
-    def test_a_fan_out_is_priced_for_both(self) -> None:
-        """Paired with the chain, this is what proves the price reads the file."""
-        wide = consent.disclosure(WORKFLOWS / "fan-out.yaml")
-        self.assertEqual(len(wide), len(RUN_COST_FACTS))
-        joined = " ".join(wide)
-        self.assertIn(str(worktrees_parent(Path("/srv/work/product"))), joined)
-        self.assertIn("it merges", joined)
-
-    def test_a_definition_cairn_did_not_name_is_priced_for_everything(self) -> None:
-        """Reading the roles is what lets a chain drop two facts. A name that will not parse
-        is not evidence that the role is absent — it is evidence the file was hand-edited,
-        and dropping a cost on that evidence would buy a yes on terms nobody was given."""
-        edited = json.loads(
-            (WORKFLOWS / "fan-out.yaml").read_text(encoding="utf-8")
-        )
-        for step in edited["steps"]:
-            if step["name"].startswith("setup_"):
-                step["name"] = "not-a-node-name"
-        with tempfile.TemporaryDirectory() as scratch:
-            hand_edited = Path(scratch) / "hand-edited.yaml"
-            hand_edited.write_text(json.dumps(edited), encoding="utf-8")
-            stated = consent.disclosure(hand_edited)
-        self.assertEqual(len(stated), len(RUN_COST_FACTS))
-        self.assertIn(
-            str(worktrees_parent(Path("/srv/work/product"))), " ".join(stated)
-        )
-
-    def test_the_branch_asked_for_reaches_the_merge_sentence(self) -> None:
-        """The chain golden cannot exercise it, so the fan-out has to."""
-        stated = " ".join(
-            consent.disclosure(WORKFLOWS / "fan-out.yaml", parent_branch="release")
-        )
-        self.assertIn("landed on release", stated)
-        self.assertIn("lands on release", stated)
-
-    def test_every_priced_fact_is_the_vocabularys_and_keeps_its_order(self) -> None:
-        for name in ("linear-chain", "mixed-kinds", "single-step", "fan-out", "multi-wave"):
-            with self.subTest(workflow=name):
-                stated = consent.disclosure(WORKFLOWS / f"{name}.yaml")
-                every = [COST_SENTENCES[fact] for fact in RUN_COST_FACTS]
-                position = -1
-                for sentence in stated:
-                    template = next(
-                        line for line in every if line.split("{")[0] in sentence
-                    )
-                    self.assertGreater(every.index(template), position)
-                    position = every.index(template)
-
-    def test_the_price_names_the_socket_every_run_opens(self) -> None:
-        """A cause a person can clear before saying yes, and one that costs the yes after."""
-        joined = " ".join(consent.disclosure(GOLDEN_WORKFLOW))
-        self.assertIn("unix socket", joined)
-        self.assertIn("bind", joined)
-
-    def test_the_disclosure_states_the_ceiling_the_model_and_the_timeout(self) -> None:
-        """17.3 task 4: the three bounds the definition writes are three of the facts a
-        person agrees to, read from the file rather than retyped."""
-        joined = " ".join(consent.disclosure(GOLDEN_WORKFLOW))
-        self.assertIn("US$ 8.00", joined)
-        self.assertIn("opus", joined)
-        self.assertIn("7200s", joined)
-
-    def test_a_definition_with_an_unbounded_session_cannot_be_offered(self) -> None:
-        """An agent body with no written ceiling is the one thing a price cannot cover,
-        so the offer refuses rather than pricing the run as though the session were free."""
-        with tempfile.TemporaryDirectory() as root:
-            unbounded = Path(root) / "unbounded.yaml"
-            document = cast(dict[str, Any], json.loads(GOLDEN_WORKFLOW.read_text("utf-8")))
-            for step in cast(list[dict[str, Any]], document["steps"]):
-                body = str(step.get("run", ""))
-                if "--max-budget-usd" in body:
-                    words = body.split()
-                    index = words.index("--max-budget-usd")
-                    del words[index : index + 2]
-                    step["run"] = " ".join(words)
-            unbounded.write_text(json.dumps(document), encoding="utf-8")
-            with self.assertRaisesRegex(CairnError, "cannot be stated"):
-                consent.disclosure(unbounded)
-
-    def test_the_money_fact_leads(self) -> None:
-        self.assertEqual(RUN_COST_FACTS[0], "spend")
-        self.assertIn("paid agent session", consent.disclosure(GOLDEN_WORKFLOW)[0])
-
-    def test_a_cost_cannot_be_quoted_for_a_definition_nobody_has(self) -> None:
-        with tempfile.TemporaryDirectory() as root:
-            stripped = Path(root) / "stripped.yaml"
-            document = cast(dict[str, Any], json.loads(GOLDEN_WORKFLOW.read_text("utf-8")))
-            document.pop("params")
-            stripped.write_text(json.dumps(document), encoding="utf-8")
-            with self.assertRaises(CairnError):
-                consent.disclosure(stripped)
-
-
-class WhatAcceptsAnOfferAndWhatDoesNot(unittest.TestCase):
-    """The consent clauses, as properties of the filesystem rather than of prose."""
-
-    def setUp(self) -> None:
-        self.root = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
-        self.repository = self.root / "product"
-        self.repository.mkdir()
-        subprocess.run(("git", "init", "-q"), cwd=self.repository, check=True)
-        self.workflow = self.root / "offline-export.yaml"
-        shutil.copy(GOLDEN_WORKFLOW, self.workflow)
-
-    def _offer(self) -> consent.Offer:
-        made, _ = consent.make_offer(
-            self.repository,
-            plan="offline-export",
-            workflow=self.workflow,
-            parent_branch="main",
-            occasion_reading="new_occasion",
-            occasion=None,
-        )
-        return made
-
-    def test_an_answered_offer_authorises_one_execution(self) -> None:
-        made = self._offer()
-        granted = consent.spend(self.repository, made.offer_id, reply="yes, go ahead", run_id=RUN_ID)
-        self.assertIsInstance(granted, consent.Authorisation)
-
-    def test_an_admission_prices_its_snapshot_not_later_source_bytes(self) -> None:
-        body = self.workflow.read_bytes()
-        expected_cost = consent.disclosure(self.workflow, "main")
-        admission = Admission(hashlib.sha256(body).hexdigest(), body, "unchanged")
-        changed = cast(
-            dict[str, Any], json.loads(self.workflow.read_text(encoding="utf-8"))
-        )
-        cast(list[dict[str, Any]], changed["steps"])[0]["run"] = "echo changed"
-        self.workflow.write_text(json.dumps(changed), encoding="utf-8")
-
-        made, stated = consent.make_offer(
-            self.repository,
-            plan="offline-export",
-            workflow=self.workflow,
-            parent_branch="main",
-            occasion_reading="new_occasion",
-            occasion=None,
-            admission=admission,
-        )
-        self.assertEqual(stated, expected_cost)
-        self.assertEqual(made.body_sha256, admission.sha256)
-
-    def test_the_same_acceptance_cannot_authorise_a_second(self) -> None:
-        made = self._offer()
-        consent.spend(self.repository, made.offer_id, reply="yes, go ahead", run_id=RUN_ID)
-        again = consent.spend(self.repository, made.offer_id, reply="yes, go ahead", run_id=RUN_ID)
-        self.assertIsInstance(again, consent.Refused)
-        self.assertEqual(cast(consent.Refused, again).outcome, "already_spent")
-
-    def test_a_spent_offer_records_the_words_it_was_accepted_with(self) -> None:
-        # A run spends money and commits on someone's say-so. Recording only *that* it was
-        # accepted leaves nothing afterwards able to answer which words did it.
-        made = self._offer()
-        consent.spend(self.repository, made.offer_id, reply="yes, run it", run_id=RUN_ID)
-        accepted = consent.acceptance_of(self.repository, made.offer_id)
-        self.assertIsNotNone(accepted)
-        self.assertEqual(cast(consent.Acceptance, accepted).reply, "yes, run it")
-        self.assertTrue(cast(consent.Acceptance, accepted).spent_at)
-
-    def test_an_offer_that_was_never_spent_records_no_acceptance(self) -> None:
-        made = self._offer()
-        self.assertIsNone(consent.acceptance_of(self.repository, made.offer_id))
-
-    def test_the_second_acceptance_still_names_when_the_first_was_spent(self) -> None:
-        made = self._offer()
-        consent.spend(self.repository, made.offer_id, reply="yes, go ahead", run_id=RUN_ID)
-        again = consent.spend(self.repository, made.offer_id, reply="yes, go ahead", run_id=RUN_ID)
-        moment = cast(consent.Acceptance, consent.acceptance_of(self.repository, made.offer_id))
-        self.assertIn(moment.spent_at, cast(consent.Refused, again).why)
-
-    def test_a_yes_predating_the_offer_names_no_offer(self) -> None:
-        """It cannot quote an id that did not exist when it was given — the clause holds by
-        the shape of the token rather than by comparing clocks."""
-        refused = consent.spend(
-            self.repository,
-            "20200101T000000Z-deadbeef",
-            reply="yes, go ahead",
-            run_id=RUN_ID,
-        )
-        self.assertIsInstance(refused, consent.Refused)
-        self.assertEqual(cast(consent.Refused, refused).outcome, "no_such_offer")
-
-    def _staged(self, case: dict[str, Any]) -> str:
-        """The offer id this case's reply should be answered against.
-
-        A case may declare the ledger state it is about — no offer, one already spent, one
-        damaged, one whose definition moved — and the outcome it declares is an outcome of
-        that state, so it has to be set up rather than skipped.
-        """
-        # Every case starts from the same ledger and the same definition, because one that
-        # stages a damaged or replaced one must not decide what the next case sees.
-        shutil.copy(GOLDEN_WORKFLOW, self.workflow)
-        standing = case.get("offer")
-        if standing == "absent":
-            return "20200101T000000Z-deadbeef"
-        made = self._offer()
-        if standing == "damaged":
-            consent.offer_path(self.repository, made.offer_id).write_text(
-                "{", encoding="utf-8"
-            )
-        elif standing == "spent":
-            consent.spend(self.repository, made.offer_id, reply="yes, go ahead", run_id=RUN_ID)
-        elif standing == "moved":
-            self.workflow.write_text("{}", encoding="utf-8")
-        return made.offer_id
-
-    def test_every_reply_in_the_corpus_is_answered_the_way_it_says(self) -> None:
-        for case in family("consent"):
-            with self.subTest(case=case["id"]):
-                answered = consent.spend(
-                    self.repository,
-                    self._staged(case),
-                    reply=case["reply"],
-                    run_id=RUN_ID,
-                )
-                if case["expect"]["outcome"] == "accepted":
-                    self.assertIsInstance(answered, consent.Authorisation)
-                    continue
-                self.assertIsInstance(answered, consent.Refused)
-                self.assertEqual(
-                    cast(consent.Refused, answered).outcome, case["expect"]["outcome"]
-                )
-
-    def test_no_reply_is_read_for_meaning_and_the_corpus_says_which_ones(self) -> None:
-        """Doc 15's fourth clause, held where it can be kept rather than where it reads well.
-
-        Every one of these replies must never reach a start — "ok" accepts nothing, "no" is a
-        refusal — and every one of them spends the offer if it arrives. That is not a hole in
-        the gate: the string arriving is the session's own `--reply` argument, so a comparison
-        made here would run after the judgement it claimed to make and could fire only where a
-        session misread the words and then quoted them faithfully. A list that cannot see the
-        case it exists for is reasoned about as protection and is not any. The rule binds the
-        session, `SKILL.md` states it, and the paid suite measures whether it was kept.
-        """
-        judged = [case for case in family("consent") if case.get("judged_by") == "session"]
-        self.assertTrue(judged)
-        for case in judged:
-            with self.subTest(case=case["id"]):
-                self.assertEqual(case["expect"]["outcome"], "accepted")
-                answered = consent.spend(
-                    self.repository,
-                    self._staged(case),
-                    reply=case["reply"],
-                    run_id=RUN_ID,
-                )
-                self.assertIsInstance(answered, consent.Authorisation)
-
-    def test_the_ledger_holds_no_list_of_words_a_person_might_say(self) -> None:
-        """The reciprocal, so a deny list cannot creep back in beside the artifact clauses:
-        no module under `cairn/skill/` may hold a set of English phrases at all."""
-        english = re.compile(r"\"(?:ok|okay|sure|thanks|no|nope|stop|wait)\"")
-        for path in sorted((PACKAGE_ROOT / "cairn" / "skill").rglob("*.py")):
-            with self.subTest(module=path.name):
-                self.assertIsNone(english.search(path.read_text(encoding="utf-8")))
-
-    def test_a_reply_with_no_words_in_it_authorises_nothing(self) -> None:
-        """Not a judgement about meaning — a run authorised by an empty argument leaves the
-        ledger unable to say afterwards what authorised it."""
-        made = self._offer()
-        for reply in ("", "   ", "..."):
-            with self.subTest(reply=reply):
-                answered = consent.spend(self.repository, made.offer_id, reply=reply, run_id=RUN_ID)
-                self.assertIsInstance(answered, consent.Refused)
-                self.assertEqual(cast(consent.Refused, answered).outcome, "no_words")
-
-    def test_an_offer_that_is_damaged_is_not_reported_as_one_that_never_existed(
-        self,
-    ) -> None:
-        """Folding a corrupt ledger into 'no such offer' would tell a person their yes
-        predated an offer that in fact exists — a claim about their conversation drawn from
-        a filesystem fault."""
-        made = self._offer()
-        consent.offer_path(self.repository, made.offer_id).write_text("{", encoding="utf-8")
-        answered = consent.spend(self.repository, made.offer_id, reply="yes, go ahead", run_id=RUN_ID)
-        self.assertIsInstance(answered, consent.Refused)
-        self.assertEqual(cast(consent.Refused, answered).outcome, "offer_unreadable")
-
-    def test_an_offer_id_that_could_name_another_file_is_refused(self) -> None:
-        with self.assertRaises(CairnError):
-            consent.offer_path(self.repository, "../../config")
-
-    def test_reading_an_offer_writes_nothing(self) -> None:
-        """A read path that creates a directory fails on a repository whose admin directory
-        is not writable, and it is a read."""
-        self.assertIsNone(consent.read_offer(self.repository, "20200101T000000Z-deadbeef"))
-        self.assertFalse(consent.offers_directory(self.repository).exists())
-
-    def test_a_refused_acceptance_leaves_the_offer_spendable(self) -> None:
-        """A refusal is not a consumption: the person's yes still stands once the cause is
-        cleared, and asking again would be asking twice for one decision."""
-        made = self._offer()
-        consent.spend(self.repository, made.offer_id, reply="", run_id=RUN_ID)
-        granted = consent.spend(self.repository, made.offer_id, reply="yes, run it", run_id=RUN_ID)
-        self.assertIsInstance(granted, consent.Authorisation)
-
-    def test_an_offer_is_void_once_the_definition_it_priced_has_moved(self) -> None:
-        made = self._offer()
-        self.workflow.write_text(
-            self.workflow.read_text("utf-8").replace("mixed-kinds", "something-else"),
-            encoding="utf-8",
-        )
-        refused = consent.spend(self.repository, made.offer_id, reply="yes, go ahead", run_id=RUN_ID)
-        self.assertIsInstance(refused, consent.Refused)
-        self.assertEqual(cast(consent.Refused, refused).outcome, "workflow_moved")
-
-    def test_the_offer_records_when_it_was_made_and_when_it_was_spent(self) -> None:
-        """What no test can prove is that a person was asked. The ledger records both
-        moments so a zero gap is visible rather than claimed against."""
-        made = self._offer()
-        self.assertTrue(made.offered_at)
-        granted = consent.spend(self.repository, made.offer_id, reply="yes", run_id=RUN_ID)
-        self.assertTrue(cast(consent.Authorisation, granted).granted_at)
-
-    def test_the_ledger_lives_where_no_commit_or_worktree_removal_can_reach_it(self) -> None:
-        made = self._offer()
-        path = consent.offer_path(self.repository, made.offer_id)
-        self.assertIn(".git", path.parts)
-
-    def test_every_refusal_the_corpus_names_is_in_the_frozen_set(self) -> None:
-        for case in family("consent"):
-            with self.subTest(case=case["id"]):
-                self.assertIn(case["expect"]["outcome"], CONSENT_OUTCOMES)
-
-
 def _engine_that_exited(code: int | None) -> Callable[..., "FakeEngine"]:
     """A launcher standing in for one whose child is already in a known state."""
 
@@ -986,9 +533,9 @@ class FakeEngine:
         raise AssertionError("a detached engine is never killed by the start")
 
 
-class NoInvocationStartsARunWithoutAnAnsweredOffer(unittest.TestCase):
-    """Doc 15 task 11, as a hard gate: every assertion here is an equality over every case,
-    and the last test in the class is what keeps anything softer from creeping in."""
+class TheStartIsReachedOnlyByAnExplicitRunRequest(unittest.TestCase):
+    """Doc 15 task 11: every assertion here is an equality over every case, and the last
+    test in the class is what keeps anything softer from creeping in."""
 
     def setUp(self) -> None:
         self.root = Path(tempfile.mkdtemp())
@@ -1005,34 +552,29 @@ class NoInvocationStartsARunWithoutAnAnsweredOffer(unittest.TestCase):
         self.launched.append(command)
         return FakeEngine()
 
-    def _offer(self) -> consent.Offer:
-        made, _ = consent.make_offer(
-            self.repository,
+    def _launch(self) -> trigger.Launch:
+        return trigger.Launch(
             plan="offline-export",
-            workflow=self.workflow,
-            occasion_reading="new_occasion",
+            workflow=str(self.workflow),
+            repository=str(self.repository),
+            parent_branch="main",
             occasion=None,
         )
-        return made
 
-    def _start(self, offer_id: str, reply: str) -> None:
-        """Everything a run passes through, with the engine replaced by a recorder.
+    def _start(self) -> None:
+        """The launch, with the engine replaced by a recorder.
 
-        Nothing here is stubbed but the launch itself: the offer is real, the spend is real,
-        and every other process is forbidden — so the count is over processes started rather
-        than over the one seam the test injected.
+        Nothing here is stubbed but the launch itself, and every other process is forbidden
+        — so the count is over processes started rather than over the one seam the test
+        injected.
         """
-        run_id = "20260101T000000Z-aaaabbbb"
-        granted = consent.spend(self.repository, offer_id, reply=reply, run_id=run_id)
-        if isinstance(granted, consent.Refused):
-            return
         with (
             patch("cairn.skill.trigger.assert_pinned"),
             patch("cairn.skill.trigger.rehearse_start"),
             patch("subprocess.run", side_effect=AssertionError("started a process")),
             patch("subprocess.Popen", side_effect=AssertionError("started a process")),
         ):
-            where = trigger.address(granted, run_id, self.repository / "runs")
+            where = trigger.address(self._launch(), RUN_ID, self.repository / "runs")
             trigger.start(
                 where,
                 records=self.repository / "records",
@@ -1040,24 +582,26 @@ class NoInvocationStartsARunWithoutAnAnsweredOffer(unittest.TestCase):
                 registered=lambda _identity: True,
             )
 
-    def test_no_classification_of_any_case_reaches_the_ledger(self) -> None:
-        """Dispatch selecting Run is an offer, never an execution — and reading a request
-        leaves no trace in the repository at all. The launch half is
-        `test_no_run_phrasing_in_the_corpus_starts_anything_on_its_own`, which drives one."""
+    def test_no_classification_of_any_case_writes_to_the_repository(self) -> None:
+        """Dispatch selecting Run is a selection, never an execution — and reading a request
+        leaves no trace in the repository at all."""
+        before = sorted(path for path in self.repository.rglob("*") if ".git" not in path.parts)
         for case in dispatch_cases():
             with self.subTest(case=case["id"]):
                 dispatch(reading_of(case))
-        self.assertFalse(consent.offers_directory(self.repository).exists())
+        after = sorted(path for path in self.repository.rglob("*") if ".git" not in path.parts)
+        self.assertEqual(before, after)
+        self.assertFalse((self.repository / ".git" / "cairn" / "admitted").exists())
 
-    def test_the_classifier_cannot_reach_the_thing_that_authorises(self) -> None:
-        """The gate does not rest on the classification being right: a module that was never
-        handed the consent machinery cannot mint an authorisation however wrong it is."""
+    def test_the_classifier_cannot_reach_the_thing_that_starts_a_run(self) -> None:
+        """The chokepoint does not rest on the classification being right: a module that
+        was never handed the start cannot begin a run however wrong it is."""
         self.assertEqual(
             _imports(PACKAGE_ROOT / "cairn" / "skill" / "dispatch.py"),
             {"cairn.skill.vocabulary", "typing", "__future__"},
         )
 
-    def test_an_authorisation_is_constructed_in_one_module_only(self) -> None:
+    def test_a_launch_is_constructed_in_one_module_only(self) -> None:
         holders: set[str] = set()
         for path in (PACKAGE_ROOT / "cairn").rglob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -1065,78 +609,19 @@ class NoInvocationStartsARunWithoutAnAnsweredOffer(unittest.TestCase):
                 if (
                     isinstance(node, ast.Call)
                     and isinstance(node.func, ast.Name)
-                    and node.func.id == "Authorisation"
+                    and node.func.id == "Launch"
                 ):
                     holders.add(path.name)
-        self.assertEqual(holders, {"consent.py"})
+        self.assertEqual(holders, {"cli.py"})
 
-    def test_every_answered_offer_starts_exactly_one_run_and_nothing_else_starts_any(
-        self,
-    ) -> None:
-        """Over the replies the ledger is answerable for, which is every one whose outcome is
-        a fact about a file. The nine a session judges are excluded and asserted elsewhere,
-        with the reasoning attached — carrying them here would put "'no' launched a run" in a
-        class whose whole claim is the opposite, stated in a line that never says why.
-        """
-        for case in family("consent"):
-            if case.get("judged_by") == "session":
-                continue
-            with self.subTest(case=case["id"]):
-                self.launched.clear()
-                standing = case.get("offer")
-                if standing == "absent":
-                    self._start("20200101T000000Z-deadbeef", case["reply"])
-                elif standing == "damaged":
-                    made = self._offer()
-                    consent.offer_path(self.repository, made.offer_id).write_text(
-                        "{", encoding="utf-8"
-                    )
-                    self._start(made.offer_id, case["reply"])
-                elif standing == "spent":
-                    made = self._offer()
-                    self._start(made.offer_id, case["reply"])
-                    self.launched.clear()
-                    self._start(made.offer_id, case["reply"])
-                elif standing == "moved":
-                    made = self._offer()
-                    self.workflow.write_text("{}", encoding="utf-8")
-                    self._start(made.offer_id, case["reply"])
-                    shutil.copy(GOLDEN_WORKFLOW, self.workflow)
-                else:
-                    made = self._offer()
-                    self._start(made.offer_id, case["reply"])
-                expected = 1 if case["expect"]["outcome"] == "accepted" else 0
-                self.assertEqual(len(self.launched), expected)
-
-    def test_no_run_phrasing_in_the_corpus_starts_anything_on_its_own(self) -> None:
-        """Every case the corpus resolves to Run, carried through the whole path with no
-        offer standing. Each is as unambiguous an instruction to run as the corpus holds, and
-        none of them starts anything: what authorises a run is an offer minted before the
-        words, so an invocation can never carry its own acceptance however it is phrased."""
-        for case in dispatch_cases():
-            decision = dispatch(reading_of(case))
-            if not isinstance(decision, Selected) or decision.capability != CAPABILITY_RUN:
-                continue
-            with self.subTest(case=case["id"]):
-                self.launched.clear()
-                self._start("20200101T000000Z-deadbeef", case["utterance"])
-                self.assertEqual(self.launched, [])
-
-    def test_two_targets_need_two_offers(self) -> None:
-        """One acceptance authorises exactly one execution, so a sentence naming two runs
-        cannot ride one yes even though the table selects Run once."""
-        first = self._offer()
-        self._start(first.offer_id, "yes, go ahead")
-        self._start(first.offer_id, "yes, go ahead")
+    def test_a_launch_starts_exactly_one_run(self) -> None:
+        self._start()
         self.assertEqual(len(self.launched), 1)
-        second = self._offer()
-        self._start(second.offer_id, "yes, go ahead")
-        self.assertEqual(len(self.launched), 2)
 
-    def test_the_pre_spend_check_rehearses_a_run_as_well_as_reading_the_version(self) -> None:
+    def test_the_pre_launch_check_rehearses_a_run_as_well_as_reading_the_version(self) -> None:
         """`dagu validate` and `dagu dry` never bind a socket, so a workflow authors cleanly
         in a shell that cannot run it. Only actually starting a run finds that out, and it
-        has to be found out before the offer is spent."""
+        has to be found out before anything is written."""
         order: list[str] = []
 
         def note(what: str) -> Callable[..., None]:
@@ -1150,88 +635,33 @@ class NoInvocationStartsARunWithoutAnAnsweredOffer(unittest.TestCase):
             patch("cairn.skill.trigger.rehearse_start", side_effect=note("rehearsed")),
         ):
             trigger.refuse_unusable_engine()
-        # The cheaper question first, so a machine with no engine at all is refused by it
+        # The quicker question first, so a machine with no engine at all is refused by it
         # and the rehearsal is never reached with nothing to rehearse against.
         self.assertEqual(order, ["pinned", "rehearsed"])
-
-    def test_a_shell_that_cannot_bind_the_run_socket_costs_nobody_their_yes(self) -> None:
-        """The refusal that used to arrive inside the run, where it had already cost the
-        acceptance — now it arrives before the offer is spent ([19 C])."""
-        made = self._offer()
-        with patch(
-            "cairn.skill.cli.refuse_unusable_engine",
-            side_effect=EngineUnavailable(
-                "failed to start the unix socket server: listen unix "
-                "/tmp/@dagu__x.sock: bind: operation not permitted"
-            ),
-        ):
-            refused = run_main(
-                [
-                    "start",
-                    "--repository",
-                    str(self.repository),
-                    "--offer",
-                    made.offer_id,
-                    "--reply",
-                    "yes, go ahead",
-                ]
-            )
-        self.assertEqual(refused, 1)
-        self.assertIsNone(consent.acceptance_of(self.repository, made.offer_id))
-        # And the same offer still buys exactly one run once the cause is cleared.
-        self._start(made.offer_id, "yes, go ahead")
-        self.assertEqual(len(self.launched), 1)
-
-    def test_a_refusal_that_started_nothing_leaves_the_acceptance_standing(self) -> None:
-        """An engine the run could not have used is a cause a person can clear, so it must
-        not cost them their yes — the offer is checked before it is spent."""
-        made = self._offer()
-        with patch(
-            "cairn.skill.cli.refuse_unusable_engine",
-            side_effect=EngineUnavailable("wrong engine"),
-        ):
-            refused = run_main(
-                [
-                    "start",
-                    "--repository",
-                    str(self.repository),
-                    "--offer",
-                    made.offer_id,
-                    "--reply",
-                    "yes, go ahead",
-                ]
-            )
-        self.assertEqual(refused, 1)
-        self._start(made.offer_id, "yes, go ahead")
-        self.assertEqual(len(self.launched), 1)
 
     def test_a_start_never_retargets_the_repository(self) -> None:
         """Retargeting writes the run's whole record into the authoring repository, so the
         skill's own trigger varies the occasion and the branch and never the target."""
-        made = self._offer()
-        self._start(made.offer_id, "yes, go ahead")
+        self._start()
         self.assertEqual(len(self.launched), 1)
         self.assertNotIn(REPOSITORY_PARAM, " ".join(self.launched[0]))
 
-    def test_every_parameter_a_start_composes_comes_from_the_authorisation(self) -> None:
-        """A term settled after the offer is a term nobody agreed to — the branch most of
-        all, since it is what verified work is merged into."""
-        made = self._offer()
-        self._start(made.offer_id, "yes, go ahead")
+    def test_every_parameter_a_start_composes_comes_from_the_launch(self) -> None:
+        """The branch most of all, since it is what verified work is merged into."""
+        self._start()
         composed = " ".join(self.launched[0])
-        self.assertIn(f"{PARENT_BRANCH_PARAM}={made.parent_branch}", composed)
+        self.assertIn(f"{PARENT_BRANCH_PARAM}={self._launch().parent_branch}", composed)
         self.assertNotIn("--parent-branch", composed)
 
     def test_the_engine_is_never_asked_to_retry(self) -> None:
-        made = self._offer()
-        self._start(made.offer_id, "yes, go ahead")
+        self._start()
         self.assertNotIn("retry", self.launched[0])
 
     def test_this_gate_holds_no_threshold(self) -> None:
         """A gate that grew a tolerance would have to say so out loud, and here is where it
         would be caught. Every assertion above is an equality over every case."""
         source = Path(__file__).read_text(encoding="utf-8")
-        body = source[source.index("class NoInvocationStartsARunWithoutAnAnsweredOffer") :]
+        body = source[source.index("class TheStartIsReachedOnlyByAnExplicitRunRequest") :]
         body = body[: body.index("\n    def test_this_gate_holds_no_threshold")]
         for smell in (
             "assertGreater",
@@ -1289,8 +719,13 @@ class TheCorpusIsWhatItClaimsToBe(unittest.TestCase):
             if isinstance(decision := dispatch(reading_of(case)), Asked)
         ]
         self.assertGreaterEqual(reasons.count("many_verbs"), 2)
-        self.assertGreaterEqual(reasons.count("executing_a_past_run"), 2)
         self.assertGreaterEqual(reasons.count("no_verb"), 2)
+        again = next(
+            case for case in adversarial if case["id"] == "adversarial-run-verb-on-a-past-run"
+        )
+        self.assertEqual(
+            dispatch(reading_of(again)), Selected(CAPABILITY_RUN, "table:executing/run")
+        )
 
     def test_every_value_in_every_case_is_a_frozen_word(self) -> None:
         for case in CASES:
@@ -1313,12 +748,12 @@ class TheCorpusIsWhatItClaimsToBe(unittest.TestCase):
 
 
 class ANewOccasionAndARecoveryAreDecidedAtTheTrigger(unittest.TestCase):
-    """Task 6. A wrong reading either re-pays for work or acts on stale work, and both are
-    the operator's to decide."""
+    """Task 6. A wrong reading either redoes work or acts on stale work, and both are the
+    operator's to decide."""
 
     def test_the_reading_is_total_over_the_trigger_shapes(self) -> None:
         self.assertEqual(set(READING_BY_TRIGGER), set(TRIGGER_SHAPES))
-        self.assertEqual(set(COST_BY_READING), set(OCCASION_READINGS))
+        self.assertEqual(set(CONSEQUENCE_BY_READING), set(OCCASION_READINGS))
 
     def test_every_corpus_case_takes_the_reading_it_declares(self) -> None:
         for case in family("occasion"):
@@ -1346,10 +781,10 @@ class ANewOccasionAndARecoveryAreDecidedAtTheTrigger(unittest.TestCase):
                 self.assertEqual(decided.reading, case["expect"]["reading"])
                 self.assertEqual(decided.disclose, case["expect"]["disclose"])
 
-    def test_a_disclosure_states_the_cost_of_the_reading_not_taken(self) -> None:
+    def test_a_disclosure_states_the_consequence_of_the_reading_not_taken(self) -> None:
         decided = resolve.decide_occasion(OccasionSignal(trigger="fresh", prior_runs=3))
         self.assertTrue(decided.disclose)
-        self.assertIn("paid for again", decided.taken)
+        self.assertIn("runs again", decided.taken)
         self.assertIn("skipped", decided.forgone)
 
     def test_a_scheduled_trigger_always_mints_and_refuses_a_pin(self) -> None:
@@ -1369,8 +804,8 @@ class ANewOccasionAndARecoveryAreDecidedAtTheTrigger(unittest.TestCase):
         self.assertEqual(decided.occasion, "20260810T031500Z-a1b2c3d4")
 
     def test_a_recovery_of_a_run_that_recorded_no_occasion_refuses(self) -> None:
-        """Minting here would present as a recovery while silently re-paying for every
-        scoped step — the more expensive wrong answer and the one nobody would see."""
+        """Minting here would present as a recovery while silently redoing every scoped
+        step — the wrong answer nobody would see."""
         record = cast(Any, {"lineage": {"occasion": None}})
         with self.assertRaises(CairnError):
             resolve.decide_occasion(
@@ -1674,7 +1109,6 @@ class ExplainAnswersItsThreeQuestions(unittest.TestCase):
             "cairn.merge",
             "cairn.worktrees",
             "cairn.skill.trigger",
-            "cairn.skill.consent",
         }
         self.assertEqual(imported & forbidden, set())
 
@@ -1747,15 +1181,12 @@ class TheEngineIsLaunchedToOutliveTheCommand(unittest.TestCase):
 
     def test_the_log_lands_beside_the_run_it_belongs_to(self) -> None:
         where = trigger.address(
-            consent.Authorisation(
-                offer_id="20260101T000000Z-aaaabbbb",
+            trigger.Launch(
                 plan="offline-export",
                 workflow=str(GOLDEN_WORKFLOW),
                 repository="/srv/work/product",
                 parent_branch="main",
                 occasion=None,
-                run_id=RUN_ID,
-                granted_at="2026-01-01T00:00:00+00:00",
             ),
             RUN_ID,
             self.root,
@@ -1767,9 +1198,9 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
     """The wiring, driven as the skill drives it.
 
     Every other class here exercises one function. This one runs the argv a capability
-    document tells a model to run, because that is the only place the offer, the occasion,
-    the repository resolution, the spend and the start are assembled into a sequence — and
-    an assembly nothing drives is an assembly nothing checks.
+    document tells a model to run, because that is the only place the gate, the occasion,
+    the repository resolution and the start are assembled into a sequence — and an assembly
+    nothing drives is an assembly nothing checks.
     """
 
     def setUp(self) -> None:
@@ -1798,184 +1229,132 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
             code = run_main(argv)
         return code, self._spoken.getvalue()
 
-    def _offer(self, *extra: str) -> tuple[int, str]:
-        return self._said(
-            [
-                "offer",
-                "--plan",
-                "offline-export",
-                "--repository",
-                str(self.repository),
-                "--trigger",
-                "fresh",
-                *extra,
-            ]
-        )
+    def _argv(self, *extra: str, plan: str = "offline-export") -> list[str]:
+        trigger_given = "--trigger" in extra
+        return [
+            "start",
+            "--plan",
+            plan,
+            "--repository",
+            str(self.repository),
+            *(() if trigger_given else ("--trigger", "fresh")),
+            *extra,
+        ]
 
-    def _start(self, offer_id: str, reply: str) -> tuple[int, str]:
+    def _start(self, *extra: str) -> tuple[int, str]:
         with (
             patch("cairn.skill.trigger.assert_pinned"),
             patch("cairn.skill.trigger.rehearse_start"),
             patch("cairn.skill.trigger.launch_detached", side_effect=self._record),
             patch("cairn.skill.trigger.engine_holds", return_value=True),
         ):
-            return self._said(
-                [
-                    "start",
-                    "--repository",
-                    str(self.repository),
-                    "--offer",
-                    offer_id,
-                    "--reply",
-                    reply,
-                ]
-            )
+            return self._said(self._argv(*extra))
 
     def _record(self, command: Sequence[str], *_rest: Any) -> FakeEngine:
         self.launched.append(command)
         return FakeEngine()
 
-    def _minted(self, spoken: str) -> str:
-        found = re.search(r"^offer\s+(\S+)$", spoken, re.MULTILINE)
-        self.assertIsNotNone(found, f"no offer was minted:\n{spoken}")
-        return cast(re.Match[str], found).group(1)
+    def _written(self) -> list[str]:
+        """Everything a start added to the repository's admin directory, which is everything
+        there but the definition the test itself put there."""
+        state = self.repository / ".git" / "cairn"
+        return sorted(
+            str(path.relative_to(state))
+            for path in state.rglob("*")
+            if path.relative_to(state).parts[0] != "workflows"
+        )
 
-    def test_an_offer_states_every_cost_and_hands_back_one_id(self) -> None:
-        code, spoken = self._offer()
-        self.assertEqual(code, 0)
-        for line in consent.disclosure(self.workflow):
-            self.assertIn(line, spoken)
-        self.assertIn(CONSENT_NOTHING_YET, spoken)
-        self.assertTrue(consent.read_offer(self.repository, self._minted(spoken)))
+    def test_a_request_to_run_starts_the_run_and_asks_nothing(self) -> None:
+        code, said = self._start()
+        self.assertEqual(code, 0, said)
+        self.assertEqual(len(self.launched), 1)
+        self.assertNotIn("offer", said)
+        self.assertFalse((self.repository / ".git" / "cairn" / "offers").exists())
 
-    def test_offer_refuses_a_hand_edit_that_breaks_the_complete_gate(self) -> None:
+    def test_the_command_takes_no_offer_and_no_reply(self) -> None:
+        for flag in ("--offer", "--reply"):
+            with (
+                self.subTest(flag=flag),
+                redirect_stderr(io.StringIO()),
+                self.assertRaises(SystemExit),
+            ):
+                run_main(self._argv(flag, "x"))
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            run_main(["offer", "--plan", "offline-export"])
+
+    def test_a_hand_edit_that_breaks_the_complete_gate_is_refused_and_starts_nothing(
+        self,
+    ) -> None:
         document = json.loads(self.workflow.read_text(encoding="utf-8"))
         document["steps"][0]["timeout_sec"] = False
         self.workflow.write_text(json.dumps(document), encoding="utf-8")
-        code, spoken = self._offer()
+        code, said = self._start()
         self.assertEqual(code, 1)
-        self.assertIn("missing_timeout", spoken)
+        self.assertIn("missing_timeout", said)
+        self.assertEqual(self.launched, [])
 
-    def _zones(self, spoken: str) -> tuple[str, str]:
-        """What the person hears, and what is the session's alone.
-
-        The split every test below reads, taken from the markers rather than from line
-        numbers, so a line added to either zone does not quietly move the boundary.
-        """
-        self.assertEqual(spoken.count(CONSENT_RELAY_OPEN), 1)
-        self.assertEqual(spoken.count(CONSENT_RELAY_CLOSE), 1)
-        opened = spoken.index(CONSENT_RELAY_OPEN)
-        closed = spoken.index(CONSENT_RELAY_CLOSE)
-        self.assertLess(opened, closed)
-        return spoken[opened + len(CONSENT_RELAY_OPEN) : closed], spoken[closed:]
-
-    def test_the_block_a_person_hears_carries_the_whole_price(self) -> None:
-        """Said verbatim by a session, so every priced fact has to be inside it."""
-        _, spoken = self._offer()
-        relayed, _ = self._zones(spoken)
-        for line in consent.disclosure(self.workflow):
-            self.assertIn(line, relayed)
-        self.assertIn(CONSENT_NOTHING_YET, relayed)
-
-    def test_the_offer_id_falls_outside_the_block_a_person_hears(self) -> None:
-        """The whole reason the markers exist. Step 5 tells a session to say that block
-        verbatim, so an id inside it would reach the person however carefully the session
-        followed the document — and this is what makes "they never see one" structural
-        rather than a rule nobody can check."""
-        _, spoken = self._offer()
-        relayed, withheld = self._zones(spoken)
-        offer_id = self._minted(spoken)
-        self.assertNotIn(offer_id, relayed)
-        self.assertIn(offer_id, withheld)
-
-    def test_the_question_and_both_answers_are_the_sessions_alone(self) -> None:
-        _, spoken = self._offer()
-        relayed, withheld = self._zones(spoken)
-        offered = cast(
-            consent.Offer, consent.read_offer(self.repository, self._minted(spoken))
-        )
-        question = CONSENT_ASK_QUESTION.format(
-            plan=offered.plan, repository=offered.repository
-        )
-        self.assertTrue(question.endswith("?"))
-        self.assertLessEqual(len(CONSENT_ASK_HEADER), 12)
-        self.assertEqual(len(CONSENT_ASK_ANSWERS), 2)
-        for composed in (question, CONSENT_ASK_HEADER, *CONSENT_ASK_ANSWERS):
-            with self.subTest(composed=composed):
-                self.assertIn(composed, withheld)
-                self.assertNotIn(composed, relayed)
-
-    def test_the_start_line_the_offer_hands_back_runs_as_printed(self) -> None:
-        """Composed rather than assembled from three printed values, for the reason the
-        price is composed: the id is the one argument a session cannot get wrong cheaply."""
-        _, spoken = self._offer()
-        _, withheld = self._zones(spoken)
-        offer_id = self._minted(spoken)
-        found = re.search(r"^start\s+(.+)$", withheld, re.MULTILINE)
-        self.assertIsNotNone(found)
-        line = cast(re.Match[str], found).group(1)
-        offered = cast(consent.Offer, consent.read_offer(self.repository, offer_id))
-        self.assertIn(f"--offer {offer_id}", line)
-        self.assertIn(f"--repository {offered.repository}", line)
-        self.assertIn("--reply", line)
-
-    def test_an_offer_prices_the_branch_the_run_will_land_on(self) -> None:
-        _, spoken = self._offer("--parent-branch", "release")
-        self.assertIn("lands on release", spoken)
-        offered = consent.read_offer(self.repository, self._minted(spoken))
-        self.assertIsNotNone(offered)
-        self.assertEqual(cast(consent.Offer, offered).parent_branch, "release")
-
-    def test_an_answered_offer_starts_the_run_it_priced(self) -> None:
-        _, spoken = self._offer("--parent-branch", "release")
-        offer_id = self._minted(spoken)
-        code, started = self._start(offer_id, "yes, go ahead")
+    def test_the_branch_asked_for_is_the_branch_the_run_lands_on(self) -> None:
+        code, started = self._start("--parent-branch", "release")
         self.assertEqual(code, 0)
         self.assertEqual(len(self.launched), 1)
         self.assertIn(f"{PARENT_BRANCH_PARAM}=release", " ".join(self.launched[0]))
         self.assertIn("verified work lands on release", started)
+
+    def test_the_engine_runs_the_bytes_that_passed_the_gate(self) -> None:
+        self._start()
         launched_workflow = Path(self.launched[0][-1])
         self.assertNotEqual(launched_workflow, self.workflow)
-        self.assertEqual(
-            launched_workflow.read_bytes(),
-            self.workflow.read_bytes(),
-        )
+        self.assertEqual(launched_workflow.read_bytes(), self.workflow.read_bytes())
+        self.assertEqual(launched_workflow.name, self.workflow.name)
 
-    def test_a_dirty_tree_refuses_before_the_offer_is_spent_and_the_same_yes_stands(
-        self,
-    ) -> None:
-        """[24 D]: the run's first act refused a dirty tree correctly, but inside the run,
-        so the refusal consumed the acceptance and continuing cost a fresh yes."""
-        _, spoken = self._offer()
-        offer_id = self._minted(spoken)
+    def test_a_dirty_tree_refuses_before_anything_is_written(self) -> None:
+        """[24 D]: the run's first act refuses a dirty tree correctly, but inside the run.
+        Asked here, the refusal leaves the repository as it was."""
         stray = self.repository / "notes.md"
         stray.write_text("an edit made minutes earlier\n", encoding="utf-8")
-        code, said = self._start(offer_id, "yes, go ahead")
+        code, said = self._start()
         self.assertEqual(code, 1)
         self.assertIn("repository_dirty", said)
         self.assertIn("notes.md", said)
         self.assertEqual(self.launched, [])
-        self.assertIsNone(consent.acceptance_of(self.repository, offer_id))
+        self.assertEqual(self._written(), [])
         self.assertTrue(stray.exists(), "the preflight must never touch the tree")
         stray.unlink()
-        code, _ = self._start(offer_id, "yes, go ahead")
+        code, _ = self._start()
         self.assertEqual(code, 0)
         self.assertEqual(len(self.launched), 1)
 
-    def test_an_unresolved_merge_refuses_before_the_offer_is_spent(self) -> None:
-        _, spoken = self._offer()
-        offer_id = self._minted(spoken)
+    def test_an_unresolved_merge_refuses_before_anything_is_written(self) -> None:
         (self.repository / ".git" / "MERGE_HEAD").write_text("0" * 40 + "\n", encoding="utf-8")
-        code, said = self._start(offer_id, "yes, go ahead")
+        code, said = self._start()
         self.assertEqual(code, 1)
         self.assertIn("merge_in_progress", said)
         self.assertEqual(self.launched, [])
-        self.assertIsNone(consent.acceptance_of(self.repository, offer_id))
+        self.assertEqual(self._written(), [])
+
+    def test_a_shell_that_cannot_bind_the_run_socket_refuses_before_anything_is_written(
+        self,
+    ) -> None:
+        """The refusal that used to arrive inside the run ([19 C])."""
+        with patch(
+            "cairn.skill.cli.refuse_unusable_engine",
+            side_effect=EngineUnavailable(
+                "failed to start the unix socket server: listen unix "
+                "/tmp/@dagu__x.sock: bind: operation not permitted"
+            ),
+        ):
+            code, said = self._said(self._argv())
+        self.assertEqual(code, 1)
+        self.assertIn("operation not permitted", said)
+        self.assertEqual(self.launched, [])
+        self.assertEqual(self._written(), [])
+        code, _ = self._start()
+        self.assertEqual(code, 0)
+        self.assertEqual(len(self.launched), 1)
 
     def test_an_engine_that_refuses_to_launch_is_not_reported_as_a_started_run(self) -> None:
         """A run the engine never took on leaves no record, so this is the one engine status
         the command cannot pass over."""
-        _, spoken = self._offer()
         with (
             patch("cairn.skill.trigger.assert_pinned"),
             patch("cairn.skill.trigger.rehearse_start"),
@@ -1985,28 +1364,17 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
             ),
             patch("cairn.skill.trigger.engine_holds", return_value=False),
         ):
-            code, said = self._said(
-                [
-                    "start",
-                    "--repository",
-                    str(self.repository),
-                    "--offer",
-                    self._minted(spoken),
-                    "--reply",
-                    "yes, go ahead",
-                ]
-            )
+            code, said = self._said(self._argv())
         self.assertEqual(code, 1)
         self.assertIn("without taking the run on", said)
-        # The address **is** printed now, and that is the point: a person whose start
-        # failed after the offer was spent has the run id and somewhere to look ([19 B]).
+        # The address **is** printed, and that is the point: a person whose start failed has
+        # the run id and somewhere to look ([19 B]).
         self.assertIn("watch", said)
         self.assertIn("engine.log", said)
 
     def test_the_identity_is_printed_before_the_engine_is_invoked(self) -> None:
         """The whole of B. A start that blocks for the run is killed by any caller with its
         own timeout, and everything the person needs to name the run died with it."""
-        _, spoken = self._offer()
         seen: list[str] = []
 
         def snapshot(command: Sequence[str], *_rest: Any) -> FakeEngine:
@@ -2021,58 +1389,24 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
             patch("cairn.skill.trigger.launch_detached", side_effect=snapshot),
             patch("cairn.skill.trigger.engine_holds", return_value=True),
         ):
-            code, _ = self._said(
-                [
-                    "start",
-                    "--repository",
-                    str(self.repository),
-                    "--offer",
-                    self._minted(spoken),
-                    "--reply",
-                    "yes, go ahead",
-                ]
-            )
+            code, _ = self._said(self._argv())
         self.assertEqual(code, 0)
         self.assertEqual(len(seen), 1)
         for line in ("started", "branch", "watch", "read"):
             with self.subTest(line=line):
                 self.assertIn(line, seen[0])
 
-    def test_the_spent_marker_names_the_run_and_the_invocation_it_bought(self) -> None:
-        """A killed start is a spent yes, so the marker has to carry a name a recovery can
-        quote — the run id died with the process before ([19 B])."""
-        _, spoken = self._offer()
-        offer_id = self._minted(spoken)
-        _, said = self._start(offer_id, "yes, go ahead")
-        spent = consent.acceptance_of(self.repository, offer_id)
-        self.assertIsNotNone(spent)
-        held = cast(consent.Acceptance, spent)
-        self.assertEqual(tuple(held.command), tuple(self.launched[0]))
-        # **One id, three places.** The whole of B is that the run the person was told
-        # about, the run the engine was given, and the run the marker names are one — a
-        # marker naming some other well-formed id would be worse than naming none.
+    def test_one_run_id_is_printed_launched_and_named_by_the_admitted_copy(self) -> None:
+        """The run the person was told about, the run the engine was given and the directory
+        holding the bytes it runs are one id — a second well-formed id would be worse than
+        none."""
+        _, said = self._start()
         launched = list(self.launched[0])
-        self.assertEqual(held.run_id, launched[launched.index("--run-id") + 1])
+        run_id = launched[launched.index("--run-id") + 1]
         printed = re.search(r"^started\s+(\S+)$", said, re.MULTILINE)
         self.assertIsNotNone(printed)
-        self.assertEqual(held.run_id, cast(re.Match[str], printed).group(1))
-        # And the claim is exactly as exclusive as it was.
-        again = consent.spend(
-            self.repository, offer_id, reply="yes, go ahead", run_id=RUN_ID
-        )
-        self.assertIsInstance(again, consent.Refused)
-        self.assertEqual(cast(consent.Refused, again).outcome, "already_spent")
-
-    def test_a_second_acceptance_is_told_which_run_the_first_one_bought(self) -> None:
-        _, spoken = self._offer()
-        offer_id = self._minted(spoken)
-        self._start(offer_id, "yes, go ahead")
-        refused = cast(
-            consent.Refused,
-            consent.spend(self.repository, offer_id, reply="yes", run_id=RUN_ID),
-        )
-        spent = cast(consent.Acceptance, consent.acceptance_of(self.repository, offer_id))
-        self.assertIn(spent.run_id, refused.why)
+        self.assertEqual(run_id, cast(re.Match[str], printed).group(1))
+        self.assertEqual(Path(launched[-1]).parent.name, run_id)
 
     def test_a_start_returns_once_the_engine_has_the_run_without_waiting_for_it(
         self,
@@ -2085,7 +1419,6 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
             engines.append(FakeEngine())
             return engines[-1]
 
-        _, spoken = self._offer()
         held = [False, True]
         with (
             patch("cairn.skill.trigger.assert_pinned"),
@@ -2094,17 +1427,7 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
             patch("cairn.skill.trigger.engine_holds", side_effect=_answers(held)),
             patch("cairn.skill.trigger.time.sleep"),
         ):
-            code, said = self._said(
-                [
-                    "start",
-                    "--repository",
-                    str(self.repository),
-                    "--offer",
-                    self._minted(spoken),
-                    "--reply",
-                    "yes, go ahead",
-                ]
-            )
+            code, said = self._said(self._argv())
         self.assertEqual(code, 0)
         self.assertFalse(engines[0].waited, "a detached start waited for the whole run")
         self.assertNotIn("engine   exited", said)
@@ -2117,33 +1440,21 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
             engines.append(FakeEngine())
             return engines[-1]
 
-        _, spoken = self._offer()
         with (
             patch("cairn.skill.trigger.assert_pinned"),
             patch("cairn.skill.trigger.rehearse_start"),
             patch("cairn.skill.trigger.launch_detached", side_effect=launched),
             patch("cairn.skill.trigger.engine_holds", return_value=True),
         ):
-            code, said = self._said(
-                [
-                    "start",
-                    "--repository",
-                    str(self.repository),
-                    "--offer",
-                    self._minted(spoken),
-                    "--reply",
-                    "yes, go ahead",
-                    "--wait",
-                ]
-            )
+            code, said = self._said(self._argv("--wait"))
         self.assertEqual(code, 0)
         self.assertTrue(engines[0].waited)
         self.assertIn("engine   exited", said)
 
     def test_an_engine_still_starting_is_a_caution_and_not_a_refusal(self) -> None:
-        """Neither registered nor exited. Killing a run the offer has already paid for, on
-        a timer, is the one destructive move available here — so it is not made."""
-        _, spoken = self._offer()
+        """Neither registered nor exited. Killing a run the engine may be a moment from
+        taking on, on a timer, is the one destructive move available here — so it is not
+        made."""
         with (
             patch("cairn.skill.trigger.assert_pinned"),
             patch("cairn.skill.trigger.rehearse_start"),
@@ -2154,50 +1465,42 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
             patch("cairn.skill.trigger.engine_holds", return_value=False),
             patch("cairn.skill.trigger.TAKEN_ON_TIMEOUT", 0.0),
         ):
-            code, said = self._said(
-                [
-                    "start",
-                    "--repository",
-                    str(self.repository),
-                    "--offer",
-                    self._minted(spoken),
-                    "--reply",
-                    "yes, go ahead",
-                ]
-            )
+            code, said = self._said(self._argv())
         self.assertEqual(code, 0)
         self.assertIn("has not registered", said)
         self.assertNotIn("refused", said)
 
-    def test_a_branch_the_engine_could_not_carry_is_refused_when_the_offer_is_made(
-        self,
-    ) -> None:
-        """Refused at offer time, not after the acceptance is spent: a person must not lose
-        their yes to a value they gave before it."""
-        code, said = self._offer("--parent-branch", "my branch")
+    def test_a_branch_the_engine_could_not_carry_is_refused_and_writes_nothing(self) -> None:
+        code, said = self._start("--parent-branch", "my branch")
         self.assertEqual(code, 1)
         self.assertIn("whitespace", said)
-        self.assertFalse(consent.offers_directory(self.repository).exists())
+        self.assertEqual(self.launched, [])
+        self.assertEqual(self._written(), [])
 
     def _recover(self, plan: str, graph_sha256: str | None) -> tuple[int, str]:
-        """Offer a recovery of a run whose record names `plan` and `graph_sha256`."""
+        """Start a recovery of a run whose record names `plan` and `graph_sha256`."""
         record = {
             "plan": plan,
             "graph_sha256": graph_sha256,
             "lineage": {"occasion": mint_occasion()},
         }
         with patch("cairn.skill.cli.build_run_record", return_value=record):
-            return self._offer("--trigger", "recovery", "--recovering", "20260810T031500Z-a1b2c3d4")
+            return self._start(
+                "--trigger", "recovery", "--recovering", "20260810T031500Z-a1b2c3d4"
+            )
 
     def _published_graph(self) -> str:
         labels = json.loads(self.workflow.read_text(encoding="utf-8"))["labels"]
         return str(labels[LABEL_GRAPH_DIGEST])
 
-    def test_recovering_a_run_of_another_plan_refuses_before_an_offer_exists(self) -> None:
+    def test_recovering_a_run_of_another_plan_refuses_before_anything_is_written(
+        self,
+    ) -> None:
         code, said = self._recover("another-plan", self._published_graph())
         self.assertEqual(code, 1)
         self.assertIn("another-plan", said)
-        self.assertFalse(consent.offers_directory(self.repository).exists())
+        self.assertEqual(self.launched, [])
+        self.assertEqual(self._written(), [])
 
     def test_recovering_a_run_the_plan_was_re_authored_since_is_refused(self) -> None:
         for recorded in ("0" * 64, None):
@@ -2205,77 +1508,53 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
                 code, said = self._recover("offline-export", recorded)
                 self.assertEqual(code, 1)
                 self.assertIn("start a fresh run", said)
-                self.assertFalse(consent.offers_directory(self.repository).exists())
+                self.assertEqual(self.launched, [])
+                self.assertEqual(self._written(), [])
 
-    def test_recovering_a_run_through_its_own_plan_and_graph_is_offered(self) -> None:
+    def test_recovering_a_run_through_its_own_plan_and_graph_starts_it(self) -> None:
         code, said = self._recover("offline-export", self._published_graph())
         self.assertEqual(code, 0, said)
-        self.assertTrue(consent.read_offer(self.repository, self._minted(said)))
+        self.assertEqual(len(self.launched), 1)
+        self.assertIn("continue_occasion", said)
+
+    def test_a_plan_that_has_run_before_states_the_occasion_it_took(self) -> None:
+        earlier = runs_root(self.repository) / "20260101T000000Z-aaaabbbb"
+        earlier.mkdir(parents=True)
+        (earlier / RECORD_FILE).write_text(
+            json.dumps({"plan": "offline-export"}), encoding="utf-8"
+        )
+        _, said = self._start()
+        self.assertIn("new_occasion", said)
+        self.assertIn("the other reading would mean", said)
+
+    def test_a_plans_first_run_states_no_occasion(self) -> None:
+        _, said = self._start()
+        self.assertNotIn("occasion", said)
 
     def test_a_start_mints_its_own_run_id_rather_than_asking_for_one(self) -> None:
-        _, spoken = self._offer()
-        self._start(self._minted(spoken), "yes, go ahead")
+        self._start()
         check_run_id(self.launched[0][self.launched[0].index("--run-id") + 1])
 
-    def test_every_refusal_exits_nonzero_and_says_which_clause_stopped_it(self) -> None:
-        _, spoken = self._offer()
-        offer_id = self._minted(spoken)
-        for offer, reply, outcome in (
-            (offer_id, "", "no_words"),
-            ("20200101T000000Z-deadbeef", "yes, run it", "no_such_offer"),
-        ):
-            with self.subTest(outcome=outcome):
-                code, said = self._start(offer, reply)
-                self.assertEqual(code, 1)
-                self.assertIn(outcome, said)
-                self.assertEqual(self.launched, [])
+    def test_a_run_id_the_layout_does_not_admit_is_refused(self) -> None:
+        code, _ = self._start("--run-id", "../escape")
+        self.assertEqual(code, 1)
+        self.assertEqual(self.launched, [])
+        self.assertEqual(self._written(), [])
 
     def test_a_plan_with_no_definition_here_is_answered_rather_than_crashed_on(
         self,
     ) -> None:
-        code, said = self._said(
-            [
-                "offer",
-                "--plan",
-                "never-authored",
-                "--repository",
-                str(self.repository),
-                "--trigger",
-                "fresh",
-            ]
-        )
+        code, said = self._said(self._argv(plan="never-authored"))
         self.assertEqual(code, 1)
         self.assertIn("author this plan for this repository", said)
 
     def test_a_recovery_with_no_run_named_says_which_flag_is_missing(self) -> None:
-        code, said = self._said(
-            [
-                "offer",
-                "--plan",
-                "offline-export",
-                "--repository",
-                str(self.repository),
-                "--trigger",
-                "recovery",
-            ]
-        )
+        code, said = self._start("--trigger", "recovery")
         self.assertEqual(code, 1)
         self.assertIn("--recovering", said)
 
     def test_an_occasion_given_to_a_trigger_that_continues_none_is_refused(self) -> None:
-        code, said = self._said(
-            [
-                "offer",
-                "--plan",
-                "offline-export",
-                "--repository",
-                str(self.repository),
-                "--trigger",
-                "fresh",
-                "--occasion",
-                "20260810T031500Z-a1b2c3d4",
-            ]
-        )
+        code, said = self._start("--occasion", "20260810T031500Z-a1b2c3d4")
         self.assertEqual(code, 1)
         self.assertIn("--trigger pinned", said)
 
@@ -2318,7 +1597,7 @@ class TheInstalledSurfaceIsMeasuredAndPublished(unittest.TestCase):
         self.assertIn(
             measured,
             README.read_text(encoding="utf-8"),
-            "README.md does not carry the measured surface cost. Run "
+            "README.md does not carry the measured surface. Run "
             f"`python3 -m scripts.measure_surface` and paste:\n\n{measured}",
         )
 
@@ -2337,13 +1616,13 @@ class TheInstalledSurfaceIsMeasuredAndPublished(unittest.TestCase):
         self.assertIn("estimate", block)
         self.assertIn(str(surface.CHARACTERS_PER_TOKEN), block)
 
-    def test_the_surface_stays_inside_its_declared_budget(self) -> None:
+    def test_the_surface_stays_inside_its_declared_limit(self) -> None:
         measured = surface.measure(PACKAGE_ROOT)
         self.assertLessEqual(
-            measured.described.characters, surface.DESCRIPTION_CHARACTER_BUDGET
+            measured.described.characters, surface.DESCRIPTION_CHARACTER_LIMIT
         )
         self.assertLessEqual(
-            measured.on_trigger.characters, surface.ON_TRIGGER_CHARACTER_BUDGET
+            measured.on_trigger.characters, surface.ON_TRIGGER_CHARACTER_LIMIT
         )
 
     def test_the_description_names_every_capability_it_claims_to_reach(self) -> None:
@@ -2362,7 +1641,7 @@ class TheSkillMintsItsVocabularyInOneModuleOnly(unittest.TestCase):
 
     def test_no_second_module_names_a_capability_or_a_shape(self) -> None:
         pattern = re.compile(
-            r"^(CAPABILITY|VERB|SHAPE|FAMILY|TRIGGER|OCCASION|CONSENT|BINDING|COST)_[A-Z0-9_]+ = ",
+            r"^(CAPABILITY|VERB|SHAPE|FAMILY|TRIGGER|OCCASION|BINDING)_[A-Z0-9_]+ = ",
             re.MULTILINE,
         )
         holders = {

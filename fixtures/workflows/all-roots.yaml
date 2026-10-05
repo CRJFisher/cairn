@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "all-roots",
-    "cairn_generator": "8",
+    "cairn_generator": "9",
     "cairn_engine": "2.11.0",
-    "cairn_graph_sha256": "8838a443a89218d5e19f0700ddb810300b4a5a699008607cfb7261acc173dd54",
-    "cairn_body_sha256": "ea393a136e9d024836e6276ebc1df3d121f0e1ca418911fb53f077871d6b54cf"
+    "cairn_graph_sha256": "aa514e8a38e0572763ee4c692616c2d7a8dc0314f54462d18150be66fdb6d913",
+    "cairn_body_sha256": "bc1c975f18fe8487e1ab2ed94966f0a559953a0cad137af11efd93e956ff727c"
   },
   "params": [
     {
@@ -54,7 +54,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn lock acquire --plan all-roots --run-timeout 24600"
+      "run": "python3 -m cairn lock acquire --plan all-roots --run-timeout 67800"
     },
     {
       "name": "setup_drop_the_legacy_exporter",
@@ -72,12 +72,12 @@
     {
       "name": "work_drop_the_legacy_exporter",
       "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/all-roots/drop_the_legacy_exporter",
-      "timeout_sec": 3780,
+      "timeout_sec": 14580,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/export/` to a state where `legacy.py` is gone and nothing imports it.' --model sonnet --max-budget-usd 5.0 --timeout 3600",
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/export/` to a state where `legacy.py` is gone and nothing imports it.' --model sonnet",
       "preconditions": [
         {
           "condition": "python3 -m cairn marker absent --step drop_the_legacy_exporter --scope once"
@@ -164,12 +164,12 @@
     {
       "name": "work_tighten_the_log_format",
       "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/all-roots/tighten_the_log_format",
-      "timeout_sec": 3780,
+      "timeout_sec": 14580,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/logging/format.py` to a state where every record carries a request id.' --model sonnet --max-budget-usd 5.0 --timeout 3600",
+      "run": "python3 -m cairn agent run --provider claude --prompt 'Bring `src/logging/format.py` to a state where every record carries a request id.' --model sonnet",
       "preconditions": [
         {
           "condition": "python3 -m cairn marker absent --step tighten_the_log_format --scope once"
@@ -257,12 +257,12 @@
     {
       "name": "merge_w1_1",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 4320,
+      "timeout_sec": 15120,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn merge land --slot 1 --provider claude --model sonnet --max-budget-usd 5.0 --timeout 3600 --branch step/drop_the_legacy_exporter --branch step/tighten_the_log_format",
+      "run": "python3 -m cairn merge land --slot 1 --provider claude --model sonnet --branch step/drop_the_legacy_exporter --branch step/tighten_the_log_format",
       "depends": [
         "join_w1"
       ]
@@ -283,12 +283,12 @@
     {
       "name": "merge_w1_2",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 4320,
+      "timeout_sec": 15120,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn merge land --slot 2 --provider claude --model sonnet --max-budget-usd 5.0 --timeout 3600 --branch step/drop_the_legacy_exporter --branch step/tighten_the_log_format",
+      "run": "python3 -m cairn merge land --slot 2 --provider claude --model sonnet --branch step/drop_the_legacy_exporter --branch step/tighten_the_log_format",
       "depends": [
         "verify_merge_w1_1"
       ]

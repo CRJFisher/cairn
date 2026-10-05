@@ -12,9 +12,9 @@ than resolved.
 
 ```yaml
 - name: config_schema # the work — its own gate, and both routing flags
-  run: python3 -m cairn agent run --provider claude --prompt '…' --model sonnet --max-budget-usd 5.0 --timeout 3600
+  run: python3 -m cairn agent run --provider claude --prompt '…' --model sonnet
   working_dir: /worktrees/config_schema
-  timeout_sec: 3780 # the step's own bound plus the report grace
+  timeout_sec: 3780 # the hang guard plus the report grace
   retry_policy: { limit: 0, interval_sec: 1 }
   preconditions:
     - condition: python3 -m cairn marker absent --step config_schema --scope once
@@ -58,8 +58,8 @@ never touched and its gate would close `not_reached` regardless — measured, th
 full-suite executions past one fault, half an hour proving nothing a gate could read. A
 marker no-op leaves its `noop` report and keeps its assertion, which is the recovery
 guarantee: a step already done still has its end state asserted on today's tree. The gate
-fails open like the marker gate, because running an assertion that need not run costs
-minutes and skipping one that must run costs the step its record; and it writes its
+fails open like the marker gate, because running an assertion that need not run takes
+minutes and skipping one that must run loses the step its record; and it writes its
 decision — `run`, `shared` or `skipped_upstream` — to the assertion node's own report
 before it answers, on every path. The verify gate below trusts the engine's exit-status reference
 only where that decision says the assertion ran: measured against Dagu 2.11.0,
@@ -96,7 +96,7 @@ over a failure would reopen every gate the failure closed. The proof is replaced
 step, so a gate reading it concurrently sees the whole of one result or none, and the lock
 is one the kernel drops when its holder dies — a writer killed inside the section leaves
 the key free and no result it never finished writing. A lock that cannot be taken publishes
-nothing, which costs the next gate quoting that command its own execution and costs a
+nothing, which leaves the next gate quoting that command to execute it itself and loses a
 failure nothing.
 
 **The marker write is a separate step.** Verification decides; a step gated on that decision
@@ -115,7 +115,7 @@ rather than three: its work, its assertion, a **remedy**, a **recheck**, and its
 
 ```yaml
 - name: remedy_config_schema # the step's own session, resumed once
-  run: python3 -m cairn agent run --provider claude --prompt '…' --model sonnet --max-budget-usd 5.0 --timeout 3600 --remedy-of config_schema --assertion 'test -e config-schema.md'
+  run: python3 -m cairn agent run --provider claude --prompt '…' --model sonnet --remedy-of config_schema --assertion 'test -e config-schema.md'
   timeout_sec: 3780
   preconditions:
     - condition: python3 -m cairn verify remedy --step config_schema --verify-exit '${verify_config_schema.exit_code}'
@@ -134,7 +134,7 @@ rather than three: its work, its assertion, a **remedy**, a **recheck**, and its
 nonzero**, behind a step that reported its work `done` or `noop`. It declines a pass, an
 assertion that never ran, one a signal ended (`assertion_interrupted`), and a step that
 reported failure or is waiting on a person, and writes that decline as the remedy node's own
-`noop` report. It fails **closed**: a fault opens no paid session. Before it decides, it
+`noop` report. It fails **closed**: a fault opens no session. Before it decides, it
 completes the first assertion's account with the exit it read, so that account and its
 proof are filed exactly as they would be without a remedy.
 
@@ -197,7 +197,7 @@ the step said nothing, so reading `failed` as a veto would put a verdict in its 
 
 **Every fault closes it.** This is the exact inverse of the marker gate, which opens on every
 fault it meets. Both are the safe direction, and the asymmetry is the design: redoing
-convergent work costs one run, while a marker over unverified work reaches git, rides every
+convergent work takes one run, while a marker over unverified work reaches git, rides every
 merge, and makes the next run skip the step that would have caught it.
 
 The gate is a **precondition, not a step**, so it writes its own report only when it closes
@@ -336,8 +336,8 @@ The corpus records the conversation against both real plans — eight steps, non
 named a command: **6 proposals offered: accepted 6, edited 0; authored 0, declined 2**. The
 two declines are the steps whose end states no command in the plan's own tree can assert —
 behavioural parity inside another repository, and a unit whose very name the document leaves
-undecided. Whether live authors accept what a live derivation proposes is the paid suite's
-`authoring_acceptance`, and that number — not this corpus — is what a release is judged on.
+undecided. Whether live authors accept what a live derivation proposes is not something this
+corpus can show.
 
 ## What this hands forward
 

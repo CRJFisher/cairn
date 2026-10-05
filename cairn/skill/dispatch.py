@@ -18,7 +18,7 @@ spared is holding 48 cells in its head consistently, and a test proves the cells
 holding are these.
 
 This module deliberately imports nothing that can start, lock or write anything, and a test
-asserts it: a classification that cannot reach an authorisation cannot mint one, however
+asserts it: a classification that cannot reach the code that starts a run cannot start one, however
 wrong it is about a sentence.
 """
 
@@ -39,8 +39,6 @@ from cairn.skill.vocabulary import (
     FAMILY_NOTHING_APPLIES,
     FAMILY_OBJECT_UNCLEAR,
     FAMILY_VERB_UNCLEAR,
-    HEADLINE_COST,
-    HEADLINE_DAEMON_COST,
     SHAPE_PLAN_DOCUMENT,
     SHAPE_PLAN_GRAPH,
     SHAPE_RUN,
@@ -63,7 +61,6 @@ from cairn.skill.vocabulary import (
 ASK_AUTHORING_A_RUN = "authoring_a_run"
 ASK_AUTHORING_A_STEP = "authoring_a_step"
 ASK_MUTATING_A_RUN = "mutating_a_run"
-ASK_EXECUTING_A_PAST_RUN = "executing_a_past_run"
 ASK_EXECUTING_ONE_STEP = "executing_one_step"
 ASK_RECOVERING_WITHOUT_A_RUN = "recovering_without_a_run"
 ASK_RECOVERING_ONE_STEP = "recovering_one_step"
@@ -79,7 +76,7 @@ ASK_NO_SUBJECT = "no_subject"
 ASK_MANY_SUBJECTS = "many_subjects"
 ASK_NOTHING_RECOGNISED = "nothing_recognised"
 
-# The twelve above are cells of the table; the five below are the shapes an invocation can
+# The eleven above are cells of the table; the five below are the shapes an invocation can
 # have that the table cannot be consulted for at all. Together they are the explicit ask
 # list doc 15 asks for, and a test requires every one of them to be reachable and to be
 # stated in `SKILL.md`.
@@ -87,7 +84,6 @@ ASK_REASONS: tuple[str, ...] = (
     ASK_AUTHORING_A_RUN,
     ASK_AUTHORING_A_STEP,
     ASK_MUTATING_A_RUN,
-    ASK_EXECUTING_A_PAST_RUN,
     ASK_EXECUTING_ONE_STEP,
     ASK_RECOVERING_WITHOUT_A_RUN,
     ASK_RECOVERING_ONE_STEP,
@@ -122,7 +118,9 @@ DISPATCH_RULES: dict[tuple[str, str], str] = {
     (VERB_EXECUTING, SHAPE_PLAN_DOCUMENT): CAPABILITY_RUN,
     (VERB_EXECUTING, SHAPE_PLAN_GRAPH): CAPABILITY_RUN,
     (VERB_EXECUTING, SHAPE_WORKFLOW): CAPABILITY_RUN,
-    (VERB_EXECUTING, SHAPE_RUN): ASK_EXECUTING_A_PAST_RUN,
+    # A run verb over a past execution is a fresh run of the plan that execution ran;
+    # continuing it is the `recovering` class's cell.
+    (VERB_EXECUTING, SHAPE_RUN): CAPABILITY_RUN,
     (VERB_EXECUTING, SHAPE_STEP): ASK_EXECUTING_ONE_STEP,
     (VERB_EXECUTING, SHAPE_VERDICT_WORD): ASK_VERB_ON_A_FROZEN_WORD,
     (VERB_RECOVERING, SHAPE_PLAN_DOCUMENT): ASK_RECOVERING_WITHOUT_A_RUN,
@@ -169,15 +167,9 @@ QUESTION_BY_ASK: dict[str, str] = {
     ASK_MUTATING_A_RUN: (
         "A past run cannot be changed. Do you want to read it, or to change the plan it ran?"
     ),
-    ASK_EXECUTING_A_PAST_RUN: (
-        f"Do you want that plan run again, or to read what that run did? Running it is the "
-        f"one that costs: {HEADLINE_COST}. And if you mean to continue that run rather "
-        "than start a fresh one, say so: a recovery keeps its occasion and a fresh run "
-        "mints a new one."
-    ),
     ASK_EXECUTING_ONE_STEP: (
         "Cairn runs a whole plan; a step runs only as part of one, and every step already "
-        "done is a cheap no-op. Which plan do you mean?"
+        "done is a no-op. Which plan do you mean?"
     ),
     ASK_RECOVERING_WITHOUT_A_RUN: (
         "A recovery continues a particular run, so it needs one named. Which run should be "
@@ -188,12 +180,12 @@ QUESTION_BY_ASK: dict[str, str] = {
         "run should be continued?"
     ),
     ASK_WATCHING_A_PLAN: (
-        f"Do you want this plan started so there is something to watch, or to read the "
-        f"last run of it? Starting it is the one that costs: {HEADLINE_COST}."
+        "Do you want this plan started so there is something to watch, or to read the "
+        "last run of it?"
     ),
     ASK_WATCHING_A_WORKFLOW: (
-        f"Do you want this workflow started so there is something to watch, or to read the "
-        f"last run of it? Starting it is the one that costs: {HEADLINE_COST}."
+        "Do you want this workflow started so there is something to watch, or to read the "
+        "last run of it?"
     ),
     ASK_SCHEDULING_A_RUN: (
         "A past run cannot be scheduled. Which plan should run on a schedule?"
@@ -226,13 +218,12 @@ QUESTION_BY_ASK: dict[str, str] = {
 }
 
 # Four of the five structural asks compute their readings from the table; `nothing_recognised`
-# reaches no cell and has none. The twelve tabled ones state theirs, because a cell has no
+# reaches no cell and has none. The eleven tabled ones state theirs, because a cell has no
 # column to derive them from.
 READINGS_BY_TABLED_ASK: dict[str, tuple[str, ...]] = {
     ASK_AUTHORING_A_RUN: (),
     ASK_AUTHORING_A_STEP: (),
     ASK_MUTATING_A_RUN: (),
-    ASK_EXECUTING_A_PAST_RUN: (CAPABILITY_RUN, CAPABILITY_REPORT),
     ASK_EXECUTING_ONE_STEP: (),
     ASK_RECOVERING_WITHOUT_A_RUN: (),
     ASK_RECOVERING_ONE_STEP: (),
@@ -247,7 +238,6 @@ FAMILY_BY_TABLED_ASK: dict[str, str] = {
     ASK_AUTHORING_A_RUN: FAMILY_NOTHING_APPLIES,
     ASK_AUTHORING_A_STEP: FAMILY_NOTHING_APPLIES,
     ASK_MUTATING_A_RUN: FAMILY_NOTHING_APPLIES,
-    ASK_EXECUTING_A_PAST_RUN: FAMILY_VERB_UNCLEAR,
     ASK_EXECUTING_ONE_STEP: FAMILY_NOTHING_APPLIES,
     ASK_RECOVERING_WITHOUT_A_RUN: FAMILY_NOTHING_APPLIES,
     ASK_RECOVERING_ONE_STEP: FAMILY_NOTHING_APPLIES,
@@ -307,31 +297,21 @@ def _readings(pairs: set[tuple[str, str]]) -> tuple[str, ...]:
 
 
 def _asked(reason: str, family: str, readings: tuple[str, ...], rule: str) -> Asked:
-    """One question, naming the kind of cost of every consent-gated branch it offers.
-
-    Four of the five structural reasons are asked over readings computed from the table, so
-    their text cannot state a cost the way a tabled question can. Appending it here is what
-    makes task 5's "wherever it is made" reach the questions too: a person choosing between
-    reading a run and starting one is being offered a way to spend money, and a bare "which
-    of these do you mean?" does not say so.
-    """
-    question = QUESTION_BY_ASK[reason]
-    for capability, headline in (
-        (CAPABILITY_RUN, HEADLINE_COST),
-        (CAPABILITY_SCHEDULE, HEADLINE_DAEMON_COST),
-    ):
-        if capability in readings and headline not in question:
-            question = f"{question} {capability.capitalize()} is a costly one: {headline}."
     return Asked(
-        ask=Ask(reason=reason, family=family, question=question, readings=readings),
+        ask=Ask(
+            reason=reason,
+            family=family,
+            question=QUESTION_BY_ASK[reason],
+            readings=readings,
+        ),
         rule=rule,
     )
 
 
 def _family(readings: tuple[str, ...], fallback: str) -> str:
-    """Which kind of question this is, decided by what it is actually offering.
+    """Which kind of question this is, decided by what it actually puts forward.
 
-    A shape whose every cell is itself an ask offers no capability at all, so it is
+    A shape whose every cell is itself an ask puts forward no capability at all, so it is
     `nothing_applies` however the arity looked — otherwise a question would claim to be a
     choice between readings it does not have.
     """
@@ -347,9 +327,9 @@ def _no_verb(readings: tuple[str, ...], rule: str) -> Decision:
     stands.
 
     Report and Explain both answer without starting, locking or writing, so where every
-    verb class over this object collapses to a single one of them the question would cost a
-    turn and buy nothing. Anything else — a costly reading among them, or several harmless
-    ones to choose between — is asked, and doc 15's rule applies in full.
+    verb class over this object collapses to a single one of them the question would take a
+    turn and settle nothing. Anything else — a writing reading among them, or several
+    harmless ones to choose between — is asked, and doc 15's rule applies in full.
     """
     if len(readings) == 1 and readings[0] in WRITES_NOTHING:
         return Selected(capability=readings[0], rule=f"safe:{rule}")

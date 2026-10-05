@@ -14,14 +14,14 @@ them, caught by comparing both against the canonical-facts projection
 
 The spine is frozen in `cairn/report/spine.py`. The tuple **is** the order.
 
-| Rank | Section     | The reader's question   | When it has nothing                                 |
-| ---- | ----------- | ----------------------- | --------------------------------------------------- |
-| 1    | `verdict`   | did it work             | This run recorded no verdict.                       |
-| 2    | `next`      | what do I do next       | There is nothing to do.                             |
-| 3    | `attention` | what needs my attention | Nothing needs your attention.                       |
-| 4    | `steps`     | what did each step do   | This run recorded no step.                          |
-| 5    | `shape`     | what shape was the run  | This run recorded no graph.                         |
-| 6    | `receipts`  | what are the receipts   | No step reported a cost, a session or a transcript. |
+| Rank | Section     | The reader's question   | When it has nothing                         |
+| ---- | ----------- | ----------------------- | ------------------------------------------- |
+| 1    | `verdict`   | did it work             | This run recorded no verdict.               |
+| 2    | `next`      | what do I do next       | There is nothing to do.                     |
+| 3    | `attention` | what needs my attention | Nothing needs your attention.               |
+| 4    | `steps`     | what did each step do   | This run recorded no step.                  |
+| 5    | `shape`     | what shape was the run  | This run recorded no graph.                 |
+| 6    | `receipts`  | what are the receipts   | No step reported a session or a transcript. |
 
 **Every section appears in every rendering of every run**, and an empty one says so in its own
 words. That is not decoration: a section that vanished when it was empty would leave a reader
@@ -76,12 +76,10 @@ Three earn their own kind rather than being a shape of another:
   of against the projection.
 
 A leaf is either `Chrome` — Cairn's own words — or a `Fact`, which names projection keys and
-a display rule rather than carrying text. The rules are `value`, `money`, `actor`, `link`
+a display rule rather than carrying text. The rules are `value`, `actor`, `link`
 and `assertion`.
 
-`money` exists because a cost and whether it is notional are one sentence: on a subscription
-login the figure is an API-equivalent price rather than money spent, and a rendering that
-printed the number alone would be inventing a payment. `actor` exists because an absent actor
+`actor` exists because an absent actor
 means Cairn started the run and is never rendered as unknown. `link` exists because a value
 that merely looks like a URL is not one a document may follow: a repository path, a
 transcript location and a plan's name are all record strings, and linking on shape alone
@@ -120,7 +118,7 @@ that contributed nothing.
 "N steps skipped: already complete" is on the first screen, with the runs that did the work
 named beside it. Each no-op then names the scope its key matched under and both keys, because
 `once` and `daily` are the difference between correct caching and stale research, and a
-recovery run rendered naively is a screen of grey with no account of who paid for it.
+recovery run rendered naively is a screen of grey with no account of who did the work.
 
 ## A run whose process could not be checked
 
@@ -133,7 +131,7 @@ nothing. The engine's own record is the better witness, and the report says so.
 
 ## The receipts
 
-Per step: cost and whether it is notional, turns, model, session identity, transcript,
+Per step: turns, model, session identity, transcript,
 standard error, branch, commit, diffstat, exit code, the assertion's exit with the execution
 that backed it and the step that proved it, the bound a stopped step was stopped at and how
 long it had run, timings, and a resume command.
@@ -147,7 +145,7 @@ in. On a green run the wave's prune has since removed that worktree, so the comm
 directory that is gone. **The report does not check whether it is still there** — that would
 be a fact the model does not carry, and it would be wrong the moment the filesystem changed.
 
-The run's own receipts carry the budget, the git facts, the occasion, the earlier runs, and
+The run's own receipts carry the git facts, the occasion, the earlier runs, and
 the engine's own view of the run — the better surface for logs and timings, and one that
 survives the run ending.
 

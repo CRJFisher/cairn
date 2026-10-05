@@ -1,13 +1,11 @@
 # 19 — Start friction: the four walls between an authored workflow and a running one
 
 The second person to drive Cairn had a plan that parsed, validated, answered its assertions and
-priced a run — and still needed three attempts and one spent acceptance to get an engine run
-registered. None of the four walls is a bug in what the invariants promise. Each is a **fact
+asked for a run — and still needed three attempts to get an engine run registered. None of the four walls is a bug in what the invariants promise. Each is a **fact
 about the engine or the host that Cairn learns too late**: at the gate instead of the derivation,
-inside the run instead of before the offer, or never.
+inside the run instead of before it, or never.
 
-**Serves** the capability surface of **Author** and **Run**. No invariant moves: consent stays a
-stated price and a qualifying yes ([15](15-the-skill.md)), a verdict stays something a declared
+**Serves** the capability surface of **Author** and **Run**. No invariant moves: a verdict stays something a declared
 assertion proved ([08](08-verify-gate.md)), and the run's record stays the only source of how it
 went ([12](12-run-record.md)).
 
@@ -24,11 +22,10 @@ each of 17 steps with `verify` for the 15 that carry an assertion — and no `se
    derived from its document's file name, was 112 characters; the engine caps a DAG name at 40
    — its own message says "less than 40", which is off by one against the measurement. Cairn's own validator had passed the slug, and the refusal that finally came named neither
    the rule nor the length.
-2. **`run start` blocked for the whole run, and a killed start cost the acceptance.** The command
-   spends the offer, then calls the engine synchronously and prints the run id only when the engine
-   returns — for this plan, up to 44 hours later. Started from a tool with a two-minute limit, it
-   was killed; the offer was spent, the run id it had minted died with the process, and there was
-   nothing for a recovery to name.
+2. **`run start` blocked for the whole run, and a killed start lost the run id.** The command
+   calls the engine synchronously and prints the run id only when the engine returns — for this
+   plan, up to 44 hours later. Started from a tool with a two-minute limit, it was killed; the
+   run id it had minted died with the process, and there was nothing for a recovery to name.
 3. **The engine could not bind its socket from a sandboxed shell, and nothing said so.** Every
    engine run opens a unix socket. The shell the start was issued from forbade the bind. In a
    scratch engine home the failure is immediate and named; in the default home the same start sat
@@ -39,15 +36,15 @@ each of 17 steps with `verify` for the 15 that carry an assertion — and no `se
 4. **A session did the work and never said so, and the run threw it away.** Step 2 edited
    the tree, its assertion passed, and the session then ended its turn expecting to be
    re-invoked. Nothing did. The run recorded it as a step that "reported failure" over an
-   assertion that passed, halted the chain, and discarded $10.89 of proven work. This wall
+   assertion that passed, halted the chain, and discarded a step's proven work. This wall
    is met inside the run rather than before it, which is why it comes last ([D](#d--a-headless-session-that-defers-its-own-completion-leaves-no-report)).
 
 The first is a derivation defect — with, it turned out, a second half at the gate, which
 judged a name nobody chose. The second and third are the same shape:
-**a cause the person could have cleared before the offer was spent, surfaced only after it was.**
-That is exactly the cost `refuse_unusable_engine` exists to prevent — _"a machine that cannot run
-the plan does not cost a person their acceptance"_ — and it currently checks one thing, the
-engine's version. The fourth is different again: it is met inside the run, by a session that
+**a cause the person could have cleared before the run started, surfaced only after it did.**
+That is exactly what `refuse_unusable_engine` exists to prevent — a machine that cannot run the
+plan is refused before anything starts — and it currently checks one thing, the engine's
+version. The fourth is different again: it is met inside the run, by a session that
 did the work and never said so.
 
 ## A — The plan slug: bound it where the engine bounds it
@@ -105,20 +102,18 @@ longer than the bound, `tests/test_plan_contract.py`, `tests/test_workflow.py`.
 ## B — `run start` returns when the engine has the run, not when the run ends
 
 **Today, exactly.** `_start` in `cairn/skill/cli.py` mints the run id, checks the engine's
-version, spends the offer, then calls `trigger.start`, which invokes `dagu start --run-id <id>
+version, then calls `trigger.start`, which invokes `dagu start --run-id <id>
 --params … <workflow>` through `subprocess.call` and returns its exit status. The four lines a
 person needs — `started <run-id>`, the branch, the view, the `cairn report` command — print
 after that call returns. For a plan whose slowest chain is bounded at 44 hours, that is up to 44
 hours of a blocked terminal, and any caller with its own timeout — an agent harness's tool call
-at two minutes by default and ten at most — kills the process tree under it. The `.spent` marker
-records one line, `spent at <timestamp>`; the run id lives nowhere but in the dying process.
+at two minutes by default and ten at most — kills the process tree under it. The run id lives
+nowhere but in the dying process.
 
-**What the kill costs.** The acceptance: the offer is claimed before the engine is invoked, which
-is correct (a start that really began must consume it), so a killed start is a spent yes and a
-fresh offer needs a fresh yes. And the recovery path: `run offer --trigger recovery --recovering
+**What the kill loses.** The recovery path: `run start --trigger recovery --recovering
 <run-id>` reads the occasion out of that run's record, and a run the engine never registered has
-no record and no id anyone can quote. Here the first attempt left exactly the spent marker and
-nothing else — not a `runs/<id>/` directory, because `lock_acquire` never ran ([C](#c--the-engine-cannot-bind-its-socket-from-a-sandboxed-shell)).
+no record and no id anyone can quote. Here the first attempt left nothing behind — not a
+`runs/<id>/` directory, because `lock_acquire` never ran ([C](#c--the-engine-cannot-bind-its-socket-from-a-sandboxed-shell)).
 
 **The change.**
 
@@ -126,9 +121,9 @@ nothing else — not a `runs/<id>/` directory, because `lock_acquire` never ran 
 <run-id>`, the view and the `cairn report` line are known before `dagu start` is called and are
   printed then. What prints when the engine returns is the engine's exit status, which the record
   already carries.
-- **Record the run id and the engine command in the spent marker**, beside the timestamp, so a
-  start that died has a name a recovery can quote — and so `cairn report` can find the run the
-  offer bought without the person having kept the terminal.
+- **Record the run id and the engine command** where a recovery can read them, so a start that
+  died has a name a recovery can quote — and so `cairn report` can find the run without the
+  person having kept the terminal.
 - **Detach by default.** `trigger.start` launches the engine in its own session with its stdout
   and stderr routed to `runs/<id>/engine.log`, waits only until the engine has taken the run on —
   the run's status data exists, or the engine exited without it — and returns. The release
@@ -138,14 +133,12 @@ nothing else — not a `runs/<id>/` directory, because `lock_acquire` never ran 
 - `capabilities/running.md` step 7 already reads _"the command prints where the run can be
   watched"_ — the text describes the detached shape, and the code should match it.
 
-**What must not change.** The offer is still spent before the engine is invoked; an engine that
-exits without taking the run on is still a refusal that names the command, and it still leaves
-the acceptance spent, because a run that was handed to the engine is a run; recovery is still an
+**What must not change.** An engine that exits without taking the run on is still a refusal
+that names the command; recovery is still an
 ordinary start carrying the occasion it continues, and never `dagu retry`.
 
 **Touches.** `cairn/skill/trigger.py` (`start`, `Started`), `cairn/skill/cli.py` (`_start` print
-order), `cairn/skill/consent.py` (`spend` and the marker's contents, `read_offer`),
-`capabilities/running.md` steps 6–7, `docs/triggers.md` _Who started a run_,
+order), `capabilities/running.md` steps 6–7, `docs/triggers.md` _Who started a run_,
 `tests/test_the_skill.py`.
 
 ## C — The engine cannot bind its socket from a sandboxed shell
@@ -157,7 +150,7 @@ unix socket gets, in a scratch engine home, an immediate
 default home the same start was observed to sit for two minutes with no status data and no log
 before it was killed; whether it was retrying the bind or blocked elsewhere is not known, and
 only the scratch-home form was reproduced in the open. `refuse_unusable_engine` runs before the
-offer is spent and checks `assert_pinned()` — the engine's version — and nothing else. The
+run starts and checks `assert_pinned()` — the engine's version — and nothing else. The
 authoring gate runs `dagu validate` and `dagu dry` in that same shell and both pass, because
 neither binds a socket, so a workflow authors cleanly in an environment that cannot run it.
 
@@ -173,26 +166,24 @@ second.
   in a scratch engine home — the same scratch the preflight's gate rehearsal already builds
   ([11](11-emitter-and-preflight.md)) — and refuses with the engine's own error line if the
   engine cannot take that run on. The check is cheap (measured: one second, `Result: Succeeded`)
-  and it runs before the offer is spent, which is the whole point.
-- **The offer names the host requirement.** One line in the price: the engine opens a unix socket
-  per run and the shell that starts it must be allowed to bind one — so a sandboxed harness says
-  so before the yes, not after.
+  and it runs before the run starts, which is the whole point.
+- **The refusal names the host requirement.** The engine opens a unix socket per run and the
+  shell that starts it must be allowed to bind one — so a sandboxed harness is told so before
+  the start, not after.
 - **The skill documents the symptom.** `capabilities/running.md` gains the two spellings — the
   immediate refusal and the silent wait — and what clears them.
 
 **What must not change.** The rehearsal is against a scratch home, never the machine's own —
 the same rule the gate already keeps, because an engine home the binary has never seen is
-created carrying a retry policy that re-executes paid work ([09](09-supervision.md)). A refusal
-here still leaves the acceptance standing.
+created carrying a retry policy that re-executes failed runs ([09](09-supervision.md)).
 
 **Touches.** `cairn/skill/trigger.py` (`refuse_unusable_engine`), `cairn/workflow/gate.py` (the
-scratch-home builder, shared), `cairn/skill/consent.py` (`disclosure`), `capabilities/running.md`,
+scratch-home builder, shared), `capabilities/running.md`,
 `tests/test_the_skill.py`, `tests/test_engine_supervision.py`.
 
 ## D — A headless session that defers its own completion leaves no report
 
-**What happened, exactly.** Step 2 of the run, `work_task_381_10`: 77 turns, 16m37s, $10.89
-notional. The session fetched the corpus, made the edit its task asks for — `SELF_KEYWORDS` as a
+**What happened, exactly.** Step 2 of the run, `work_task_381_10`: 77 turns, 16m37s. The session fetched the corpus, made the edit its task asks for — `SELF_KEYWORDS` as a
 module-scoped `Map` — and then did what the interactive harness teaches: it launched five
 background `Bash` jobs (the corpus fetch, a pre-fix full-corpus probe, the whole core suite),
 armed three `Monitor`s, called `ScheduleWakeup` for 1,200 s, and ended its turn with _"Both watch
@@ -245,11 +236,9 @@ ScheduleWakeup` by default, with the `Cron*` family beside it as the same shape;
   is a session that ended a turn without reporting, not a session that failed. Resume it once —
   `claude -p --resume <session_id>`, the spelling `resume_command` already knows — with one
   message: _the session is ending; report now through the structured output_. One resume,
-  bounded by what is left of the step's own **dollar ceiling** — the offer priced one ceiling
-  and a second pass carrying a fresh one would double what was agreed — and recorded in the
-  report's `detail` as `resumed_for_report`. Nothing bounds it in _time_ beyond the engine's
-  own per-step timeout, which is still running.
-  Measured here, the alternative was discarding $10.89 of work an assertion had just proved.
+  bounded in _time_ by the report grace that remains before the engine's own per-step timeout,
+  and recorded in the report's `detail` as `resumed_for_report`.
+  Measured here, the alternative was discarding work an assertion had just proved.
 - **The cause is named for what it is.** `provider_protocol` is not `reported_failure`: the step
   reported nothing. The gate carries the protocol cause through to the mark report and the
   record, and the divergence line stops saying the step reported failure.
@@ -291,7 +280,7 @@ lines have still not printed because the parent process is what blocks. Verdict
 `green_with_exclusions`, exit 3, engine status `partially_succeeded`: step 1 (`task_381_2`) landed
 as `89583ced` after a 47-minute session and a 2m05s assertion; step 2 (`task_381_10`) is
 [D](#d--a-headless-session-that-defers-its-own-completion-leaves-no-report); the other fifteen
-never ran. Notional cost $41.58 over 190 turns for the two priced steps. No bound was reached, so
+never ran. 190 turns across the two steps that ran. No bound was reached, so
 the overrun question is still open.
 
 ## The bucket
@@ -303,11 +292,10 @@ never designed here and are carried forward.
 | #   | Symptom                                                                                                                                                                                                                 | Where it lives                                                           | State |
 | --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ----- |
 | A   | A plan slug longer than the engine's 40-character name limit passes the validator and dies at the gate, with the cause cut out of the message                                                                           | `cairn/plan/cli.py`, `cairn/plan/validate.py`, `cairn/workflow/gate.py`  | done  |
-| B   | `run start` blocks for the whole run; a killed start spends the offer and loses the run id                                                                                                                              | `cairn/skill/trigger.py`, `cairn/skill/cli.py`, `cairn/skill/consent.py` | done  |
-| C   | The engine cannot bind its run socket from a sandboxed shell; the version pin is the only pre-spend engine check                                                                                                        | `cairn/skill/trigger.py`                                                 | done  |
+| B   | `run start` blocks for the whole run; a killed start loses the run id                                                                                                                                                   | `cairn/skill/trigger.py`, `cairn/skill/cli.py`, `cairn/skill/consent.py` | done  |
+| C   | The engine cannot bind its run socket from a sandboxed shell; the version pin is the only pre-start engine check                                                                                                        | `cairn/skill/trigger.py`                                                 | done  |
 | D   | `plan propose --json` exits nonzero when steps are unanswered, so a caller cannot tell a listing from a failure by exit status                                                                                          | `cairn/plan/cli.py`                                                      |       | done |
-| E   | The offer prices worktrees and merges for a chain-shaped plan whose definition has neither; the disclosure is a fixed sentence, not the topology                                                                        | `cairn/skill/consent.py` (`disclosure`)                                  | done  |
-| F   | A `-p` session that leaves a background shell running ends the process with it unread and reports nothing; $10.89 of assertion-passing work is discarded                                                                | `cairn/protocol.py`, `cairn/providers.py`                                | done  |
+| F   | A `-p` session that leaves a background shell running ends the process with it unread and reports nothing; assertion-passing work is discarded                                                                          | `cairn/protocol.py`, `cairn/providers.py`                                | done  |
 | G   | A `provider_protocol` failure reaches the gate and the report as `reported_failure`, and the divergence says the step "reported failed"                                                                                 | `cairn/verify.py`, `cairn/report/`                                       | done  |
 | H   | A chain-segment step that fails after editing leaves its edits uncommitted in the repository; a recovery's first act refuses the dirty tree, and the report's next action says `settle_merge` for a chain with no merge | `cairn/record/`, `capabilities/running.md`                               | open  |
 | I   | Fifteen never-reached steps are recorded `gate_indeterminate` and listed as needing a person, where [08](08-verify-gate.md) says `not_reached`                                                                          | `cairn/verify.py`                                                        | open  |
@@ -318,11 +306,9 @@ never designed here and are carried forward.
 - A plan whose document name exceeds the engine's bound derives a slug under it, confirmed in the
   parse report, and reaches a generated workflow without touching the gate.
 - `run start` prints the run id, the view and the report command before the engine is invoked,
-  returns once the engine has the run, and leaves both in the spent marker.
-- A start issued from a shell that cannot bind a unix socket is refused before the offer is spent,
-  with the engine's own reason, and the yes still stands.
-- The offer's price is composed from the definition's topology, so a chain prices no worktrees and
-  no merges.
+  returns once the engine has the run, and records both where a recovery can read them.
+- A start issued from a shell that cannot bind a unix socket is refused before the run starts,
+  with the engine's own reason.
 - A session that ends a turn with a background shell still running is held open and told what it
   left behind; one that ends without reporting is resumed once for its report; and a step that
   reported nothing is recorded as `provider_protocol` rather than `reported_failure`. A step's
@@ -331,7 +317,7 @@ never designed here and are carried forward.
 
 ## Implementation Notes
 
-**Status: done.** Sections A, B, C and D, and bucket item E, land on
+**Status: done.** Sections A, B, C and D land on
 `task-19-start-friction`. Bucket items D, H, I and J are carried forward: they were never
 designed here, and closing them would have been guessing.
 
@@ -345,11 +331,11 @@ A backlog document called `task-381 - Report entry points for a repository of vs
 scale and shape.md` derives the slug `task-381` and authors straight through to a workflow
 the engine loads. `run start` hands back the run id, the branch, the view and the report
 command, and returns in seconds — the run outlives the command that made it, so a harness
-whose tool call is bounded at two minutes no longer kills a run it just paid for. A shell
-that cannot bind the socket every run opens is refused while the yes still stands, in the
-engine's own words. A chain-shaped plan is priced as a chain. And a session that does the
+whose tool call is bounded at two minutes no longer kills a run it just started. A shell
+that cannot bind the socket every run opens is refused before the start, in the
+engine's own words. And a session that does the
 work but ends its turn without saying so is asked once more, then recorded as having said
-nothing — instead of being quoted as claiming a failure it never claimed while $10.89 of
+nothing — instead of being quoted as claiming a failure it never claimed while
 assertion-passing work is discarded.
 
 Three of those needed a cause the document had not found. **The authoring gate was judging
@@ -371,20 +357,19 @@ without denying `Bash`, and denying it by argument would take away a step's para
 document Cairn composes and writes nowhere, refuses to let a turn end while a shell the
 session started is still running, names the command, and is bounded by the harness's own
 `stop_hook_active`. It fails open on every fault, which is the exact inverse of the verify
-gate: it holds a _paid_ session, so a bug in it spends money in a loop, and nothing in
+gate: it holds a session open, so a bug in it loops, and nothing in
 Cairn depends on it having run.
 
 ### What each acceptance criterion rests on
 
-| Criterion                                                                     | Where it holds                                        | What proves it                                                                                          |
-| ----------------------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| A long document name derives a bounded slug and reaches a workflow            | `plan/ids.py`, `plan/validate.py`, `workflow/cli.py`  | the `task-381` fixture; a 40-byte slug authored end to end against the real engine                      |
-| A refusal carries the engine's own reason                                     | `workflow/gate.py: engine_reason`                     | the measured refusal stream, and a real gate refusal naming the published path                          |
-| `run start` prints the identity first and returns when the engine has the run | `skill/trigger.py`, `skill/cli.py`                    | the launcher reads stdout at launch time; one run id asserted across the print, the argv and the marker |
-| A shell that cannot bind is refused before the spend                          | `workflow/gate.py: rehearse_start`                    | a stub emitting the measured bind error; the real engine for the passing case                           |
-| The price is the definition's topology                                        | `skill/consent.py: node_roles`, `skill/vocabulary.py` | a chain states eight facts, a fan-out ten, and a definition Cairn cannot parse states all ten           |
-| A turn is held open for a live background shell                               | `hooks.py`, `providers.py: hook_settings`             | the pinned payload; and a real `claude -p` session held, resumed, and made to read its shell            |
-| A silent session is resumed once and recorded as itself                       | `providers.py`, `verify.py: judge`                    | scripted streams over all four outcomes; `--resume` measured to keep its session id                     |
+| Criterion                                                                     | Where it holds                                       | What proves it                                                                                          |
+| ----------------------------------------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| A long document name derives a bounded slug and reaches a workflow            | `plan/ids.py`, `plan/validate.py`, `workflow/cli.py` | the `task-381` fixture; a 40-byte slug authored end to end against the real engine                      |
+| A refusal carries the engine's own reason                                     | `workflow/gate.py: engine_reason`                    | the measured refusal stream, and a real gate refusal naming the published path                          |
+| `run start` prints the identity first and returns when the engine has the run | `skill/trigger.py`, `skill/cli.py`                   | the launcher reads stdout at launch time; one run id asserted across the print, the argv and the record |
+| A shell that cannot bind is refused before the start                          | `workflow/gate.py: rehearse_start`                   | a stub emitting the measured bind error; the real engine for the passing case                           |
+| A turn is held open for a live background shell                               | `hooks.py`, `providers.py: hook_settings`            | the pinned payload; and a real `claude -p` session held, resumed, and made to read its shell            |
+| A silent session is resumed once and recorded as itself                       | `providers.py`, `verify.py: judge`                   | scripted streams over all four outcomes; `--resume` measured to keep its session id                     |
 
 ### Decisions worth knowing
 
@@ -419,7 +404,7 @@ the file name minus one extension. A one-step rehearsal in a scratch engine home
 0.25s. Against the installed agent CLI under `-p`: a background subagent holds the process
 and re-invokes the session per completion; `Monitor` blocks; a background shell leaves the
 process at exit; `ScheduleWakeup` never fires; `--disallowedTools "Cron*"` really matches;
-`--resume` reports the same session id and per-invocation cost, not cumulative; and a
+`--resume` reports the same session id; and a
 correct structured report also returns `stop_reason: "tool_use"`, so only the absent
 `structured_output` beside it says a session never reported.
 

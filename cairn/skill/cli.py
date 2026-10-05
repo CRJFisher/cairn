@@ -5,12 +5,9 @@ these run outside any run: they resolve no runtime identity and leave no step re
 are an implementation surface for the skill, not a user interface — a person asks for what
 they want and never learns one of these lines.
 
-`run` has two verbs and they are two on purpose. `offer` states the price and mints the one
-token `start` accepts, so there is no path to a run whose cost was never stated and no way
-to spend one acceptance twice. It prints that price in one block and the token in another,
-because a person hears what a run costs and never learns the id it is authorised by.
-`explain` has three, one per question it answers, and none of them starts, locks or writes
-anything.
+`run` has one verb, `start`: a request to run is the go-ahead, so it gates the definition,
+begins the run and hands back the run's id and where it can be watched. `explain` has three
+verbs, one per question it answers, and none of them starts, locks or writes anything.
 """
 
 from __future__ import annotations
@@ -28,9 +25,9 @@ from cairn.layout import RECORD_FILE, check_run_id
 from cairn.locks import refuse_dirty_repository, refuse_unresolved_merge
 from cairn.marker import mint_occasion
 from cairn.record.store import build_run_record
-from cairn.skill.consent import Refused, make_offer, record_engine_command, spend
 from cairn.skill.explain import explainable, meaning, why_excluded, would_do
 from cairn.skill.resolve import (
+    OccasionDecision,
     OccasionSignal,
     Resolved,
     decide_occasion,
@@ -40,22 +37,17 @@ from cairn.skill.resolve import (
 )
 from cairn.skill.trigger import (
     EngineUnavailable,
+    Launch,
     address,
+    declared_branch,
+    refuse_uncarriable,
     refuse_unusable_engine,
+    snapshot_admitted,
     start,
 )
-from cairn.skill.vocabulary import (
-    CONSENT_ASK_HEADER,
-    CONSENT_ASK_NO,
-    CONSENT_ASK_QUESTION,
-    CONSENT_ASK_YES,
-    CONSENT_NOTHING_YET,
-    CONSENT_RELAY_CLOSE,
-    CONSENT_RELAY_OPEN,
-    TRIGGER_SHAPES,
-)
+from cairn.skill.vocabulary import TRIGGER_SHAPES
 from cairn.workflow.gate import Admission, admit
-from cairn.workflow.schema import LABEL_GRAPH_DIGEST
+from cairn.workflow.schema import LABEL_GRAPH_DIGEST, PARENT_BRANCH_PARAM
 from cairn.workflow.stamp import workflow_path
 
 EXIT_REFUSED = 1
@@ -104,7 +96,7 @@ def _has_run_before(repository: Path, plan: str) -> bool:
 
 
 def _admitted_graph(admission: Admission) -> str | None:
-    """The graph digest the admitted bytes carry — the very bytes the offer will price."""
+    """The graph digest the admitted bytes carry — the very bytes the engine will run."""
     try:
         document: Any = json.loads(admission.body)
     except ValueError:
@@ -114,11 +106,19 @@ def _admitted_graph(admission: Admission) -> str | None:
     return digest if isinstance(digest, str) else None
 
 
-def _cmd_offer(args: argparse.Namespace) -> int:
+def _launch(
+    args: argparse.Namespace, repository: Path, run_id: str
+) -> tuple[Launch, OccasionDecision]:
+    """Everything the run is asked for, settled and gated before anything is written.
+
+    Returns the launch and the occasion decision, which is stated where it is worth stating.
+    The admitted bytes are what the engine runs: they are snapshotted here under the run's id,
+    so a definition edited between the gate and the engine's read cannot change the run.
+    """
     plan = str(args.plan)
-    workflow = workflow_path(Path(str(args.repository)).resolve(), plan)
-    refuse_missing_definition(workflow, plan, str(args.repository))
-    repository = _repository(str(args.repository), workflow)
+    workflow = workflow_path(repository, plan)
+    refuse_missing_definition(workflow, plan, str(repository))
+    resolved = _repository(str(repository), workflow)
     admission, faults = admit(workflow, expected_plan=plan)
     if admission is None:
         detail = "\n".join(f"refused  {fault}" for fault in faults)
@@ -129,12 +129,12 @@ def _cmd_offer(args: argparse.Namespace) -> int:
     record = None
     if args.recovering:
         record = build_run_record(
-            runs_root(repository), run_records_path(), str(args.recovering)
+            runs_root(resolved), run_records_path(), str(args.recovering)
         )
         if record is None:
             raise CairnError(
                 "invalid_arguments",
-                f"no record of run {args.recovering} against {repository}, so there is "
+                f"no record of run {args.recovering} against {resolved}, so there is "
                 "nothing to continue",
             )
         refuse_foreign_recovery(
@@ -148,58 +148,34 @@ def _cmd_offer(args: argparse.Namespace) -> int:
             trigger=str(args.trigger),
             named_run=args.recovering,
             pinned=args.occasion,
-            prior_runs=1 if _has_run_before(repository, plan) else 0,
+            prior_runs=1 if _has_run_before(resolved, plan) else 0,
         ),
         record,
     )
-    offer, cost = make_offer(
-        repository,
+    branch = args.parent_branch or declared_branch(admission)
+    if branch is None:
+        raise CairnError(
+            "invalid_arguments",
+            f"{workflow} declares no {PARENT_BRANCH_PARAM} and none was asked for, so "
+            "there is no branch this run could land on",
+        )
+    refuse_uncarriable(f"{PARENT_BRANCH_PARAM}={branch}")
+    snapshot = snapshot_admitted(resolved, run_id, workflow.name, admission)
+    launch = Launch(
         plan=plan,
-        workflow=workflow,
-        parent_branch=args.parent_branch,
-        occasion_reading=reading.reading,
+        workflow=str(snapshot),
+        repository=str(resolved),
+        parent_branch=branch,
         occasion=reading.occasion,
-        admission=admission,
     )
-    # Two zones, and the markers are the whole point. Everything above the close is said to
-    # the person verbatim; everything below it is the session's clerical work, the offer id
-    # among it. A person answers a question about a run and never handles the token that
-    # authorises it, and a test asserts the id falls outside the relayed block — so saying
-    # that block whole cannot leak one.
-    print(CONSENT_RELAY_OPEN)
-    print(f"plan    {offer.plan} → {offer.repository} on {offer.parent_branch}")
-    print("cost    a run of this plan is not free:")
-    for line in cost:
-        print(f"  - {line}")
-    print(f"occasion  {reading.reading}: {reading.taken}")
-    if reading.disclose:
-        print(f"          the other reading would mean: {reading.forgone}")
-    print(CONSENT_NOTHING_YET)
-    print(CONSENT_RELAY_CLOSE)
-    print(f"offer   {offer.offer_id}")
-    print(
-        "ask     "
-        + CONSENT_ASK_QUESTION.format(plan=offer.plan, repository=offer.repository)
-    )
-    print(f"header  {CONSENT_ASK_HEADER}")
-    print(f"yes     {CONSENT_ASK_YES}")
-    print(f"no      {CONSENT_ASK_NO}")
-    # Composed here rather than left to be assembled from three printed values, for the
-    # reason the price is composed rather than templated: the id is the one argument a
-    # session cannot get wrong cheaply, and `_cmd_start` already hands back its `report`
-    # line the same way.
-    print(
-        f"start   python3 -m cairn run start --repository {offer.repository} "
-        f"--offer {offer.offer_id} --reply '<their answer, verbatim>'"
-    )
-    return 0
+    return launch, reading
 
 
 def _cmd_start(args: argparse.Namespace) -> int:
-    """Spend one offer and begin the run it bought.
+    """Begin the run that was asked for.
 
-    Everything that can refuse is asked before the offer is spent, so a refusal here leaves
-    the acceptance standing and the person is not asked to decide the same thing twice.
+    Everything that can refuse is asked before anything is written or launched, so a refusal
+    here leaves the repository as it was.
     """
     repository = Path(str(args.repository)).resolve()
     run_id = mint_run_id() if args.run_id is None else str(args.run_id)
@@ -207,15 +183,13 @@ def _cmd_start(args: argparse.Namespace) -> int:
         check_run_id(run_id)
         refuse_unusable_engine()
         # The working tree, read in the same breath as the engine: the run's first act
-        # refuses a dirty tree and an unresolved merge, and a refusal there has already
-        # spent the acceptance. Asked here through the very functions the lock asks it
-        # through, so the two refusals are one refusal; the run's own stays as the
-        # backstop for a tree that dirties itself in between ([24 D]).
+        # refuses a dirty tree and an unresolved merge. Asked here through the very
+        # functions the lock asks it through, so the two refusals are one refusal; the
+        # run's own stays as the backstop for a tree that dirties itself in between ([24 D]).
         refuse_unresolved_merge(repository)
         refuse_dirty_repository(repository)
-        # Asked here rather than where it is used. It shells out to the engine and can
-        # refuse; raised after the spend that would be a crash over a consumed acceptance,
-        # and every refusal has to happen while the yes is still standing.
+        # Asked here rather than where it is used: it shells out to the engine and can
+        # refuse, and every refusal has to happen before the launch is composed.
         records = run_records_path()
     except EngineUnavailable as unavailable:
         print(f"refused  {unavailable}", file=sys.stderr)
@@ -227,23 +201,21 @@ def _cmd_start(args: argparse.Namespace) -> int:
         print(f"refused  {run_id!r} is not a run id: {malformed}", file=sys.stderr)
         return EXIT_REFUSED
 
-    granted = spend(repository, str(args.offer), reply=str(args.reply), run_id=run_id)
-    if isinstance(granted, Refused):
-        print(f"refused  {granted.outcome}: {granted.why}", file=sys.stderr)
-        return EXIT_REFUSED
+    launch, reading = _launch(args, repository, run_id)
 
-    # Composed and recorded before the engine is invoked, so a start that dies leaves both
-    # the run id and the invocation it was about to make ([19 B]).
-    where = address(granted, run_id, runs_root(repository))
-    record_engine_command(repository, granted.offer_id, where.command)
+    # Composed before the engine is invoked, so a start that dies leaves the run id and the
+    # invocation it was about to make ([19 B]).
+    where = address(launch, run_id, runs_root(repository))
 
-    # **Printed before the launch.** These four lines are known the moment the offer is
-    # spent, and a caller killed while the engine is starting has still been told the name
-    # of the run its acceptance bought.
+    # **Printed before the launch.** These lines are known before the engine is invoked, and
+    # a caller killed while the engine is starting has still been told the name of the run.
     print(f"started  {where.run_id}")
-    print(f"branch   verified work lands on {granted.parent_branch}, as the offer stated")
+    print(f"branch   verified work lands on {launch.parent_branch}")
     print(f"watch    {where.view}")
     print(f"read     python3 -m cairn report --run {where.run_id} --repository {repository}")
+    if reading.disclose:
+        print(f"occasion  {reading.reading}: {reading.taken}")
+        print(f"          the other reading would mean: {reading.forgone}")
 
     started = start(where, records=records, wait=bool(args.wait))
     if not started.taken_on:
@@ -257,7 +229,7 @@ def _cmd_start(args: argparse.Namespace) -> int:
             return EXIT_OK
         # The engine declining to take the run on at all — a run id it already holds, a
         # definition it cannot load — leaves no record for anyone to read, so it is the one
-        # engine status this command must not swallow. A run it *accepted* is a different
+        # engine status this command must not swallow. A run it *took on* is a different
         # matter: whether that run worked is the record's answer ([docs/run-model.md]).
         print(
             f"refused  the engine exited {started.exit_code} without taking the run on: "
@@ -281,7 +253,7 @@ def _cmd_explain_workflow(args: argparse.Namespace) -> int:
     print(f"plan      {account.plan}")
     print(f"target    {account.repository} on {account.parent_branch}")
     print(f"schedule  {account.schedule or 'none — it runs when it is asked to'}")
-    print(f"paid      {account.agent_steps} agent step(s)")
+    print(f"agents    {account.agent_steps} agent step(s)")
     print(f"file      {account.provenance.summary}")
     print("steps")
     for step in account.steps:
@@ -320,32 +292,23 @@ def _run_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cairn run", description=__doc__)
     verbs = parser.add_subparsers(dest="verb", required=True)
 
-    child = verbs.add_parser("offer")
+    child = verbs.add_parser("start")
     child.add_argument("--plan", required=True)
     # No default. The repository comes from what was asked for, never from the directory
     # this process happens to be in and never from the workflow ([resolve.py]).
     child.add_argument("--repository", required=True)
-    # Optional, because the definition already declares one and that is what gets priced.
-    # Given, it is the branch the offer is for and the branch the run will use.
+    # Optional, because the definition already declares one. Given, it is the branch the
+    # run will use.
     child.add_argument("--parent-branch")
     child.add_argument("--trigger", choices=TRIGGER_SHAPES, required=True)
     child.add_argument("--recovering")
     child.add_argument("--occasion")
-
-    child = verbs.add_parser("start")
-    child.add_argument("--repository", required=True)
-    child.add_argument("--offer", required=True)
-    # The accepting words, verbatim. Recorded as provenance and checked against the one
-    # thing a filesystem can check about them ([consent.py]).
-    child.add_argument("--reply", required=True)
-    # Minted here when it is not given, so nobody has to invent one. There is no
-    # `--parent-branch`: the branch is the offer's, and a term settled after the offer would
-    # be one nobody agreed to.
+    # Minted here when it is not given, so nobody has to invent one.
     child.add_argument("--run-id")
     # The default is detached: the command returns once the engine has the run, because a
-    # caller with its own timeout is killed by a start that blocks for the whole run and
-    # the acceptance dies with it ([19 B]). `--wait` is for a caller that wants the engine's
-    # exit status in line and has no timeout of its own.
+    # caller with its own timeout is killed by a start that blocks for the whole run
+    # ([19 B]). `--wait` is for a caller that wants the engine's exit status in line and has
+    # no timeout of its own.
     child.add_argument("--wait", action="store_true")
     return parser
 
@@ -373,7 +336,7 @@ def _explain_parser() -> argparse.ArgumentParser:
 def run_main(argv: list[str]) -> int:
     args = _run_parser().parse_args(argv)
     try:
-        return _cmd_offer(args) if args.verb == "offer" else _cmd_start(args)
+        return _cmd_start(args)
     except CairnError as refused:
         print(f"refused  {refused}", file=sys.stderr)
         return EXIT_REFUSED

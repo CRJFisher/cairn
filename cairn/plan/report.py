@@ -80,17 +80,14 @@ def render(raw: Any, result: Result | None = None) -> str:
 
     lines.append("## Steps")
     lines.append("")
-    lines.append("| id | plan calls it | kind | scope | verify | timeout | verify timeout | ceiling | model |")
-    lines.append("| -- | ------------- | ---- | ----- | ------ | ------- | -------------- | ------- | ----- |")
+    lines.append("| id | plan calls it | kind | scope | verify | verify timeout | model |")
+    lines.append("| -- | ------------- | ---- | ----- | ------ | -------------- | ----- |")
     for step in steps:
         verify = _code(step["verify"]) if step["verify"] else _unasserted_cell(step)
-        budget = step["max_budget_usd"]
-        ceiling = "—" if budget is None else f"US$ {budget:.2f}"
         model = "—" if step["model"] is None else _escape(step["model"])
         lines.append(
             f"| `{step['id']}` | {_escape(step['slug'])} | {step['kind']} | "
-            f"{step['scope']} | {verify} | {step['timeout']}s | "
-            f"{step['verify_timeout']}s | {ceiling} | {model} |"
+            f"{step['scope']} | {verify} | {step['verify_timeout']}s | {model} |"
         )
     lines.append("")
 

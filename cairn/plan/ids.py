@@ -35,9 +35,9 @@ _INDEX_NAMES = ("README.md", "WORKLIST.md", "PLAN.md", "index.md")
 # space was the only spelling that let an ordinary sentence in.
 _TASK_ID = re.compile(r"^(task[-_]?\d+(?:\.\d+)*)\s", re.IGNORECASE)
 
-# Eight hex characters, against the sixteen `verify_handle` spends on a step handle. The
+# Eight hex characters, against the sixteen `verify_handle` takes for a step handle. The
 # population here is the plans in one repository's three namespaces rather than every step
-# of every plan, and the slug has only forty characters to spend on staying readable.
+# of every plan, and the slug has only forty characters to stay readable in.
 SLUG_DIGEST_LENGTH = 8
 
 

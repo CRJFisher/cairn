@@ -10,6 +10,7 @@ from cairn.plan.schema import (
     AGENT_REPORT_GRACE,
     ENGINE_NAME_MAX_BYTES,
     GRAPH_VERSION,
+    HANG_GUARD,
     SUPPORT_TIMEOUT,
     VERIFY_TIMEOUT,
     WAIT_REPORT_GRACE,
@@ -330,30 +331,30 @@ class MultiWaveShape(unittest.TestCase):
 
 
 class Duration(unittest.TestCase):
-    def test_a_step_costs_every_attempt_and_every_wait_between_them(self) -> None:
+    def test_a_step_counts_every_attempt_and_every_wait_between_them(self) -> None:
         # The engine applies `timeout_sec` per attempt, so one retry doubles the bound and
         # adds the interval; a bound counted once would understate a run by hours.
         solo = derive(
-            one_step_graph(timeout=100, retries=0),
+            one_step_graph(retries=0),
             repository_root=REPOSITORY,
             parent_branch=PARENT,
         )
         retried = derive(
-            one_step_graph(timeout=100, retries=1),
+            one_step_graph(retries=1),
             repository_root=REPOSITORY,
             parent_branch=PARENT,
         )
         # An agent step's bound carries its report grace, exactly as the emitted node does
         # ([22 B]): the number stated and the number the engine enforces are one number.
-        bound = 100 + AGENT_REPORT_GRACE
+        bound = HANG_GUARD + AGENT_REPORT_GRACE
         self.assertEqual(by_name(solo, "work_only")["max_seconds"], bound)
         self.assertEqual(by_name(retried, "work_only")["max_seconds"], bound * 2 + 1)
         command = derive(
-            one_step_graph(timeout=100, retries=0, kind="command", command="true", command_type="exec"),
+            one_step_graph(retries=0, kind="command", command="true", command_type="exec"),
             repository_root=REPOSITORY,
             parent_branch=PARENT,
         )
-        self.assertEqual(by_name(command, "work_only")["max_seconds"], 100)
+        self.assertEqual(by_name(command, "work_only")["max_seconds"], HANG_GUARD)
 
     def test_an_assertion_is_bounded_by_the_plan_and_the_run_counts_that_bound(self) -> None:
         # Measured: a whole-suite assertion ran 844 s against a fixed 600 s bound.
@@ -403,20 +404,19 @@ class Duration(unittest.TestCase):
                 kind="command",
                 command="test -f ready",
                 command_type="wait_until",
-                timeout=7200,
                 verify=None,
             ),
             repository_root=REPOSITORY,
             parent_branch=PARENT,
         )
-        self.assertGreaterEqual(waiting["max_seconds"], 7200 + WAIT_REPORT_GRACE)
+        self.assertGreaterEqual(waiting["max_seconds"], HANG_GUARD + WAIT_REPORT_GRACE)
         self.assertEqual(
-            by_name(waiting, "work_only")["max_seconds"], 7200 + WAIT_REPORT_GRACE
+            by_name(waiting, "work_only")["max_seconds"], HANG_GUARD + WAIT_REPORT_GRACE
         )
 
     def test_a_plan_of_ordinary_agent_steps_is_not_refused_for_being_wide(self) -> None:
-        # Gating admission on the sum would make the ceiling a plan-size cap: thirty
-        # perfectly ordinary parallel steps would be refused for existing.
+        # Gating admission on the sum would make the ceiling a plan-size cap: enough
+        # perfectly ordinary parallel steps to outrun it would be refused for existing.
         steps = [
             {
                 "id": f"s{index}",
@@ -425,7 +425,7 @@ class Duration(unittest.TestCase):
                 "task": "Do the thing.",
                 "verify": "test -f out",
             }
-            for index in range(30)
+            for index in range(40)
         ]
         graph = normalise(
             {
@@ -449,17 +449,33 @@ class Duration(unittest.TestCase):
         )
         self.assertGreater(fan["max_seconds"], fan["critical_path_seconds"])
 
-    def test_a_plan_whose_waits_run_past_the_ceiling_is_refused_with_the_arithmetic(
+    def test_a_plan_whose_chain_runs_past_the_ceiling_is_refused_with_the_arithmetic(
         self,
     ) -> None:
+        count = RUN_CEILING_SECONDS // HANG_GUARD + 1
+        steps = [
+            {
+                "id": f"s{index}",
+                "slug": f"s{index}",
+                "title": f"S{index}",
+                "task": "Do the thing.",
+                "verify": None,
+                "deps": (
+                    [{"id": f"s{index - 1}", "origin": "declared", "evidence": None}]
+                    if index
+                    else []
+                ),
+            }
+            for index in range(count)
+        ]
         with self.assertRaises(TopologyError) as caught:
             derive(
-                one_step_graph(
-                    kind="command",
-                    command="test -f ready",
-                    command_type="wait_until",
-                    timeout=RUN_CEILING_SECONDS + 1,
-                    verify=None,
+                normalise(
+                    {
+                        "cairn_graph_version": GRAPH_VERSION,
+                        "plan": {"slug": "long", "title": "Long", "source": "long.md"},
+                        "steps": steps,
+                    }
                 ),
                 repository_root=REPOSITORY,
                 parent_branch=PARENT,
@@ -468,7 +484,7 @@ class Duration(unittest.TestCase):
         self.assertIn("worst-case duration", message)
         self.assertIn("slowest chain", message)
         self.assertIn("once per attempt", message)
-        self.assertIn("48-hour ceiling", message)
+        self.assertIn("336-hour ceiling", message)
 
 
 class Emission(unittest.TestCase):
@@ -534,12 +550,11 @@ class Emission(unittest.TestCase):
         self.assertEqual(retry_policy(0, 1), {"limit": 0, "interval_sec": 1})
 
     def test_an_agent_step_is_not_retried_at_all(self) -> None:
-        # Every failure an agent can have is either a wrong task or a paid session that
+        # Every failure an agent can have is either a wrong task or a session that
         # already changed the repository. A rate limit is the one that is distinguishable,
         # and it is reported with the moment it clears rather than waited out blind: the
         # engine's policy is a static number and cannot read `resetsAt`, so any wait short
-        # enough to be worth making usually meets the same limit and pays for a second
-        # session to find out.
+        # enough to be worth making usually meets the same limit again.
         step = emit_step(self.steps(one_step_graph())["only"], "/repo")
         self.assertEqual(step["retry_policy"], {"limit": 0, "interval_sec": 1})
 

@@ -38,8 +38,8 @@ GATE_TIMEOUT = 120
 
 # `dagu version` prints a fixed string and does no work, unlike `validate`/`dry`, which
 # parse a real file and can legitimately need the full `GATE_TIMEOUT`. `assert_pinned` runs
-# immediately before `rehearse_start` in `refuse_unusable_engine`'s pre-spend check, so the
-# two share one harness-tool-call budget — a version check bounded at `GATE_TIMEOUT` could
+# immediately before `rehearse_start` in `refuse_unusable_engine`'s pre-start check, so the
+# two share one harness-tool-call allowance — a version check bounded at `GATE_TIMEOUT` could
 # by itself consume the two minutes `REHEARSAL_TIMEOUT` below was tuned to leave room under.
 VERSION_TIMEOUT = 10
 
@@ -48,8 +48,8 @@ VERSION_TIMEOUT = 10
 # *before* the harness's own tool call is killed — and that call is two minutes. A rehearsal
 # bounded at two minutes would be killed at the same moment its refusal printed, leaving
 # exactly the silence it was written to replace ([19 C]). Measured at 0.25s against a
-# working engine, so twenty seconds is thirty times the observed cost and, together with
-# `VERSION_TIMEOUT` ahead of it, well inside the budget the caller has.
+# working engine, so twenty seconds is thirty times the observed duration and, together with
+# `VERSION_TIMEOUT` ahead of it, well inside the time the caller has.
 REHEARSAL_TIMEOUT = 20
 
 # The engine writes its own structured log to stderr before it writes its findings, and the
@@ -77,7 +77,7 @@ def engine_reason(completed: subprocess.CompletedProcess[str]) -> str:
     Every line the engine logged about itself is dropped and every line it wrote about the
     file is kept, so a refusal carries the cause a person has to act on rather than the
     noise in front of it. A refusal that hides its cause is a refusal the person has to
-    reproduce by hand to read — which is what cost the second person to drive Cairn an
+    reproduce by hand to read — which is what lost the second person to drive Cairn an
     attempt ([19 A]).
     """
     stream = completed.stderr or completed.stdout or ""
@@ -172,14 +172,14 @@ REHEARSAL_DAG: dict[str, Any] = {
 
 
 def rehearse_start(*, binary: str | None = None) -> None:
-    """Refuse a shell the engine cannot take a run on, before anyone pays for finding out.
+    """Refuse a shell the engine cannot take a run on, before anyone starts a run to find out.
 
     **What the two gate commands structurally cannot ask.** Every `dagu start` opens a unix
     socket for the run — `/tmp/@dagu__<home>_<dag>_<hash>.sock` — before any step runs, and
     a shell that may not `bind` one gets `failed to start the unix socket server: listen
     unix …: bind: operation not permitted`. `dagu validate` and `dagu dry` never bind, so a
     workflow authors cleanly in an environment that cannot run it — and the cause reached
-    the person only after their acceptance had been spent ([19 C]). That is exactly the cost
+    the person only after the run had been started ([19 C]). That is exactly the failure
     `refuse_unusable_engine` exists to prevent, and until now it checked only the version.
 
     Anyone driving Cairn through a coding-agent harness is who this is for: such harnesses
@@ -207,7 +207,7 @@ def rehearse_start(*, binary: str | None = None) -> None:
             # The other spelling of the same fault: in the machine's own engine home the
             # bind was observed to sit for two minutes writing no status and no log, rather
             # than failing outright. A bound turns that silence into a refusal that arrives
-            # while the acceptance is still standing.
+            # while the run is still being set up.
             raise EngineUnavailable(
                 f"{ENGINE_BINARY} did not take a one-step rehearsal run on within "
                 f"{REHEARSAL_TIMEOUT}s, so this shell cannot start a run. Every run opens a unix "
@@ -317,7 +317,7 @@ def admit(
             Fault(
                 "engine_validate",
                 None,
-                f"{path} changed while its admission gate was running; offer it again",
+                f"{path} changed while its admission gate was running; admit it again",
             )
         ]
     return (

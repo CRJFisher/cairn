@@ -12,12 +12,10 @@ from __future__ import annotations
 
 import os
 import re
-import time
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import Any, NamedTuple, TypedDict, cast
 
-from cairn.bounds import positive_finite
 from cairn.core import (
     EXIT_FAILED,
     EXIT_OK,
@@ -38,7 +36,7 @@ from cairn.gitio import (
     tree_state,
 )
 from cairn.locks import git_write_mutex, refuse_unresolved_merge, unresolved_merge
-from cairn.plan.schema import MERGE_BUDGET_USD, MERGE_MODEL, MERGE_WORK_TIMEOUT
+from cairn.plan.schema import MERGE_MODEL
 from cairn.providers import run_provider
 from cairn.verify import EXCLUSION_CAUSES, GATE_INDETERMINATE, NOT_REACHED, mark_name
 
@@ -53,8 +51,8 @@ MERGEABLE = "mergeable"
 NOTHING_TO_MERGE = "nothing_to_merge"
 EXCLUDED = "excluded"
 
-# What settled a slot, recorded so the run record can tell a merge that cost a session
-# from one that cost a command.
+# What settled a slot, recorded so the run record can tell a merge a session settled from
+# one a command settled.
 BY_COMMAND = "command"
 BY_AGENT = "agent"
 
@@ -333,7 +331,7 @@ def judge_merge(facts: MergeFacts) -> MergeVerdict:
             checks=checks,
         )
     # A fact git declined to give closes the proof, the same way every fault closes the
-    # verify gate. Redoing a merge costs one run; recording an unproven one reaches git.
+    # verify gate. Redoing a merge takes one run; recording an unproven one reaches git.
     if facts.dirty is None or facts.changed is None or facts.marked is None:
         return MergeVerdict(
             proven=False,
@@ -492,7 +490,7 @@ def _gate_cause(reports: Path, step: str, run_id: str, fallback: str) -> tuple[s
 
 
 def _refuse_redirected_environment() -> None:
-    """Refuse before spending if anything would point the agent's git elsewhere.
+    """Refuse before the session opens if anything would point the agent's git elsewhere.
 
     Cairn strips these from its own invocations, but the resolving agent inherits the
     step's environment as it is — and an inherited `GIT_DIR` sends its resolution commit to
@@ -541,28 +539,15 @@ def run_merge(
     provider: str,
     context: RuntimeContext,
     model: str | None = MERGE_MODEL,
-    max_budget_usd: float | None = MERGE_BUDGET_USD,
-    timeout_seconds: float | None = MERGE_WORK_TIMEOUT,
     run_agent: ProviderCall = run_provider,
 ) -> CommandResult:
     """Land one of this wave's branches, or report honestly why none was landed."""
     model = model or MERGE_MODEL
-    max_budget_usd = (
-        MERGE_BUDGET_USD if max_budget_usd is None else max_budget_usd
-    )
-    timeout_seconds = (
-        MERGE_WORK_TIMEOUT if timeout_seconds is None else timeout_seconds
-    )
-    if (
-        not model.strip()
-        or not positive_finite(max_budget_usd)
-        or not positive_finite(timeout_seconds)
-    ):
+    if not model.strip():
         raise CairnError(
             "invalid_arguments",
-            "merge resolution requires a model and positive finite budget and timeout",
+            "merge resolution requires the model that is to do the resolving",
         )
-    work_deadline = time.monotonic() + timeout_seconds
     refuse_unresolved_merge(repository)
     _refuse_redirected_environment()
     on = checked_out_branch(repository)
@@ -650,7 +635,7 @@ def run_merge(
         if not conflicted:
             # A merge git stopped over something other than conflicted content — a rejecting
             # hook, a signing failure — leaves the same state behind. Handing it to a session
-            # would pay for one and tell it that these files are conflicted, then name none.
+            # would tell it that these files are conflicted, then name none.
             raise CairnError(
                 "git_failed",
                 f"merging {branch} into {into} stopped with no conflicted file to resolve, "
@@ -658,16 +643,11 @@ def run_merge(
                 detail={**detail, "stderr": merged.stderr},
             )
         detail["conflicted"] = list(conflicted)
-        detail["resolution"] = {
-            "model": model,
-            "max_budget_usd": max_budget_usd,
-            "timeout_seconds": timeout_seconds,
-        }
+        detail["resolution"] = {"model": model}
         # Outside the write mutex: a session can run for an hour and the mutex's own wait
         # is five minutes, so holding it across one would turn every contender into a
         # failure rather than a wait. Nothing else in the run writes here — the slots are
         # chained, the join is upstream and the prune is downstream.
-        remaining = max(0.001, work_deadline - time.monotonic())
         try:
             agent = run_agent(
                 provider,
@@ -675,9 +655,7 @@ def run_merge(
                 repository,
                 "auto",
                 model,
-                max_budget_usd,
                 [],
-                deadline_seconds=remaining,
             )
         except CairnError as exc:
             exc.detail = {
@@ -689,7 +667,6 @@ def run_merge(
                     "session_id": exc.detail.get(
                         "session_id", exc.detail.get("generated_session_id")
                     ),
-                    "total_cost_usd": exc.detail.get("total_cost_usd"),
                     "timed_out": exc.cause == "timed_out",
                 },
             }
@@ -710,7 +687,6 @@ def run_merge(
                         "session_id": agent.detail.get(
                             "session_id", agent.detail.get("generated_session_id")
                         ),
-                        "total_cost_usd": agent.detail.get("total_cost_usd"),
                         "timed_out": bool(agent.detail.get("timed_out")),
                     },
                 },
@@ -744,7 +720,6 @@ def run_merge(
             "session_id": agent.detail.get(
                 "session_id", agent.detail.get("generated_session_id")
             ),
-            "total_cost_usd": agent.detail.get("total_cost_usd"),
             "timed_out": bool(agent.detail.get("timed_out")),
         }
     if not verdict["proven"]:

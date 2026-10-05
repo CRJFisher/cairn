@@ -20,13 +20,14 @@ CAPABILITY_AUTHOR = "author"
 CAPABILITY_REPORT = "report"
 CAPABILITY_EXPLAIN = "explain"
 
-# Ordered by what dispatching here *wrongly* costs, worst first. This is deliberately not a
-# precedence: no rule may resolve on it, because doc 15's whole claim is that an ambiguous
-# request is asked back rather than settled on the more likely reading. What the order is
-# for is that the two subsets below are contiguous slices of it, so a capability added at
-# the wrong rank breaks a test rather than quietly acquiring or shedding a gate.
+# Ordered by how far dispatching here *wrongly* reaches, furthest first. This is
+# deliberately not a precedence: no rule may resolve on it, because doc 15's whole claim is
+# that an ambiguous request is asked back rather than settled on the more likely reading.
+# What the order is for is that the subset below is a contiguous slice of it, so a
+# capability added at the wrong rank breaks a test rather than quietly changing what an
+# ambiguous question puts forward.
 CAPABILITY_ORDER: tuple[str, ...] = (
-    CAPABILITY_RUN,  # spends money, mutates a repository, takes the lock, commits
+    CAPABILITY_RUN,  # mutates a repository, takes the lock, commits
     CAPABILITY_SCHEDULE,  # arms a daemon whose retry scanner reaches runs Cairn never wrote
     CAPABILITY_EDIT,  # replaces a definition that exists, wholesale, never merged
     CAPABILITY_AUTHOR,  # writes a definition that did not exist
@@ -34,12 +35,9 @@ CAPABILITY_ORDER: tuple[str, ...] = (
     CAPABILITY_EXPLAIN,  # reads, and needs no run to exist
 )
 
-# Nothing may start without an authorisation ([consent.py]).
-CONSENT_GATED: tuple[str, ...] = (CAPABILITY_RUN, CAPABILITY_SCHEDULE)
-
-# Where every reading of a request is one of these, asking costs a turn and answering costs
-# nothing, so the dispatcher answers. This is the one place a reading is resolved rather
-# than asked, and it is safe precisely because the set is closed.
+# Where every reading of a request is one of these, the question would take a turn and the
+# answer changes nothing, so the dispatcher answers. This is the one place a reading is
+# resolved rather than asked, and it is safe precisely because the set is closed.
 WRITES_NOTHING: tuple[str, ...] = (CAPABILITY_REPORT, CAPABILITY_EXPLAIN)
 
 
@@ -67,7 +65,7 @@ VERB_CLASSES: tuple[str, ...] = (
 # occasion turns on it and nothing else does: a recovery continues the occasion it is
 # recovering and everything else mints a new one ([resolve.py], [docs/triggers.md]). Folded
 # into `executing`, that decision would have to be inferred from the object's tense, which
-# is the guess doc 15 forbids and which costs either a re-payment or a stale answer.
+# is the guess doc 15 forbids and which yields either redone work or a stale answer.
 
 
 SHAPE_PLAN_DOCUMENT = "plan_document"  # a markdown plan, or a folder of task documents
@@ -102,7 +100,7 @@ ARGUMENT_SHAPES: tuple[str, ...] = SUBJECT_SHAPES + QUALIFIER_SHAPES
 
 
 FAMILY_NOTHING_APPLIES = "nothing_applies"  # the request names nothing Cairn does
-FAMILY_VERB_UNCLEAR = "verb_unclear"  # several readings, at least one of them costly
+FAMILY_VERB_UNCLEAR = "verb_unclear"  # several readings, at least one of them writing
 FAMILY_OBJECT_UNCLEAR = "object_unclear"  # the capability is clear, the object is not
 FAMILY_HARMLESS_CHOICE = "harmless_choice"  # every reading of it only reads
 
@@ -141,172 +139,20 @@ READING_BY_TRIGGER: dict[str, str] = {
     TRIGGER_SCHEDULED: OCCASION_NEW,
 }
 
-# What each reading costs, so a disclosure states the price of the road not taken rather
-# than only announcing the one taken. Total over OCCASION_READINGS, asserted.
-COST_BY_READING: dict[str, str] = {
+# What each reading means for the work, so a disclosure states the consequence of the road
+# not taken rather than only announcing the one taken. Total over OCCASION_READINGS,
+# asserted.
+CONSEQUENCE_BY_READING: dict[str, str] = {
     OCCASION_NEW: (
-        "every run-scoped and period-scoped step is paid for again, because a new occasion "
-        "is a new freshness key; once-scoped steps, which is the default and every code "
-        "step, stay cheap no-ops"
+        "every run-scoped and period-scoped step runs again, because a new occasion is a "
+        "new freshness key; once-scoped steps, which is the default and every code step, "
+        "stay no-ops"
     ),
     OCCASION_CONTINUE: (
         "every run-scoped and period-scoped step that already ran under this occasion is "
         "skipped, so work whose answer has moved since is not redone"
     ),
 }
-
-
-COST_SPEND = "spend"
-COST_CEILING = "ceiling"
-COST_MODEL = "model"
-COST_TIMEOUT = "timeout"
-COST_MUTATES = "mutates"
-COST_WORKTREES = "worktrees"
-COST_LOCK = "lock"
-COST_COMMITS = "commits"
-COST_MERGES = "merges"
-COST_SOCKET = "socket"
-
-# What a person is agreeing to. The money fact leads, asserted, because it is the one a
-# person most needs before saying yes and the one no other surface states at all — and the
-# three bounds follow it, because a ceiling, a model and a timeout are the facts that
-# decide what "up to N sessions" can actually cost ([17.3]).
-RUN_COST_FACTS: tuple[str, ...] = (
-    COST_SPEND,
-    COST_CEILING,
-    COST_MODEL,
-    COST_TIMEOUT,
-    COST_MUTATES,
-    COST_WORKTREES,
-    COST_LOCK,
-    COST_COMMITS,
-    COST_MERGES,
-    COST_SOCKET,
-)
-
-# The two facts that are the topology's rather than every run's, each named by the node role
-# that incurs it. A fact absent from this map is priced on every run.
-#
-# Every wave of a chain holds one step and a one-step wave runs in the repository itself
-# ([07]), so a chain-shaped definition emits no `setup` and no `merge` — and quoting a price
-# for something the definition cannot do is quoting a cost nobody agreed to. Read from the
-# definition in hand rather than from the request, for the same reason every other fact is.
-COST_BY_ROLE: dict[str, str] = {
-    COST_WORKTREES: "setup",
-    COST_MERGES: "merge",
-}
-
-# The headline a question names when one of its branches is a run. Doc 15 task 5 wants the
-# price stated wherever a run is offered, and a question offering one is such a place — but
-# there is no offer yet and possibly no definition, so what a question can state is the kind
-# of cost and never a number. The number comes only from an offer, which reads the
-# definition.
-HEADLINE_COST = (
-    "it spends money on agent sessions, takes the repository's run lock and commits"
-)
-
-# The same, for the other consent-gated capability. A schedule spends nothing by itself and
-# arms something that can spend repeatedly, which is a different sentence.
-HEADLINE_DAEMON_COST = (
-    "it needs a scheduler running, whose retry scanner re-executes every failed run on this "
-    "machine from the last day, including runs Cairn never wrote"
-)
-
-# Total over RUN_COST_FACTS, asserted. Every field is read out of the definition that is
-# about to run, so a cost cannot be quoted for a workflow nobody has in hand.
-COST_SENTENCES: dict[str, str] = {
-    COST_SPEND: (
-        "it starts up to {agent_steps} paid agent session(s), on the coding-agent "
-        "installation you already authenticated — the cost lands on that allowance, and "
-        "Cairn never sees it"
-    ),
-    COST_CEILING: (
-        "every one of those sessions is stopped at the dollar ceiling its step writes — "
-        "US$ {ceiling_usd} at most across all of them, and up to that step's ceiling again "
-        "for any session stopped at its time bound, which is resumed once to write the "
-        "report its first pass was killed before giving"
-    ),
-    COST_MODEL: (
-        "each session is pinned to the model its step names ({models}), which is the "
-        "model the run's record will name"
-    ),
-    COST_TIMEOUT: (
-        "every step is killed at its own written timeout; the longest allows "
-        "{longest_timeout_seconds}s"
-    ),
-    COST_MUTATES: "it changes the working tree of {repository} and moves branches in it",
-    COST_WORKTREES: (
-        "it creates worktrees beside the repository, under {worktrees_root}, one per "
-        "isolated step"
-    ),
-    COST_LOCK: (
-        "it takes {repository}'s run lock, so a second Cairn run against that repository "
-        "is refused with this one named for as long as it holds"
-    ),
-    COST_COMMITS: (
-        "it commits: each verified step's work and its marker land in one commit, and "
-        "verified work lands on {parent_branch}"
-    ),
-    COST_MERGES: (
-        "it merges: each verified step runs on its own branch and those branches are "
-        "landed on {parent_branch} one at a time, so a merge can conflict"
-    ),
-    # No field from the definition, because it is the one line about the machine rather
-    # than about the run. Stated in the price because it is a cause a person can clear
-    # before saying yes, and finding it out afterwards costs them the yes ([19 C]).
-    COST_SOCKET: (
-        "the engine opens a unix socket for every run before any step runs, so the shell "
-        "this start is issued from must be allowed to bind one — a sandboxed coding-agent "
-        "harness usually is not"
-    ),
-}
-
-
-# Every way one offer can be answered, and each is a fact about a file on disk. **No list of
-# accepting or refusing phrases stands beside them**, here or in `consent.py`: a reply arrives
-# as `run start --reply "…"`, the session's own argument, so anything compared against it
-# would sit downstream of the judgement it claimed to make and could fire only where a session
-# misread the words and then quoted them faithfully. No list covers English, and one reasoned
-# about as protection is worse than none. `SKILL.md` states the rule that binds the judgement,
-# and the session is what keeps it.
-ACCEPTED = "accepted"
-REFUSED_NO_WORDS = "no_words"
-REFUSED_NO_SUCH_OFFER = "no_such_offer"
-REFUSED_OFFER_UNREADABLE = "offer_unreadable"
-REFUSED_ALREADY_SPENT = "already_spent"
-REFUSED_WORKFLOW_MOVED = "workflow_moved"
-
-CONSENT_OUTCOMES: tuple[str, ...] = (
-    ACCEPTED,
-    REFUSED_NO_WORDS,
-    REFUSED_NO_SUCH_OFFER,
-    REFUSED_OFFER_UNREADABLE,
-    REFUSED_ALREADY_SPENT,
-    REFUSED_WORKFLOW_MOVED,
-)
-
-
-# What an offer prints, in two zones. The person hears everything between the markers and
-# nothing below them, because an offer id is the argument a start carries and a person who
-# handles one is doing the session's clerical work. The markers are what make that mechanical
-# rather than a judgement: a test asserts the id falls outside them, so relaying the block
-# whole cannot leak it.
-CONSENT_RELAY_OPEN = "--- say this to the person, all of it ---"
-CONSENT_RELAY_CLOSE = "--- end. what follows is yours, and the person never sees it ---"
-
-# The question the run is put as, and the only two answers it offers. Composed here for the
-# reason `COST_SENTENCES` are: one spelling exists, the document and the code can be asserted
-# against each other, and a session retypes nothing. The header is what a harness renders
-# beside the question and it is capped at twelve characters.
-CONSENT_ASK_QUESTION = "Run {plan} against {repository}?"
-CONSENT_ASK_HEADER = "paid run"
-CONSENT_ASK_YES = "Yes, run it"
-CONSENT_ASK_NO = "No, not now"
-CONSENT_ASK_ANSWERS: tuple[str, ...] = (CONSENT_ASK_YES, CONSENT_ASK_NO)
-
-# What the person is left with once the price has been said: the assurance that reading it
-# cost them nothing. It replaces an instruction to quote a token, which was never theirs.
-CONSENT_NOTHING_YET = "nothing runs until you answer the question that comes next."
 
 
 # Which document holds each capability's procedure. Here rather than only in `SKILL.md`'s
@@ -333,7 +179,6 @@ BINDING_STEP = "step"
 BINDING_VERDICT_WORD = "verdict_word"
 BINDING_CADENCE = "cadence"
 BINDING_OCCASION_READING = "occasion_reading"
-BINDING_AUTHORISATION = "authorisation"
 
 # What a capability document may read and may not re-decide. A document that re-decides one
 # is a second decision point, and a second decision point is how a run starts against the
@@ -349,12 +194,10 @@ BINDINGS: tuple[str, ...] = (
     BINDING_VERDICT_WORD,
     BINDING_CADENCE,
     BINDING_OCCASION_READING,
-    BINDING_AUTHORISATION,
 )
 
 
 __all__ = [
-    "ACCEPTED",
     "ARGUMENT_SHAPES",
     "ASK_FAMILIES",
     "BINDINGS",
@@ -365,47 +208,17 @@ __all__ = [
     "CAPABILITY_REPORT",
     "CAPABILITY_RUN",
     "CAPABILITY_SCHEDULE",
-    "CONSENT_ASK_ANSWERS",
-    "CONSENT_ASK_HEADER",
-    "CONSENT_ASK_NO",
-    "CONSENT_ASK_QUESTION",
-    "CONSENT_ASK_YES",
-    "CONSENT_GATED",
-    "CONSENT_NOTHING_YET",
-    "CONSENT_OUTCOMES",
-    "CONSENT_RELAY_CLOSE",
-    "CONSENT_RELAY_OPEN",
-    "COST_BY_READING",
-    "COST_BY_ROLE",
-    "COST_CEILING",
-    "COST_COMMITS",
-    "COST_LOCK",
-    "COST_MERGES",
-    "COST_MODEL",
-    "COST_MUTATES",
-    "COST_SENTENCES",
-    "COST_SOCKET",
-    "COST_SPEND",
-    "COST_TIMEOUT",
-    "COST_WORKTREES",
+    "CONSEQUENCE_BY_READING",
     "DOCUMENT_BY_CAPABILITY",
     "FAMILY_HARMLESS_CHOICE",
     "FAMILY_NOTHING_APPLIES",
     "FAMILY_OBJECT_UNCLEAR",
     "FAMILY_VERB_UNCLEAR",
-    "HEADLINE_COST",
-    "HEADLINE_DAEMON_COST",
     "OCCASION_CONTINUE",
     "OCCASION_NEW",
     "OCCASION_READINGS",
     "QUALIFIER_SHAPES",
     "READING_BY_TRIGGER",
-    "REFUSED_ALREADY_SPENT",
-    "REFUSED_NO_SUCH_OFFER",
-    "REFUSED_NO_WORDS",
-    "REFUSED_OFFER_UNREADABLE",
-    "REFUSED_WORKFLOW_MOVED",
-    "RUN_COST_FACTS",
     "SHAPE_CADENCE",
     "SHAPE_PLAN_DOCUMENT",
     "SHAPE_PLAN_GRAPH",

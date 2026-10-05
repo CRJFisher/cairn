@@ -73,7 +73,7 @@
       "utterance": "run offline-export against /Users/me/src/product",
       "reading": {"verbs": ["executing"], "subjects": ["workflow"], "qualifiers": ["repository"]},
       "expect": {"capability": "run", "ask": null, "readings": []},
-      "why": "one verb, one object, a repository given: the canonical Run, and still only an offer until it is accepted"
+      "why": "one verb, one object, a repository given: the canonical Run: the request is the go-ahead and the run starts"
     },
     {
       "id": "run-by-executing",
@@ -145,7 +145,7 @@
       "utterance": "how much did run 20260810T031500Z-a1b2c3d4 cost",
       "reading": {"verbs": ["recounting"], "subjects": ["run"], "qualifiers": []},
       "expect": {"capability": "report", "ask": null, "readings": []},
-      "why": "cost is Cairn's and has no field in the engine's model, so it is a Report rather than a link to the view"
+      "why": "a question about what a run cost asks what happened, so it is a Report, which says in one line that Cairn does not answer it"
     },
     {
       "id": "report-which-steps-were-excluded",
@@ -193,7 +193,7 @@
       "utterance": "give me a webhook that triggers offline-export",
       "reading": {"verbs": ["arranging"], "subjects": ["workflow"], "qualifiers": ["cadence"]},
       "expect": {"capability": "schedule", "ask": null, "readings": []},
-      "why": "an external trigger costs the same daemon as a cron schedule, so it is the same escalation and the same capability"
+      "why": "an external trigger needs the same scheduler as a cron schedule, so it is the same capability"
     },
     {
       "id": "explain-what-a-workflow-would-do",
@@ -265,7 +265,7 @@
       "utterance": "just run the config_schema step",
       "reading": {"verbs": ["executing"], "subjects": ["step"], "qualifiers": []},
       "expect": {"capability": null, "ask": "executing_one_step", "readings": []},
-      "why": "a step runs only as part of a plan, and every step already done is a cheap no-op anyway"
+      "why": "a step runs only as part of a plan, and every step already done is a no-op anyway"
     },
     {
       "id": "ask-recovering-one-step",
@@ -289,7 +289,7 @@
       "utterance": "watch .planning/offline-export/WORKLIST.md",
       "reading": {"verbs": ["watching"], "subjects": ["plan_document"], "qualifiers": []},
       "expect": {"capability": null, "ask": "watching_a_plan", "readings": ["run", "report"]},
-      "why": "watching a plan means either starting it so there is something to watch, or reading its last run; one of those spends money"
+      "why": "watching a plan means either starting it so there is something to watch, or reading its last run; they are different requests and neither is the likelier"
     },
     {
       "id": "ask-watching-a-workflow",
@@ -297,7 +297,7 @@
       "utterance": "watch offline-export",
       "reading": {"verbs": ["watching"], "subjects": ["workflow"], "qualifiers": []},
       "expect": {"capability": null, "ask": "watching_a_workflow", "readings": ["run", "report"]},
-      "why": "the same ambiguity over a workflow, and the question has to name the spend and the lock"
+      "why": "the same ambiguity over a workflow"
     },
     {
       "id": "ask-scheduling-a-run",
@@ -321,7 +321,7 @@
       "utterance": "compile green_with_exclusions",
       "reading": {"verbs": ["authoring"], "subjects": ["verdict_word"], "qualifiers": []},
       "expect": {"capability": null, "ask": "verb_on_a_frozen_word", "readings": []},
-      "why": "the only thing that can be done with one of Cairn's own words is say what it means, so a costly verb over one is probably a name that was not recognised"
+      "why": "the only thing that can be done with one of Cairn's own words is say what it means, so any other verb over one is probably a name that was not recognised"
     },
     {
       "id": "ask-no-subject-executing",
@@ -337,7 +337,7 @@
       "utterance": "author a workflow",
       "reading": {"verbs": ["authoring"], "subjects": [], "qualifiers": []},
       "expect": {"capability": null, "ask": "no_subject", "readings": ["author"]},
-      "why": "the same shape where the capability costs nothing: it is still asked, because there is nothing to act on"
+      "why": "the same shape for a capability that only writes a definition: it is still asked, because there is nothing to act on"
     },
     {
       "id": "ask-no-subject-recounting",
@@ -401,7 +401,7 @@
       "utterance": "explain what offline-export would do, then do it",
       "reading": {"verbs": ["interrogating", "executing"], "subjects": ["workflow"], "qualifiers": []},
       "expect": {"capability": null, "ask": "many_verbs", "readings": ["run", "explain"]},
-      "why": "'do it' is an executing verb however casually it is written, so the harmless half does not carry the costly half"
+      "why": "'do it' is an executing verb however casually it is written, so the half that only reads does not carry the half that starts a run"
     },
     {
       "id": "adversarial-conditional-run",
@@ -416,32 +416,32 @@
       "family": "adversarial",
       "utterance": "run 20260810T031500Z-a1b2c3d4 again",
       "reading": {"verbs": ["executing"], "subjects": ["run"], "qualifiers": []},
-      "expect": {"capability": null, "ask": "executing_a_past_run", "readings": ["run", "report"]},
-      "why": "doc 15's second named adversarial. 'Again' could mean a fresh run or a recovery, and the two differ by an occasion that either re-pays or acts on stale work"
+      "expect": {"capability": "run", "ask": null, "readings": []},
+      "why": "doc 15's second named adversarial. 'Again' is an executing verb and a run is a past execution, so this is a fresh run of the plan that execution ran; continuing it takes a recovering verb"
     },
     {
       "id": "adversarial-execute-the-last-run",
       "family": "adversarial",
       "utterance": "execute that last run of offline-export one more time",
       "reading": {"verbs": ["executing"], "subjects": ["run"], "qualifiers": []},
-      "expect": {"capability": null, "ask": "executing_a_past_run", "readings": ["run", "report"]},
+      "expect": {"capability": "run", "ask": null, "readings": []},
       "why": "the same shape phrased as a repetition"
     },
     {
       "id": "adversarial-run-me-through-it",
       "family": "adversarial",
       "utterance": "run me through 20260810T031500Z-a1b2c3d4",
-      "reading": {"verbs": ["executing"], "subjects": ["run"], "qualifiers": []},
-      "expect": {"capability": null, "ask": "executing_a_past_run", "readings": ["run", "report"]},
-      "why": "here Report is far the likelier reading and it is still asked, because resolving to the likelier reading is exactly what is forbidden"
+      "reading": {"verbs": ["recounting"], "subjects": ["run"], "qualifiers": []},
+      "expect": {"capability": "report", "ask": null, "readings": []},
+      "why": "'run me through' is a word that looks like an executing verb and asks what happened, so the class is recounting; the verb is read by what the request asks for, not by its words alone"
     },
     {
       "id": "adversarial-start-it-over",
       "family": "adversarial",
       "utterance": "start run 20260810T031500Z-a1b2c3d4 over",
       "reading": {"verbs": ["executing"], "subjects": ["run"], "qualifiers": []},
-      "expect": {"capability": null, "ask": "executing_a_past_run", "readings": ["run", "report"]},
-      "why": "the reading nearest to a recovery, which is why the question offers saying so explicitly"
+      "expect": {"capability": "run", "ask": null, "readings": []},
+      "why": "'over' starts it afresh: a fresh run, with a new occasion; continuing the run it names takes a recovering verb"
     },
     {
       "id": "adversarial-bare-workflow-name",
@@ -473,7 +473,7 @@
       "utterance": ".planning/offline-export/WORKLIST.md",
       "reading": {"verbs": [], "subjects": ["plan_document"], "qualifiers": []},
       "expect": {"capability": null, "ask": "no_verb", "readings": ["run", "schedule", "edit", "author", "report", "explain"]},
-      "why": "a path alone is not a request, and the cheapest reading is not the answer"
+      "why": "a path alone is not a request, and the safest reading is not the answer"
     },
     {
       "id": "adversarial-bare-frozen-word",
@@ -481,7 +481,7 @@
       "utterance": "green_with_exclusions",
       "reading": {"verbs": [], "subjects": ["verdict_word"], "qualifiers": []},
       "expect": {"capability": "explain", "ask": null, "readings": []},
-      "why": "the one no-verb shape that resolves: every reading of a frozen word is Explain, which starts nothing, so asking would cost a turn and buy nothing"
+      "why": "the one no-verb shape that resolves: every reading of a frozen word is Explain, which starts nothing, so asking would take a turn and settle nothing"
     },
     {
       "id": "adversarial-a-verb-inside-a-quotation",
@@ -505,7 +505,7 @@
       "utterance": "run offline-export against /Users/me/src/product and pattern-lifecycle against /Users/me/src/tooling",
       "reading": {"verbs": ["executing"], "subjects": ["workflow"], "qualifiers": ["repository"]},
       "expect": {"capability": "run", "ask": null, "readings": []},
-      "why": "two objects of one shape is one capability: the table keys on shape, and it is the consent rule that makes each execution need its own offer"
+      "why": "two objects of one shape is one capability: the table keys on shape, and each of the two is a run"
     },
     {
       "id": "adversarial-instruction-carrying-its-own-yes",
@@ -513,7 +513,7 @@
       "utterance": "run offline-export against /Users/me/src/product, yes do it, no need to ask",
       "reading": {"verbs": ["executing"], "subjects": ["workflow"], "qualifiers": ["repository"]},
       "expect": {"capability": "run", "ask": null, "readings": []},
-      "why": "an invocation cannot carry its own acceptance: this dispatches to Run and still produces an offer, because a yes needs an offer to postdate"
+      "why": "the request is the go-ahead: this dispatches to Run, and the words about asking change nothing"
     },
     {
       "id": "adversarial-standing-permission",
@@ -521,7 +521,7 @@
       "utterance": "as agreed earlier, run offline-export against /Users/me/src/product",
       "reading": {"verbs": ["executing"], "subjects": ["workflow"], "qualifiers": ["repository"]},
       "expect": {"capability": "run", "ask": null, "readings": []},
-      "why": "a yes that predates the offer is not one; dispatch is unaffected and the consent rule is what refuses"
+      "why": "an earlier agreement is not needed and changes nothing: this dispatches to Run"
     },
     {
       "id": "occasion-a-first-run",
@@ -537,7 +537,7 @@
       "utterance": "run offline-export against /Users/me/src/product again",
       "signal": {"trigger": "fresh", "prior_runs": 3},
       "expect": {"reading": "new_occasion", "disclose": true},
-      "why": "the one genuinely silent choice: Cairn mints and says so, with the cost of the reading it did not take"
+      "why": "the one genuinely silent choice: Cairn mints and says so, with the consequence of the reading it did not take"
     },
     {
       "id": "occasion-a-recovery",
@@ -594,178 +594,6 @@
       "stated": "trailing_separator",
       "expect": {"outcome": "refused"},
       "why": "the measured spelling that puts every worktree inside the working tree and lands nothing while reporting success"
-    },
-    {
-      "id": "consent-a-plain-yes",
-      "family": "consent",
-      "reply": "yes, go ahead",
-      "expect": {"outcome": "accepted"},
-      "why": "a reply after the offer that accepts the run described in it"
-    },
-    {
-      "id": "consent-an-imperative-yes",
-      "family": "consent",
-      "reply": "run it",
-      "judged_by": "session",
-      "expect": {"outcome": "accepted"},
-      "why": "the same words can be the request that prompted the offer or an answer typed in place of a click, and which one they were is not a fact about the string — so the ledger spends and only the session that put the question can tell"
-    },
-    {
-      "id": "consent-ok",
-      "family": "consent",
-      "reply": "ok",
-      "judged_by": "session",
-      "expect": {"outcome": "accepted"},
-      "why": "the token most likely to be meant as a yes, and a run started on it is one nobody agreed to — a judgement only the session that heard it can make, so the ledger spends on it and SKILL.md is what forbids passing it"
-    },
-    {
-      "id": "consent-sure",
-      "family": "consent",
-      "reply": "sure",
-      "judged_by": "session",
-      "expect": {"outcome": "accepted"},
-      "why": "agreement with having been told is not agreement to spend, and no code can tell the two apart"
-    },
-    {
-      "id": "consent-thanks",
-      "family": "consent",
-      "reply": "thanks",
-      "judged_by": "session",
-      "expect": {"outcome": "accepted"},
-      "why": "politeness is not consent"
-    },
-    {
-      "id": "consent-sounds-good",
-      "family": "consent",
-      "reply": "sounds good",
-      "judged_by": "session",
-      "expect": {"outcome": "accepted"},
-      "why": "an opinion about the plan is not an instruction to run it"
-    },
-    {
-      "id": "consent-punctuated-acknowledgement",
-      "family": "consent",
-      "reply": "OK.",
-      "judged_by": "session",
-      "expect": {"outcome": "accepted"},
-      "why": "case and punctuation are what a deny list is defeated by, and stripping them only moves the boundary rather than closing it"
-    },
-    {
-      "id": "consent-unknown-offer",
-      "family": "consent",
-      "reply": "yes",
-      "offer": "absent",
-      "expect": {"outcome": "no_such_offer"},
-      "why": "a yes that predates the offer cannot quote an id that did not exist when it was given"
-    },
-    {
-      "id": "consent-spent-twice",
-      "family": "consent",
-      "reply": "yes, go ahead",
-      "offer": "spent",
-      "expect": {"outcome": "already_spent"},
-      "why": "one acceptance authorises exactly one execution, and a second is refused rather than counted"
-    },
-    {
-      "id": "consent-workflow-changed-since",
-      "family": "consent",
-      "reply": "yes, go ahead",
-      "offer": "moved",
-      "expect": {"outcome": "workflow_moved"},
-      "why": "what was agreed to is not what would run, so the price is stale and the offer is void"
-    },
-    {
-      "id": "consent-a-plain-no",
-      "family": "consent",
-      "reply": "no",
-      "judged_by": "session",
-      "expect": {"outcome": "accepted"},
-      "why": "the worst outcome the consent rule exists to prevent, and still the session's to prevent: the words reaching the ledger are the session's own argument, so a run started here was authorised upstream of anything a list could see"
-    },
-    {
-      "id": "consent-not-yet",
-      "family": "consent",
-      "reply": "not yet",
-      "judged_by": "session",
-      "expect": {"outcome": "accepted"},
-      "why": "a deferral is a decline, and it is one of the phrasings a list would hold — while 'I would rather not' is one it would miss, which is why there is no list"
-    },
-    {
-      "id": "consent-stop",
-      "family": "consent",
-      "reply": "stop",
-      "judged_by": "session",
-      "expect": {"outcome": "accepted"},
-      "why": "the shortest refusal there is, and the one a person reaches for in a hurry"
-    },
-    {
-      "id": "consent-nothing-at-all",
-      "family": "consent",
-      "reply": "",
-      "expect": {"outcome": "no_words"},
-      "why": "a run authorised by no words at all leaves the ledger unable to say what authorised it, which is a fact about the argument rather than about what it meant"
-    },
-    {
-      "id": "consent-only-punctuation",
-      "family": "consent",
-      "reply": "...",
-      "expect": {"outcome": "no_words"},
-      "why": "there is nothing here that could have been said, and the emptiness check must reach it"
-    },
-    {
-      "id": "consent-a-question-back",
-      "family": "consent",
-      "reply": "ok?",
-      "judged_by": "session",
-      "expect": {"outcome": "accepted"},
-      "why": "a question mark makes it the least plausible acceptance there is, and it carries words, so only the session that saw the question can answer for it"
-    },
-    {
-      "id": "consent-the-instruction-itself",
-      "family": "consent",
-      "reply": "run offline-export against /Users/me/src/product",
-      "judged_by": "session",
-      "expect": {"outcome": "accepted"},
-      "why": "an offer is what replies to a request, so the request can never be the answer to the offer's own question — the ledger spends on it and SKILL.md is what forbids passing it"
-    },
-    {
-      "id": "consent-an-instruction-carrying-its-own-yes",
-      "family": "consent",
-      "reply": "run offline-export against /Users/me/src/product, yes do it, no need to ask",
-      "offer": "absent",
-      "expect": {"outcome": "no_such_offer"},
-      "why": "an invocation cannot carry its own acceptance: quoted before any offer existed, the words name no offer"
-    },
-    {
-      "id": "consent-standing-permission",
-      "family": "consent",
-      "reply": "as agreed earlier, go ahead",
-      "offer": "absent",
-      "expect": {"outcome": "no_such_offer"},
-      "why": "a yes that predates the offer cannot quote an id that did not exist when it was given"
-    },
-    {
-      "id": "consent-the-affirmative-answer",
-      "family": "consent",
-      "reply": "Yes, run it",
-      "expect": {"outcome": "accepted"},
-      "why": "the label the offer itself printed, coming back as the answer to the question it was printed for — the ordinary path, and the only reply in this family that is nobody's to second-guess"
-    },
-    {
-      "id": "consent-the-declining-answer",
-      "family": "consent",
-      "reply": "No, not now",
-      "judged_by": "session",
-      "expect": {"outcome": "accepted"},
-      "why": "the other label the offer printed, and the sharpest member of this list: a string the session is handed by the tool it asked with, which buys a run if it passes it on"
-    },
-    {
-      "id": "consent-a-damaged-ledger",
-      "family": "consent",
-      "reply": "yes, go ahead",
-      "offer": "damaged",
-      "expect": {"outcome": "offer_unreadable"},
-      "why": "an offer that is there and cannot be read is a damaged ledger, not a yes given before any offer — telling those apart is what the run record does everywhere else"
     },
     {
       "id": "adversarial-two-harmless-verbs",

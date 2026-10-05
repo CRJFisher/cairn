@@ -1,4 +1,4 @@
-"""What the installed skill costs to have, as the block the README publishes.
+"""What the installed skill puts in context, as the block the README publishes.
 
     python3 -m scripts.measure_surface            # print the block
     python3 -m scripts.measure_surface --check    # exit nonzero if the README disagrees
@@ -41,10 +41,10 @@ def main(argv: list[str] | None = None) -> int:
         print(composed)
         return 0
     if composed in README.read_text(encoding="utf-8"):
-        print(f"{README.name} carries the measured surface cost")
+        print(f"{README.name} carries the measured surface")
         return 0
     print(
-        f"{README.name} does not carry the measured surface cost. The block below is what "
+        f"{README.name} does not carry the measured surface. The block below is what "
         f"it should hold, under the heading {PUBLISHED_HEADING!r}:\n\n{composed}",
         file=sys.stderr,
     )

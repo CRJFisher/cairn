@@ -249,7 +249,7 @@ class GitInvocation(RepositoryCase):
     def test_ref_writes_wait_for_a_contended_lock_rather_than_failing(self) -> None:
         # An agent commits in its own worktree outside the write mutex, so a ref lock
         # collision is expected traffic rather than a fault. git gives up in 100ms by
-        # default, which inside a paid step is a spurious failure.
+        # default, which inside an agent step is a spurious failure.
         for setting in ("core.filesRefLockTimeout", "core.packedRefsTimeout"):
             self.assertEqual(
                 git(self.repository, ("config", "--get", setting)).stdout,
@@ -557,8 +557,6 @@ class SubcommandsTakeTheMutex(RepositoryCase):
                 "nonesuch",
                 "--prompt",
                 "make it so",
-                "--timeout",
-                "600",
             )
             try:
                 child.wait(timeout=30)
@@ -756,7 +754,7 @@ class RunLock(RepositoryCase):
         self.assertFalse(taking_is_allowed(record).reclaimable)
 
     def test_a_repository_that_will_not_answer_is_not_read_as_an_absent_lock(self) -> None:
-        # Failing open here would spend a whole agent budget in a repository another run
+        # Failing open here would run a whole agent session in a repository another run
         # may well own. Only "there is no repository here" is silence.
         self.acquire("holder")
         with patch(
@@ -766,7 +764,7 @@ class RunLock(RepositoryCase):
             refuse_lost_repository(self.repository, "displaced")
         self.assertEqual(caught.exception.cause, "git_failed")
 
-    def test_a_run_that_lost_the_repository_halts_before_it_spends(self) -> None:
+    def test_a_run_that_lost_the_repository_halts_before_it_starts_a_session(self) -> None:
         self.acquire("holder")
         with self.assertRaises(CairnError) as caught:
             refuse_lost_repository(self.repository, "displaced")
@@ -1421,7 +1419,7 @@ class WorktreeClassifier(unittest.TestCase):
 
     def test_a_foreign_worktree_outranks_every_other_reading(self) -> None:
         # Decided before anything that would move or delete: a directory belonging to
-        # another repository is the one case where being wrong costs someone else's work.
+        # another repository is the one case where being wrong loses someone else's work.
         self.assertEqual(
             classify(Facts(identity=FOREIGN, disk="dir", locked=True, in_progress="a merge")),
             FOREIGN,
@@ -1538,7 +1536,7 @@ class WorktreeConvergence(RepositoryCase):
 
     def test_a_merged_branch_left_behind_the_parent_moves_forward_to_it(self) -> None:
         # A fast-forward, never a reset: the branch is a proven ancestor, so the move
-        # cannot drop a commit, and git refuses it outright if it would cost an edit.
+        # cannot drop a commit, and git refuses it outright if it would lose an edit.
         self.setup()
         head = advance(self.repository, "moved.txt")
         result = self.setup()
@@ -1575,7 +1573,7 @@ class WorktreeConvergence(RepositoryCase):
         self,
     ) -> None:
         # What a killed rebase leaves. Recreating over it would take an agent's staged and
-        # uncommitted output with it, which convergence must never cost.
+        # uncommitted output with it, which convergence must never lose.
         self.setup()
         (self.worktree / "precious.txt").write_text("agent output\n", encoding="utf-8")
         git(self.worktree, ("add", "--all"))
@@ -1595,7 +1593,7 @@ class WorktreeConvergence(RepositoryCase):
         self.assertTrue((self.worktree / "precious.txt").exists())
 
     def test_a_clean_worktree_on_the_wrong_branch_is_moved_back_onto_it(self) -> None:
-        # Checking the branch out costs nothing and keeps the checkout; recreating would
+        # Checking the branch out keeps the checkout; recreating would
         # throw away a directory git could read perfectly well.
         self.setup()
         git(self.worktree, ("checkout", "--quiet", "--detach", "HEAD"))
@@ -1608,7 +1606,7 @@ class WorktreeConvergence(RepositoryCase):
 
     def test_a_worktree_whose_git_file_was_broken_is_repaired_not_recreated(self) -> None:
         # The registration still names it, so git can relink it without touching what is
-        # inside. Recreating would cost the untracked file for nothing.
+        # inside. Recreating would lose the untracked file for nothing.
         self.setup()
         (self.worktree / ".git").unlink()
         (self.worktree / "junk.txt").write_text("debris\n", encoding="utf-8")
@@ -1910,7 +1908,7 @@ class TheCommitCarriesOnlyTheStepsOwnWork(RepositoryCase):
         self.assertIn("own.txt", tree_state(self.repository) or ())
 
     def test_a_tree_git_will_not_answer_about_is_never_read_as_clean(self) -> None:
-        """Absent is not clean: a refusal that passed here would spend the offer against a
+        """Absent is not clean: a refusal that passed here would start a run against a
         repository whose uncommitted work nobody could establish."""
         with (
             patch("cairn.locks.tree_state", return_value=None),

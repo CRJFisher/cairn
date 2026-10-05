@@ -49,10 +49,8 @@ from cairn.merge import (
     verify_landed,
 )
 from cairn.plan.schema import (
-    MERGE_BUDGET_USD,
     MERGE_MODEL,
     MERGE_TIMEOUT,
-    MERGE_WORK_TIMEOUT,
     RESERVED_ID_PREFIXES,
     SUPPORT_TIMEOUT,
     normalise,
@@ -198,7 +196,7 @@ class TheChainTheTopologyEmits(unittest.TestCase):
         body = emitted(topology("fan-out"), "verify_merge_w2_1", graph)["run"]
         self.assertIn("merge verify --merge merge_w2_1", body)
 
-    def test_a_slot_is_bounded_by_the_session_it_may_have_to_pay_for(self) -> None:
+    def test_a_slot_is_bounded_by_the_session_it_may_have_to_open(self) -> None:
         """At a support step's bound the engine would kill a resolution mid-merge."""
         graph = fixture("fan-out")
         fan = topology("fan-out")
@@ -206,21 +204,20 @@ class TheChainTheTopologyEmits(unittest.TestCase):
         self.assertGreater(MERGE_TIMEOUT, SUPPORT_TIMEOUT)
         self.assertEqual(emitted(fan, "verify_merge_w2_1", graph)["timeout_sec"], SUPPORT_TIMEOUT)
 
-    def test_a_slot_body_discloses_every_resolver_bound(self) -> None:
+    def test_a_slot_body_names_the_resolver_model_and_no_bound(self) -> None:
         graph = fixture("fan-out")
         body = emitted(topology("fan-out"), "merge_w2_1", graph)["run"]
         self.assertIn(f"--model {MERGE_MODEL}", body)
-        self.assertIn(f"--max-budget-usd {MERGE_BUDGET_USD}", body)
-        self.assertIn(f"--timeout {MERGE_WORK_TIMEOUT}", body)
+        self.assertNotIn("--timeout", body)
 
-    def test_the_topology_prices_a_slot_as_the_session_too(self) -> None:
+    def test_the_topology_bounds_a_slot_as_the_session_too(self) -> None:
         """The run's own maximum and the lock lease derive from the node, not the body."""
         fan = topology("fan-out")
         self.assertEqual(by_name(fan, "merge_w2_1")["max_seconds"], MERGE_TIMEOUT)
         self.assertEqual(by_name(fan, "verify_merge_w2_1")["max_seconds"], SUPPORT_TIMEOUT)
 
     def test_a_wave_of_merges_reaches_the_runs_maximum_duration(self) -> None:
-        """A lease derived from a merge priced as git would come free mid-resolution."""
+        """A lease derived from a merge bounded as git would come free mid-resolution."""
         self.assertGreaterEqual(topology("fan-out")["max_seconds"], MERGE_TIMEOUT * 2)
 
     def test_a_slot_is_never_retried(self) -> None:
@@ -524,7 +521,6 @@ class RepositoryCase(unittest.TestCase):
             candidates=candidates,
             provider="stub",
             model=kwargs.pop("model", None),
-            max_budget_usd=kwargs.pop("max_budget_usd", None),
             context=self.context,
             run_agent=kwargs.pop("run_agent", self.refusing_agent),
         )
@@ -537,7 +533,7 @@ class RepositoryCase(unittest.TestCase):
         )
 
     def recording_agent(self, *args: Any, **kwargs: Any) -> CommandResult:
-        """A resolver that keeps the argv slots the model and the ceiling travel in."""
+        """A resolver that keeps the argv slots the model travels in."""
         self.passed = args
         self.passed_keywords = kwargs
         return self.resolving_agent(*args, **kwargs)
@@ -551,15 +547,15 @@ class RepositoryCase(unittest.TestCase):
         return CommandResult(EXIT_OK, "done", "resolved", [], False, None, {})
 
 
-class TheCallersCeilingReachesTheResolvingSession(RepositoryCase):
-    """`merge land` takes a model and a ceiling, and they are the only bound on that session.
+class TheCallersModelReachesTheResolvingSession(RepositoryCase):
+    """`merge land` takes a model, and it is what names who resolves the conflict.
 
-    Until this existed, `run_merge` could accept both and pass `None, None` through to the
-    provider with the whole free suite still green — so every production merge session ran
-    unbounded on whatever the CLI defaulted to, which is what the flags were added to stop.
+    Without this, `run_merge` could accept a model and pass `None` through to the provider
+    with the whole free suite still green, so every production merge session would run on
+    whatever the environment chose and the record could not say which model did the work.
     """
 
-    def test_the_model_and_the_ceiling_arrive_in_the_provider_call(self) -> None:
+    def test_the_model_arrives_in_the_provider_call(self) -> None:
         self.branch("step/a", "shared.txt", "one\nfrom-a\nthree\n")
         self.branch("step/b", "shared.txt", "one\nfrom-b\nthree\n")
         self.land(["step/a", "step/b"], slot=1, run_agent=self.recording_agent)
@@ -567,23 +563,16 @@ class TheCallersCeilingReachesTheResolvingSession(RepositoryCase):
             ["step/a", "step/b"],
             slot=2,
             model="claude-haiku-4-5-20251001",
-            max_budget_usd=0.25,
             run_agent=self.recording_agent,
         )
         self.assertEqual(self.passed[4], "claude-haiku-4-5-20251001")
-        self.assertEqual(self.passed[5], 0.25)
 
-    def test_a_caller_naming_neither_gets_the_merge_roles_exact_bounds(self) -> None:
+    def test_a_caller_naming_none_gets_the_merge_roles_model(self) -> None:
         self.branch("step/a", "shared.txt", "one\nfrom-a\nthree\n")
         self.branch("step/b", "shared.txt", "one\nfrom-b\nthree\n")
         self.land(["step/a", "step/b"], slot=1, run_agent=self.recording_agent)
         self.land(["step/a", "step/b"], slot=2, run_agent=self.recording_agent)
         self.assertEqual(self.passed[4], MERGE_MODEL)
-        self.assertEqual(self.passed[5], MERGE_BUDGET_USD)
-        self.assertGreater(self.passed_keywords["deadline_seconds"], 0)
-        self.assertLessEqual(
-            self.passed_keywords["deadline_seconds"], MERGE_WORK_TIMEOUT
-        )
 
 
 class ARealConflictLandsAndIsProven(RepositoryCase):
@@ -651,7 +640,6 @@ class TheHaltPathConverges(RepositoryCase):
                 "timed_out",
                 {
                     "session_id": "session-1",
-                    "total_cost_usd": 0.25,
                     "timed_out": True,
                 },
             )
@@ -663,15 +651,12 @@ class TheHaltPathConverges(RepositoryCase):
             result.detail["resolution"],
             {
                 "model": MERGE_MODEL,
-                "max_budget_usd": MERGE_BUDGET_USD,
-                "timeout_seconds": MERGE_WORK_TIMEOUT,
                 "session_id": "session-1",
-                "total_cost_usd": 0.25,
                 "timed_out": True,
             },
         )
 
-    def test_a_second_attempt_over_the_preserved_merge_refuses_before_paying(self) -> None:
+    def test_a_second_attempt_over_the_preserved_merge_refuses_before_opening_a_session(self) -> None:
         self.land(["step/a", "step/b"], slot=2)
         self.calls.clear()
         with self.assertRaises(CairnError) as raised:
@@ -998,7 +983,7 @@ class TheMergeRefusesWhatItCannotLandHonestly(RepositoryCase):
         git(self.repository, ("checkout", "--quiet", "main"))
         result = self.land(["step/a"])
         self.assertEqual(result.cause, "reported_failure", "it was refused, not resolved")
-        self.assertEqual(len(self.calls), 1, "the resolution was offered to a session")
+        self.assertEqual(len(self.calls), 1, "the resolution was handed to a session")
 
     def test_a_branch_that_renames_a_file_claims_both_of_its_names(self) -> None:
         """git reports only a rename's destination, and the source would look unowned."""
@@ -1103,8 +1088,8 @@ class TheEngineStopsAChainThatHalts(RepositoryCase):
 
         No test here reaches a resolving agent. A conflict is handed to a provider that
         does not resolve, because the routing under test is what the engine does with a
-        slot that failed — and a real session would make the assertion cost money and
-        depend on what a model decided that day.
+        slot that failed — and a real session would make the assertion depend on what a
+        model decided that day.
         """
         fan = topology("fan-out")
         graph = fixture("fan-out")

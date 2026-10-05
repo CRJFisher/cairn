@@ -58,21 +58,21 @@ For each unit of work the plan names:
 - **`tools`** is a deny list, set only where the document gives a concrete deny pattern.
   A positive allow list is not inverted into denies. A step the document says nothing
   about keeps `null`.
-- **`timeout`**, **`verify_timeout`**, **`max_budget_usd`** and **`model`** are the step's
-  bounds, and the document is their only lever: set each exactly where the document states
-  it — "at most fifteen minutes" is a timeout of 900, "the suite takes twenty minutes" is a
-  `verify_timeout` of 1200, "spend at most eight dollars on it" is a ceiling
-  of 8.0, "pin it to the opus model" is a model of `opus` — and leave it out everywhere
-  else, so the kind's default applies. Raising a workflow's timeouts, ceilings or models
-  is therefore an edit to the plan document followed by re-authoring, not an edit to the
-  generated file. A timeout that differs from the kind's default is a warning on the parse
-  report, naming the step and the bound: unlike an edge, a bound carries no quotation of
-  the words that justify it, so the report says the derivation supplied it and the person
-  confirming the parse checks the document holds the sentence.
+- **`verify_timeout`** and **`model`** are the step's bounds, and the document is their only
+  lever: set each exactly where the document states it — "the suite takes twenty minutes"
+  is a `verify_timeout` of 1200, "pin it to the opus model" is a model of `opus` — and leave
+  it out everywhere else, so the default applies. Raising a workflow's assertion timeouts or
+  models is therefore an edit to the plan document followed by re-authoring, not an edit to
+  the generated file. A `verify_timeout` that differs from the default is a warning on the
+  parse report, naming the step and the bound: unlike an edge, a bound carries no quotation
+  of the words that justify it, so the report says the derivation supplied it and the person
+  confirming the parse checks the document holds the sentence. A limit on money or on how
+  long a session may run sets no field: the sentence stays in the step's task and nothing is
+  derived from it.
 
 - **`remediate`** is `true` only where the document asks for a failing check to be fixed
   rather than stopped on ("if its tests fail, have it fix them"), and only on an agent step
-  with an assertion. It buys one more paid session per step, so a document that says nothing
+  with an assertion. It adds one more session per step, so a document that says nothing
   leaves it out.
 
 ### State every task as an end state

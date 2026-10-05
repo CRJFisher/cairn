@@ -66,7 +66,7 @@ def resolve(
     """Record one answer to one question, and make the graph say what it decided.
 
     The reading an accept adopts is the question's own proposal, never an argument, so no
-    invocation can accept something other than what was offered.
+    invocation can accept something other than what was proposed.
     """
     if kind == MISSING_VERIFY:
         raise ResolutionError(
@@ -169,7 +169,8 @@ def render(questions: list[Question], graph_path: str = "<graph>") -> str:
                 )
             elif outcome == "edited":
                 # An edit restates a step's task, so a question about the plan as a whole
-                # has no edit to offer — printing one would hand over a line `resolve` refuses.
+                # has no edit to propose — printing one would hand over a line `resolve`
+                # refuses.
                 if question["step"] is None:
                     continue
                 lines.append("Restate the step's task with:")

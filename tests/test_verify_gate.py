@@ -606,7 +606,7 @@ class ARemedyIsOneSessionOverAnAssertionThatRanAndFailed(unittest.TestCase):
                 "step_id": "remedy_a", "run_id": "run-1", "status": status,
                 "summary": "fixed the parser", "needs_user_decision": False,
                 "follow_up_work": [], "cause": None, "duration": 1.0,
-                "working_directory": str(self.root), "detail": {"total_cost_usd": 0.5},
+                "working_directory": str(self.root), "detail": {},
             },
         )
 
@@ -1255,11 +1255,11 @@ class AnAnswerAndItsCommandSayTheSameThing(unittest.TestCase):
 
 
 class TheMissingVerifyConversation(unittest.TestCase):
-    def test_the_offer_is_the_derivations_own_declaration_on_the_graph(self) -> None:
+    def test_the_proposal_is_the_derivations_own_declaration_on_the_graph(self) -> None:
         """`propose` carries the reading the derivation recorded; it composes nothing.
 
-        The graph's `missing_verify` question is the only source of an offer, so what the
-        worksheet shows and what `answer` records cannot disagree about what was offered.
+        The graph's `missing_verify` question is the only source of a proposal, so what the
+        worksheet shows and what `answer` records cannot disagree about what was proposed.
         """
         for name in REAL_PLANS:
             graph = fixture(name)
@@ -1272,16 +1272,16 @@ class TheMissingVerifyConversation(unittest.TestCase):
             self.assertEqual({p["step"] for p in proposals}, set(declared))
             for proposal in proposals:
                 with self.subTest(fixture=name, step=proposal["step"]):
-                    offered, acceptance = declared[proposal["step"]]
-                    self.assertEqual(proposal["proposed"], offered)
+                    proposed, acceptance = declared[proposal["step"]]
+                    self.assertEqual(proposal["proposed"], proposed)
                     self.assertEqual(proposal["acceptance"], acceptance)
 
-    def test_a_step_the_derivation_offered_nothing_for_gets_no_offer(self) -> None:
+    def test_a_step_the_derivation_proposed_nothing_for_gets_no_proposal(self) -> None:
         for proposal in propose(fixture("no-verify")):
             self.assertIsNone(proposal["proposed"])
 
     def test_proposing_never_writes_a_command_into_a_graph(self) -> None:
-        """A proposal is an offer. Only an answer is a decision, and only `answer` writes."""
+        """A proposal is not a decision. Only an answer is one, and only `answer` writes."""
         graph = fixture("worktree-hydration")
         before = json.dumps(graph, sort_keys=True)
         propose(graph)
@@ -1294,17 +1294,17 @@ class TheMissingVerifyConversation(unittest.TestCase):
             self.assertIn(step["id"], text)
             self.assertIn(step["task"][:40], text)
 
-    def test_a_step_with_nothing_to_offer_says_so_and_still_asks(self) -> None:
+    def test_a_step_with_nothing_proposed_says_so_and_still_asks(self) -> None:
         text = render(propose(fixture("no-verify")))
-        self.assertIn("The derivation offered nothing", text)
+        self.assertIn("The derivation proposed nothing", text)
         self.assertIn("--decline", text)
 
     def test_accepting_editing_and_declining_are_counted_apart(self) -> None:
         graph = fixture("worktree-hydration")
-        offers = {p["step"]: p["proposed"] for p in propose(graph)}
-        accepted = next(step for step, offer in offers.items() if offer)
-        declined = next(step for step in offers if step != accepted)
-        answer(graph, accepted, command=cast(str, offers[accepted]), reason=None)
+        proposed = {p["step"]: p["proposed"] for p in propose(graph)}
+        accepted = next(step for step, command in proposed.items() if command)
+        declined = next(step for step in proposed if step != accepted)
+        answer(graph, accepted, command=cast(str, proposed[accepted]), reason=None)
         answer(graph, declined, command=None, reason="prose only")
         counts = tally(graph)
         self.assertEqual(counts["accepted"], 1)
@@ -1312,7 +1312,7 @@ class TheMissingVerifyConversation(unittest.TestCase):
         self.assertEqual(counts["edited"], 0)
         self.assertEqual(counts["unasserted"], 3)
 
-    def test_a_command_written_where_nothing_was_offered_edited_no_proposal(self) -> None:
+    def test_a_command_written_where_nothing_was_proposed_edited_no_proposal(self) -> None:
         """Counting it as an edit would say the proposals are carrying weight they are not."""
         graph = fixture("no-verify")
         step_id = graph["steps"][0]["id"]
@@ -1348,15 +1348,15 @@ class TheMissingVerifyConversation(unittest.TestCase):
     def test_the_worksheet_prints_an_invocation_that_records_the_answer(self) -> None:
         """A worksheet whose instruction has to be corrected before it works records nothing.
 
-        No line restates the offer: it lives on the graph's own question, and `answer`
+        No line restates the proposal: it lives on the graph's own question, and `answer`
         records it from there, so no printed invocation can drop or misquote it.
         """
         text = render(propose(fixture("worktree-hydration")), "graph.json")
         self.assertIn("--out graph.json", text)
         self.assertNotIn("--proposed", text)
-        offers = [p for p in propose(fixture("worktree-hydration")) if p["proposed"]]
-        self.assertTrue(offers, "no step in this plan carries an offer to answer")
-        for proposal in offers:
+        proposals = [p for p in propose(fixture("worktree-hydration")) if p["proposed"]]
+        self.assertTrue(proposals, "no step in this plan carries a proposal to answer")
+        for proposal in proposals:
             answers = [
                 line
                 for line in render([proposal], "graph.json").splitlines()
@@ -1364,16 +1364,16 @@ class TheMissingVerifyConversation(unittest.TestCase):
             ]
             self.assertEqual(len(answers), 2, proposal["step"])
 
-    def test_an_answer_that_differs_from_the_offer_is_an_edit(self) -> None:
+    def test_an_answer_that_differs_from_the_proposal_is_an_edit(self) -> None:
         graph = fixture("worktree-hydration")
-        offered = next(p for p in propose(graph) if p["proposed"])
-        answer(graph, offered["step"], command="test -e something-else", reason=None)
+        first = next(p for p in propose(graph) if p["proposed"])
+        answer(graph, first["step"], command="test -e something-else", reason=None)
         assertion = next(
-            step for step in graph["steps"] if step["id"] == offered["step"]
+            step for step in graph["steps"] if step["id"] == first["step"]
         )["assertion"]
         assert assertion is not None
         self.assertEqual(assertion["outcome"], "edited")
-        self.assertEqual(assertion["proposed"], offered["proposed"])
+        self.assertEqual(assertion["proposed"], first["proposed"])
 
     def test_an_answer_for_a_step_that_is_not_there_is_refused(self) -> None:
         with self.assertRaises(AnswerError):
@@ -1393,7 +1393,7 @@ class TheMissingVerifyConversation(unittest.TestCase):
         directory = Path(tempfile.mkdtemp()) / "two words"
         directory.mkdir()
         self.addCleanup(shutil.rmtree, directory.parent)
-        offers = {p["step"]: p["proposed"] for p in propose(fixture("worktree-hydration"))}
+        proposed = {p["step"]: p["proposed"] for p in propose(fixture("worktree-hydration"))}
 
         for form in ("--command", "--decline"):
             graph_path = directory / f"{form.strip('-')}.json"
@@ -1414,15 +1414,15 @@ class TheMissingVerifyConversation(unittest.TestCase):
             for step in answered["steps"]:
                 assertion = step["assertion"]
                 assert assertion is not None
-                # The offer is recomputed from the unanswered graph, so a printed line
+                # The proposal is recomputed from the unanswered graph, so a printed line
                 # that dropped it would be caught rather than agreed with.
-                self.assertEqual(assertion["proposed"], offers[step["id"]], step["id"])
+                self.assertEqual(assertion["proposed"], proposed[step["id"]], step["id"])
                 if form == "--decline":
                     self.assertTrue(is_unverified(step), step["id"])
                 else:
                     self.assertEqual(
                         assertion["outcome"],
-                        "accepted" if offers[step["id"]] else "authored",
+                        "accepted" if proposed[step["id"]] else "authored",
                         step["id"],
                     )
 
@@ -1460,7 +1460,7 @@ class TheMissingVerifyConversation(unittest.TestCase):
 
     def test_the_answers_the_two_real_plans_received_are_recorded(self) -> None:
         counts = {"accepted": 0, "edited": 0, "authored": 0, "declined": 0}
-        offered = 0
+        counted = 0
         for name in REAL_PLANS:
             graph = normalise(
                 json.loads((FIXTURES / name / "answered.json").read_text(encoding="utf-8"))
@@ -1468,18 +1468,18 @@ class TheMissingVerifyConversation(unittest.TestCase):
             recorded = tally(graph)
             for key in counts:
                 counts[key] += recorded[cast(Any, key)]
-            # What the extraction rule actually offered, recomputed from the unanswered
+            # What the extraction rule actually proposed, recomputed from the unanswered
             # graph, so the recorded answers cannot drift from the rule that drew them.
             proposals = {p["step"]: p["proposed"] for p in propose(fixture(name))}
-            offered += sum(1 for value in proposals.values() if value is not None)
+            counted += sum(1 for value in proposals.values() if value is not None)
             for step in graph["steps"]:
                 assertion = step["assertion"]
                 assert assertion is not None
                 self.assertEqual(assertion["proposed"], proposals[step["id"]], step["id"])
         self.assertEqual(sum(counts.values()), 8, "every step of both plans was answered")
-        self.assertEqual(counts["accepted"] + counts["edited"], offered)
+        self.assertEqual(counts["accepted"] + counts["edited"], counted)
         document = GATE_DOC.read_text(encoding="utf-8")
-        self.assertIn(f"{offered} proposals offered", document)
+        self.assertIn(f"{counted} proposals offered", document)
         for outcome, count in counts.items():
             self.assertIn(f"{outcome} {count}", document)
 
@@ -1863,54 +1863,6 @@ class TheEngineRoutesFailureByPosition(unittest.TestCase):
         self.assertEqual(first["detail"][SOURCE_KEY], ASSERTION_EXECUTED)
         self.assertEqual(second["detail"][DECISION_KEY], DECISION_SHARED)
         self.assertEqual(second["detail"][BACKED_BY_KEY], "a")
-
-    def test_the_wrapper_stops_a_session_at_its_own_bound_and_its_report_survives(self) -> None:
-        """[22 B] against the engine: a provider that never reports is stopped by the
-        wrapper at the step's own bound, resumed once for its account, and its report
-        reaches the run directory — before the engine's bound, which lands the grace later."""
-        binaries = self.engine / "bin"
-        binaries.mkdir()
-        provider = binaries / "claude"
-        provider.write_text(
-            "#!/bin/sh\n"
-            "session=''\n"
-            "resumed=no\n"
-            "while [ $# -gt 0 ]; do\n"
-            "  case \"$1\" in\n"
-            "    --session-id) session=\"$2\"; shift;;\n"
-            "    --resume) session=\"$2\"; resumed=yes; shift;;\n"
-            "  esac\n"
-            "  shift\n"
-            "done\n"
-            "cat > /dev/null\n"
-            "if [ \"$resumed\" = yes ]; then\n"
-            "  printf '%s\\n' \"{\\\"type\\\":\\\"result\\\",\\\"subtype\\\":\\\"success\\\","
-            "\\\"session_id\\\":\\\"$session\\\",\\\"total_cost_usd\\\":0.01,\\\"num_turns\\\":1,"
-            "\\\"permission_denials\\\":[],\\\"structured_output\\\":{\\\"status\\\":\\\"done\\\","
-            "\\\"summary\\\":\\\"reported after the bound\\\",\\\"follow_up_work\\\":[],"
-            "\\\"needs_user_decision\\\":false}}\"\n"
-            "else\n"
-            "  sleep 120\n"
-            "fi\n",
-            encoding="utf-8",
-        )
-        provider.chmod(0o755)
-        step = one_step(step_id="a", kind="agent.claude", verify="test -d .")
-        step["timeout"] = 3
-        nodes = self.lower([step], CHAIN)
-        with patch.dict(os.environ, {"PATH": f"{binaries}{os.pathsep}{os.environ.get('PATH', '')}"}):
-            completed = self.run_dag(nodes)
-        statuses = self.statuses(completed)
-        self.assertEqual(statuses[work_name("a")], "succeeded", completed.stdout)
-        self.assertNotIn("Step execution timed out", completed.stdout + completed.stderr)
-        written: Any = json.loads(
-            (reports_of(self.root, ENGINE_RUN_ID) / f"{work_name('a')}.json").read_text()
-        )
-        self.assertEqual(written["status"], "done")
-        self.assertIs(written["detail"]["timed_out"], True)
-        self.assertEqual(written["detail"]["timeout_seconds"], 3)
-        self.assertTrue(written["detail"]["session_id"])
-        self.assertEqual(statuses[mark_name("a")], "succeeded", "the gate opened on the resumed account")
 
     def test_a_marker_no_ops_assertion_still_runs(self) -> None:
         """The recovery guarantee, against the engine: a step already done is skipped by

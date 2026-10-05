@@ -1,14 +1,15 @@
-"""What the installed skill costs to have, measured rather than asserted.
+"""How much context the installed skill occupies, measured rather than asserted.
 
-Prospective users see a skill's context cost before they commit (D6), so the cost is a
-published number and this is the one thing that computes it.
+Prospective users see a skill's footprint before they commit (D6), so it is a published
+number and this is the one thing that computes it.
 
-**A session that never names Cairn pays nothing.** `disable-model-invocation: true` keeps the
-description out of every session's context, so nothing here is resident and the first thing
-charged is charged to someone who asked. Three tiers, because "the installed context cost" is
-not one number and publishing one would be the same sin as a plausible default:
+**A session that never names Cairn loads nothing.** `disable-model-invocation: true` keeps
+the description out of every session's context, so nothing here is resident and the first
+thing loaded is loaded for someone who asked. Three tiers, because "the installed context
+footprint" is not one number and publishing one would be the same sin as a plausible
+default:
 
-| Tier              | Paid                                                            |
+| Tier              | Read                                                            |
 | ----------------- | ---------------------------------------------------------------- |
 | `description`     | when Cairn is named — the frontmatter's one field               |
 | `on_trigger`      | when Cairn is named — the whole of `SKILL.md`                    |
@@ -27,44 +28,27 @@ from typing import NamedTuple
 SKILL_FILE = "SKILL.md"
 CAPABILITIES_DIRECTORY = "capabilities"
 
-# Named so a reader can price the estimate themselves rather than trusting it. Four
+# Named so a reader can check the estimate themselves rather than trusting it. Four
 # characters per token is the usual English approximation; the point of publishing it is
 # that nobody mistakes the figure for a tokenizer's answer.
 CHARACTERS_PER_TOKEN = 4
 
-# A ratchet rather than an aspiration: a budget nothing enforces is a number that only ever
+# A ratchet rather than an aspiration: a limit nothing enforces is a number that only ever
 # goes up. Moving either of these is a decision to make out loud, and the reason belongs
 # here beside the number.
 #
 # The description is what tells a person what `/cairn` is for, in the moment they have
 # already asked for it, so it is held to a sentence and a half.
-DESCRIPTION_CHARACTER_BUDGET = 600
-# The trigger budget is a third of that again above the lean prose, because the dispatch
-# table is 48 aligned cells and its padding is not slack — it is the one artifact a reader
-# has to apply exactly, and a table nobody can scan is worse than a longer file.
-#
-# Moved to 13,500 from 13,000 for the ask list's own precision, which is worth about 140
-# tokens a session. A paid sweep found three of its rules licensing the misread they exist to
-# prevent: `many_verbs` said to ask *which comes first*, which a sentence stating its order
-# has already answered; the same-cell exception read as covering verb classes; and the
-# `recovering` class told a reader to take a named step as its run, which is the cell
-# `dispatch.py` declares an ask. Nine sessions in that sweep started a run or a schedule
-# nobody authorised. The words that close those gaps are the cost of the gaps being closed,
-# and reclaiming the space by cutting other rules would have changed two things at once in a
-# file whose only real test is a sweep that takes three hours.
-#
-# Moved to 13,650 from 13,500 for two sentences paid sweeps showed were missing, not implied:
-# `no_subject` never lets a lone candidate in the world supply a missing subject — every
-# measured miss on that shape answered over the only run there was — and a definition that
-# exists for a named workflow makes a differing repository the encoded-or-re-author question,
-# which the author-where-none-exists road was answering unasked in four of five draws. The
-# 168 characters they cost were not reclaimable from the two rules they extend without
-# cutting sentences other cases hold green, which is the same two-changes-at-once trade
-# refused above.
-ON_TRIGGER_CHARACTER_BUDGET = 13_650
+DESCRIPTION_CHARACTER_LIMIT = 600
+# The trigger limit sits a little above the lean prose, because the dispatch table is 48
+# aligned cells and its padding is not slack — it is the one artifact a reader has to apply
+# exactly, and a table nobody can scan is worse than a longer file. It moves down when the
+# file does, and up only for a sentence a sweep over real sessions showed was missing rather
+# than implied, with the sweep named here.
+ON_TRIGGER_CHARACTER_LIMIT = 11_200
 
 
-class Cost(NamedTuple):
+class Size(NamedTuple):
     characters: int
     lines: int
 
@@ -74,9 +58,9 @@ class Cost(NamedTuple):
 
 
 class Surface(NamedTuple):
-    described: Cost
-    on_trigger: Cost
-    on_capability: Cost
+    described: Size
+    on_trigger: Size
+    on_capability: Size
     heaviest_capability: str
 
 
@@ -106,12 +90,12 @@ def description(skill: Path) -> str:
     raise ValueError(f"{skill} declares no description")
 
 
-def _cost(text: str) -> Cost:
-    return Cost(characters=len(text), lines=len(text.splitlines()))
+def _size(text: str) -> Size:
+    return Size(characters=len(text), lines=len(text.splitlines()))
 
 
 def measure(root: Path) -> Surface:
-    """The installed surface's cost, recomputed from the files as they are now.
+    """The installed surface's size, recomputed from the files as they are now.
 
     Never a recorded constant. The figure the README publishes is compared against this on
     every test run, so editing `SKILL.md` and forgetting the README turns the suite red —
@@ -123,14 +107,14 @@ def measure(root: Path) -> Surface:
         raise ValueError(f"{root / CAPABILITIES_DIRECTORY} holds no capability document")
     heaviest = max(documents, key=lambda path: len(path.read_text(encoding="utf-8")))
     return Surface(
-        described=_cost(description(skill)),
-        on_trigger=_cost(skill.read_text(encoding="utf-8")),
-        on_capability=_cost(heaviest.read_text(encoding="utf-8")),
+        described=_size(description(skill)),
+        on_trigger=_size(skill.read_text(encoding="utf-8")),
+        on_capability=_size(heaviest.read_text(encoding="utf-8")),
         heaviest_capability=heaviest.name,
     )
 
 
-PUBLISHED_HEADING = "## What it costs to have installed"
+PUBLISHED_HEADING = "## What is read when it is installed"
 
 
 def published(surface: Surface) -> str:
@@ -141,7 +125,7 @@ def published(surface: Surface) -> str:
     the formatter would add back is padding that turns the oracle red over nothing.
     """
     rows = [
-        ["Paid", "What", "Characters", "Lines", "Tokens (est.)"],
+        ["Read", "What", "Characters", "Lines", "Tokens (est.)"],
         [
             "when Cairn is named",
             "the skill's description",
@@ -205,11 +189,11 @@ def _aligned(rows: list[list[str]], *, right_aligned: tuple[int, ...]) -> list[s
 __all__ = [
     "CAPABILITIES_DIRECTORY",
     "CHARACTERS_PER_TOKEN",
-    "DESCRIPTION_CHARACTER_BUDGET",
-    "ON_TRIGGER_CHARACTER_BUDGET",
+    "DESCRIPTION_CHARACTER_LIMIT",
+    "ON_TRIGGER_CHARACTER_LIMIT",
     "PUBLISHED_HEADING",
     "SKILL_FILE",
-    "Cost",
+    "Size",
     "Surface",
     "description",
     "measure",

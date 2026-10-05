@@ -2,7 +2,7 @@
 
 Every DAG on the machine inherits this file, and the engine ships it with DAG-level retry
 active — which would re-execute every failed run of the last day, Cairn's or not, and for
-Cairn a failed run is a paid agent session that mutated a repository. So the policy is
+Cairn a failed run is an agent session that mutated a repository. So the policy is
 checked before any run rather than assumed, and written at acquisition.
 
 Two properties matter more than convenience here, because the file is the user's and Cairn
@@ -64,7 +64,7 @@ def base_config_path(environ: Mapping[str, str] | None = None) -> Path:
     ([enginehome.py]), and the asymmetry is deliberate. This directory is
     `os.UserConfigDir` on every platform the engine supports, so the arithmetic is right
     here where it is wrong for the data directory. And asking the binary would put a
-    subprocess in front of the one check that must pass before a run's first spend — a
+    subprocess in front of the one check that must pass before a run's first session — a
     check on a file that **invoking the engine creates**, carrying an active retry policy.
     Reading where this file is must not arm the hazard the reader is about to judge.
     """
@@ -205,7 +205,7 @@ def read_base_scalar(path: Path, key: str) -> str | None:
 
 
 # The engine ships this armed: a scheduler restarting after downtime executes every cron
-# slot missed inside the window, up to a thousand of them, and for Cairn each is a paid
+# slot missed inside the window, up to a thousand of them, and for Cairn each is an
 # agent session. Measured against Dagu 2.11.0, the empty string is the only spelling that
 # turns it off — a zero duration is refused as "duration must be positive" — and the
 # engine's own schema states that an omitted window replays nothing.
@@ -229,7 +229,7 @@ def assert_catchup_disabled(path: Path) -> None:
     raise CairnError(
         "base_catchup_enabled",
         f"{path} declares {CATCHUP_KEY}: {window!r}, so a scheduler starting after "
-        "downtime replays every cron slot missed inside that window — for Cairn, a paid "
+        "downtime replays every cron slot missed inside that window — for Cairn, an "
         f"agent session each. Run `{DISABLE_COMMAND}`, which writes the empty window that "
         "turns it off",
         detail={"path": str(path), CATCHUP_KEY: window},
@@ -247,7 +247,7 @@ def assert_dag_retry_disabled(path: Path) -> None:
         raise CairnError(
             "base_retry_enabled",
             f"{path} does not exist. The engine creates it on its next invocation with "
-            f"DAG-level retry enabled, which would re-execute paid agent work unasked. "
+            f"DAG-level retry enabled, which would re-execute agent work unasked. "
             f"Run `{DISABLE_COMMAND}` once on this machine first",
             detail={"path": str(path)},
         )
