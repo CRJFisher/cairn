@@ -184,8 +184,8 @@ SENTENCE_BY_CAUSE: dict[str, str] = {
         "recording that as never having run would claim more than is known"
     ),
     CAUSE_TIMED_OUT: (
-        "the step was stopped at its bound before it reported — its own, enforced by the "
-        "wrapper with headroom to say what it did, or the engine's over a wrapper that "
+        "the step was stopped before it reported — by the hang guard, enforced by the "
+        "wrapper with headroom to say what it did, or by the engine over a wrapper that "
         "never reached its report. Where a divergence stands beside it, an assertion ran "
         "over what the step left and that is how it went; where none does, nothing "
         "asserted over it and what it left is unproven"

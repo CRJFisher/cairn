@@ -557,7 +557,7 @@ class TheReceiptsArePasteable(unittest.TestCase):
                 )
 
     def test_the_resume_command_runs_when_it_is_pasted(self) -> None:
-        """The exit criterion itself, with a stub provider so nothing is spent."""
+        """The exit criterion itself, with a stub standing in for the provider."""
         record = record_of("agent")
         command = self._recovered(record, "terminal", "")
         with tempfile.TemporaryDirectory() as temporary:

@@ -231,7 +231,7 @@ never reached from one killed before it could write.
 | `user_decision_required` | the step is blocked on a human decision              | the gate                    |
 | `not_reached`            | the step left no report of this run, so it never ran | the gate                    |
 | `gate_indeterminate`     | the gate could not establish what happened           | the gate                    |
-| `timed_out`              | the step was stopped at its bound before it reported | the gate, or the run record |
+| `timed_out`              | the step was stopped before it reported              | the gate, or the run record |
 | `retry_exhausted`        | the step hit its retry bound                         | the run record              |
 | `orchestrator_died`      | the run's own process was killed under the step      | the run record              |
 | `assertion_interrupted`  | a signal ended the assertion before it exited        | the gate                    |
@@ -362,7 +362,7 @@ corpus can show.
   had run. It carries no assertion verdict, because the gate above turns on the same
   absent report the kill caused and declines the assertion — so nothing asserts over what
   such a step left, and the report says the work is unproven rather than claiming it holds.
-  A session the wrapper stops at its own bound is the other shape and does leave a report,
+  A session the wrapper stops at the hang guard is the other shape and does leave a report,
   which is where a divergence over a stopped step comes from ([22 B]). A gate cause the
   gate established on evidence of its own — a failed assertion, a step that did report —
   is never overridden; only the absent-report reading is.

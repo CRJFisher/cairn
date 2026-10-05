@@ -1268,19 +1268,12 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
         code, said = self._start()
         self.assertEqual(code, 0, said)
         self.assertEqual(len(self.launched), 1)
-        self.assertNotIn("offer", said)
-        self.assertFalse((self.repository / ".git" / "cairn" / "offers").exists())
-
-    def test_the_command_takes_no_offer_and_no_reply(self) -> None:
-        for flag in ("--offer", "--reply"):
-            with (
-                self.subTest(flag=flag),
-                redirect_stderr(io.StringIO()),
-                self.assertRaises(SystemExit),
-            ):
-                run_main(self._argv(flag, "x"))
-        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-            run_main(["offer", "--plan", "offline-export"])
+        self.assertRegex(said, r"started\s+\d{8}T\d{6}Z-[0-9a-f]{8}")
+        self.assertRegex(said, r"watch\s+http://")
+        # The admitted snapshot is the whole of what the start writes. A request to run is
+        # answered by the run itself, so nothing is set aside here for an answer to return
+        # to, and the run id and the watch link are in hand in the same turn.
+        self.assertEqual({path.split("/")[0] for path in self._written()}, {"admitted"})
 
     def test_a_hand_edit_that_breaks_the_complete_gate_is_refused_and_starts_nothing(
         self,

@@ -172,3 +172,60 @@ and `README.md`.
 - A report on any run shows no cost.
 - The ordinary suite passes. `python3 -m cairn --help` and every capability document describe
   only what is left.
+
+## Close-out
+
+Done. Every criterion above holds.
+
+A request to run starts the run: the id and the watch link come back in the same turn, and the
+admitted snapshot is the whole of what the start writes. No step carries a dollar ceiling or a
+bound of its own; one hang guard of four hours bounds every plan step, and a session it stops
+reports "stopped by the hang guard, and gave no report" with no figure in it. The parse report
+has no budget column, and a plan sentence setting a limit on money or on how long a session may
+run leaves its words in the step's task and derives nothing. The run record and every report
+carry no cost, no notional flag and no abandoned-session figure. `paid/` does not exist and
+nothing imports from it. The ordinary suite is green at 1360 tests, and the generated workflow
+and graph fixtures regenerate unchanged.
+
+`verify_timeout` stays. It bounds a step's assertion, which is the thing it means — like
+`cairn wait`'s `--timeout`, and unlike a spend bound — and it is derived only from a document
+that says how long the assertion takes, never from a limit a plan puts on money or on a
+session. Its non-default warning on the parse report stays with it.
+
+### What the acceptance grep still finds, and why each stays
+
+174 matches, every one a different sense of the word:
+
+- **The proposal-and-answer vocabulary — 122.** `accepted` / `edited` / `authored` /
+  `declined` are the four answers to a proposed verify command, and an "offer" is that
+  proposal ([08](08-verify-gate.md), [18](18-first-run-friction.md)). The remainder is a
+  value being admitted — a status, a path, a trigger, a splice — or the `## Acceptance`
+  heading of a plan document. None of it is money. In `cairn/plan/`,
+  `cairn/{core,schedule,schedule_cli,baseconfig,worktrees,layout,__main__}.py`,
+  `cairn/record/extract.py`, `cairn/workflow/schema.py`,
+  `docs/{plan-contract,verify-gate,plan-derivation,triggers}.md`,
+  `capabilities/scheduling.md`,
+  `tests/test_{plan_contract,verify_gate,run_record,triggers}.py` and
+  `fixtures/plans/`.
+- **`ceiling` — 23.** Two senses, neither a spend bound: `RUN_CEILING_SECONDS` refuses at
+  generation time a plan whose slowest chain would plausibly take longer than 336 hours,
+  and `GIT_CEILING_DIRECTORIES` is the name of a git environment variable. In
+  `cairn/{topology,gitio,merge}.py`, `docs/{topology,supervision}.md` and
+  `tests/test_topology.py`.
+- **`cost` as consequence — 10.** The idiom for what a design mistake forfeits — "would
+  cost a reader the record", "costs nothing", "a spurious edge costs only concurrency". The
+  currency is lost information or lost concurrency. In
+  `cairn/record/{engine,extract,store}.py`, `cairn/report/{graph,sinks}.py` and
+  `docs/{plan-derivation,run-model}.md`.
+- **Measuring the mutex — 5.** What the git write mutex costs a fan-out in wall-clock
+  seconds, which is a performance measurement. All in `scripts/measure_fanout.py`.
+- **Prose in the corpus — 11.** Input, not Cairn's words.
+  `fixtures/plans/mixed-kinds/README.md` must keep "spend at most eight dollars": it is the
+  document the fourth criterion derives from, and the proof is that nothing is derived from
+  it. `fixtures/plans/{pattern-lifecycle,task-381}/` are real plan documents whose authors
+  wrote about token and compute cost themselves. `fixtures/invocations/cases.json` holds the
+  `report-the-cost` case, which routes a cost question to **Report**.
+- **The three statements this task kept — 3.** The one line saying Cairn does not answer
+  what a run cost (`capabilities/reading.md`); the test pinning that no report shows a cost
+  (`tests/test_report.py`); and "the code argparse spends on usage", which is exit status 2
+  (`tests/test_run_record.py`).

@@ -1,0 +1,7 @@
+{
+  "key": "once",
+  "run_id": "20261005T113814Z-4a61d086",
+  "scope": "once",
+  "step_id": "implement_32",
+  "summary": "Plan 32's end state now holds. The prior commit b5519f7 had already removed cost and run consent across 145 files; I verified that and left it untouched, then closed the remaining gaps. Capability su\u2026"
+}

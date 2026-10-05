@@ -84,15 +84,14 @@ ENGINE_VERSION = "2.11.0"
 # is why the preflight refuses its agent bodies rather than running them ([17.3]).
 # 5: every assertion node is gated on `cairn verify needed` and carries `continue_on:
 # {skipped: true}`, so an assertion behind a halt is declined and one already proven
-# against this tree is shared ([24 A], [24 B]); every agent body carries `--timeout` and
-# its engine bound allows the report grace beyond it ([22 B]); every commit body names its
+# against this tree is shared ([24 A], [24 B]); every agent step's engine bound allows the
+# report grace beyond the session's own kill ([22 B]); every commit body names its
 # `--step` ([21]). A workflow written by 4 runs every assertion whether or not there is
 # anything to assert, and its agent and commit bodies are missing arguments this binary
 # requires — so those steps report `invalid_arguments` rather than opening a session or
 # staging anything. Re-author rather than re-run.
-# 6: every merge body carries its resolver model and internal deadline.
-# Definitions written by 5 leave conflict resolution to provider defaults and the engine's
-# outer kill, so they must be re-authored before execution.
+# 6: every merge body carries its resolver model. Definitions written by 5 leave conflict
+# resolution to provider defaults, so they must be re-authored before execution.
 # 7: every assertion is bounded by its step's `verify_timeout`, and its gate is handed that
 # bound so an assertion's account can tell the engine's kill at it from any other signal.
 # Definitions written by 6 bound every assertion at 600 s whatever the plan says.
@@ -100,9 +99,9 @@ ENGINE_VERSION = "2.11.0"
 # a single dash-led token reaches the remedy as its assertion rather than as a second flag
 # argparse cannot place. A remedy body written by 7 fails `invalid_arguments` before opening
 # a session wherever a plan's assertion takes that shape.
-# 9: no agent or merge body carries a budget or deadline flag, and every plan step is bounded
-# by the one hang guard, which is now four hours. Definitions written by 8 still pass
-# `--max-budget-usd` and `--timeout`, which this binary no longer accepts.
+# 9: every plan step is bounded by the one hang guard of four hours, and no agent or merge
+# body carries a bound of its own. An agent or merge body written by 8 passes arguments this
+# binary does not accept, so those steps fail `invalid_arguments` before opening a session.
 GENERATOR_VERSION = 9
 
 # The one execution type. The alternative reading serialises the graph, which is the defect

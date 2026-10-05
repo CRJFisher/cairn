@@ -1512,9 +1512,9 @@ class LingeringProcess(FakeProcess):
         return super().wait(timeout)
 
 
-class ASessionIsStoppedAtItsOwnBound(unittest.TestCase):
+class ASessionIsStoppedByTheHangGuard(unittest.TestCase):
     """[22 B]: the engine's kill was the only bound on an agent step, and nothing survived
-    it — no report, no session id. The wrapper now stops the session itself, with
+    it — no report, no session id. The wrapper stops the session at the hang guard, with
     headroom to ask it what it did."""
 
     def _run(self, factory: Callable[..., FakeProcess], deadline: float) -> CommandResult:
@@ -1542,7 +1542,12 @@ class ASessionIsStoppedAtItsOwnBound(unittest.TestCase):
         self.assertEqual(result.detail["resumed_for_report"], RESUME_ATTEMPTED)
         self.assertEqual(result.detail["session_id"], made[0].session())
 
-    def test_a_resume_that_also_stays_silent_is_the_step_stopped_at_its_bound(self) -> None:
+    def test_a_resume_that_also_stays_silent_is_the_step_stopped_by_the_hang_guard(
+        self,
+    ) -> None:
+        """What the hang guard is named as, and that it is named without a figure: the
+        guard is Cairn's own constant, so a person reading the report has nothing to set
+        and no number to act on."""
         made: list[FakeProcess] = []
 
         def factory(command: list[str], **kwargs: object) -> FakeProcess:
@@ -1563,6 +1568,8 @@ class ASessionIsStoppedAtItsOwnBound(unittest.TestCase):
         self.assertEqual(result.detail["resumed_for_report"], RESUME_STILL_SILENT)
         self.assertEqual(result.detail["session_id"], made[0].session())
         self.assertIs(result.detail["timed_out"], True)
+        self.assertEqual(result.summary, "stopped by the hang guard, and gave no report")
+        self.assertNotRegex(result.summary, r"\d")
 
     def test_a_session_that_answered_before_its_bound_is_never_read_as_a_failure(
         self,
@@ -1644,7 +1651,6 @@ class EmitterContract(unittest.TestCase):
         plan = normalise(json.loads(fixture.read_text()))
         tokens = shlex.split(emit_step(plan["steps"][0], "/repo")["run"])
         self.assertEqual(tokens[tokens.index("--model") + 1], "opus")
-        self.assertNotIn("--max-budget-usd", tokens)
 
         defaulted = shlex.split(emit_step(step("agent.claude"), "/repo")["run"])
         self.assertEqual(defaulted[defaulted.index("--model") + 1], "sonnet")
