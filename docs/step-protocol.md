@@ -167,7 +167,14 @@ parsed:
 
 ## The preamble
 
-Every agent step's prompt is this text followed by the step's task. Measured against a
+Every agent step's prompt is this text followed by the step's task, with one exception: a
+task whose first line is a slash command (`/skill args`) leads the prompt, then a blank
+line, then this text and the rest of the task. A headless session runs a slash command as a
+person's own only when it is the first thing it is given, and a skill that only a person
+may start is refused anywhere else. The skill receives the command's own line as its
+arguments and nothing after it.
+
+The prompt is otherwise this text followed by the step's task. Measured against a
 resumed step: without it a fresh session never inspected the tree, rewrote six files that
 were already correct, and took 152% of the time of doing the work from scratch; with it the
 same resume took 83% and finished in a third of the time. That difference is what makes

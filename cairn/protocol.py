@@ -7,6 +7,7 @@ comes from the schema, and nothing anywhere parses a status out of prose.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 # The measured value of this text is 69 percentage points of re-run work (02): a resumed
@@ -94,10 +95,25 @@ def compose_remedy_task(task: str, assertion: str, exit_code: int, said: str) ->
     return REMEDY_TASK.format(assertion=assertion, exit_code=exit_code, said=said, task=task)
 
 
+# A first line that is a slash command: `/name`, then optional arguments. A path such as
+# `/usr/bin/env` is not one, because a command name holds no further slash.
+_SLASH_COMMAND = re.compile(r"/[A-Za-z][\w:.-]*(?: [^\n]*)?")
+
+
 def compose_prompt(task: str) -> str:
     """The prompt one agent step actually receives: the protocol, then the task.
 
     Composed here rather than baked into the emitted workflow so the whole preamble stays
     out of a step's argv, and so a provider added later inherits it without knowing it.
+
+    A task whose first line is a slash command is the one exception to "protocol first". A
+    headless session runs `/skill args` as the person's own command only when it is the very
+    first thing it is given; anywhere later it is prose, and a skill that only a person may
+    start (`disable-model-invocation`) is then refused, which is how `/code-review` failed a
+    step that asked for nothing else. So the command leads and everything else follows it,
+    preamble included. The skill receives only the command's own line as its arguments.
     """
+    first, separator, rest = task.partition("\n")
+    if _SLASH_COMMAND.fullmatch(first):
+        return f"{first}\n\n{PREAMBLE}\n{rest if separator else ''}"
     return f"{PREAMBLE}\n{task}"

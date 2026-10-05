@@ -89,6 +89,34 @@ verbatim as its `evidence` and, where you can state one, the convergent restatem
 `proposed`. The author accepts, restates or waives it, not the derivation, and a declaration
 quoting nothing is refused by the validator.
 
+### A task that runs a skill
+
+Where a document asks for a skill to be run — "run the `/code-review` skill at level high
+with `--fix`" — find the skill's own file (`SKILL.md` under the repository's `.claude/skills`,
+`~/.claude/skills`, or the plugin that provides it) and read its frontmatter before writing
+the task. A headless step session cannot start a skill whose frontmatter sets
+`disable-model-invocation: true`: the Skill tool refuses it, the step reports `failed`, and
+the assertion after it passes over an unchanged tree, so the plan reads as reviewed when
+nothing ran.
+
+- **A skill that sets it** is a person's command. Write the task's **first line** as the
+  exact invocation the document asks for, `/code-review high --fix`, and the end state
+  after it as the rest of the task. The engine puts a first-line slash command ahead of the
+  preamble, which is the only place a headless session treats it as typed
+  ([step-protocol.md](step-protocol.md#the-preamble)). Nothing may precede it, and the line
+  holds the command and its arguments only: the skill receives the whole line as its
+  arguments.
+- **A skill that does not** stays prose in the task; no first line is needed.
+- **A skill that cannot run headless at all** — `/code-review ultra`, a billed cloud review
+  that only a person launches — or **a skill file you cannot find** is not written as a
+  task. Raise a `non_convergent_task` question naming the skill and what was or was not
+  found, with the sentence that asks for it quoted verbatim as `evidence`; the author
+  restates the step or waives it.
+
+Whether a skill is person-only is your reading of its file to declare, as with convergence:
+no code re-reads the sentence, and the parse report shows the task so the author can see the
+first line.
+
 ### Leave out what the document defers
 
 A step the document defers, gates on a future signal, or records as already done is not in

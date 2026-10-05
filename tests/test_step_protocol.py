@@ -319,6 +319,25 @@ class TheProtocolIsStatedOnce(unittest.TestCase):
         self.assertTrue(composed.startswith(PREAMBLE))
         self.assertTrue(composed.rstrip().endswith("Do the thing."))
 
+    def test_a_task_led_by_a_slash_command_is_led_by_it_in_the_prompt(self) -> None:
+        """A headless session runs `/skill args` as a person's command only as the first thing
+        it is given, and a person-only skill is refused anywhere else."""
+        composed = compose_prompt("/code-review high --fix\nFix what it finds in the diff.")
+        self.assertTrue(composed.startswith("/code-review high --fix\n\n"))
+        self.assertIn(PREAMBLE, composed)
+        self.assertEqual(composed.count("/code-review"), 1)
+        self.assertTrue(composed.rstrip().endswith("Fix what it finds in the diff."))
+
+    def test_a_slash_command_alone_still_carries_the_preamble(self) -> None:
+        composed = compose_prompt("/probe")
+        self.assertTrue(composed.startswith("/probe\n\n"))
+        self.assertIn(PREAMBLE, composed)
+
+    def test_a_path_or_prose_is_not_a_slash_command(self) -> None:
+        for task in ("/usr/bin/env python3 -m build", "Run /code-review high.", " /probe", ""):
+            with self.subTest(task=task):
+                self.assertTrue(compose_prompt(task).startswith(PREAMBLE))
+
     def test_preamble_never_asks_the_agent_to_record_completion(self) -> None:
         self.assertIn("Completion is recorded by the verification", PREAMBLE)
         self.assertNotIn(MARKER_DIRECTORY, PREAMBLE)
