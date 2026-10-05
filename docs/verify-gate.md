@@ -180,6 +180,7 @@ The gate reads two things and opens only when both agree:
 | exit 0         | `done` or `noop`                         | opens    | —                        | —                                                                            |
 | either         | `failed` with `cause: provider_protocol` | closes   | `provider_protocol`      | **yes** where the assertion passed — verified true, reported nothing         |
 | either         | `failed` with `cause: timed_out`         | closes   | `timed_out`              | **yes** where the assertion passed — verified true, stopped before reporting |
+| either         | `failed` with `cause: quota_held`        | closes   | `quota_held`             | **yes** where the assertion passed — verified true, held before reporting    |
 | exit 0         | `failed`                                 | closes   | `reported_failure`       | **yes** — verified true, reported failed                                     |
 | nonzero        | `done` or `noop`                         | closes   | `verify_failed`          | **yes** — reported done, verified false                                      |
 | nonzero        | `failed`                                 | closes   | `reported_failure`       | — they agree                                                                 |
@@ -189,11 +190,13 @@ The gate reads two things and opens only when both agree:
 | any            | unreadable                               | closes   | `gate_indeterminate`     | —                                                                            |
 | _(unverified)_ | `done` or `noop`                         | opens    | —                        | —                                                                            |
 
-A report can carry `failed` **and** `cause: provider_protocol`, or `failed` **and**
-`cause: timed_out`; the cause is the narrower fact, so those rows are judged before the
-plain `failed` rows below them. The second is the wrapper's own account of a session it
-stopped at the step's bound and could not get a report from ([step-kinds.md](step-kinds.md)):
-the step said nothing, so reading `failed` as a veto would put a verdict in its mouth.
+A report can carry `failed` **and** `cause: provider_protocol`, `timed_out` or
+`quota_held`; the cause is the narrower fact, so those rows are judged before the plain
+`failed` rows below them. `timed_out` is the wrapper's own account of a session it stopped at
+the step's bound and could not get a report from ([step-kinds.md](step-kinds.md)), and
+`quota_held` its account of a step that stopped at the subscription's allowance
+([supervision.md](supervision.md)): in both the step said nothing about its work, so reading
+`failed` as a veto would put a verdict in its mouth.
 
 **Every fault closes it.** This is the exact inverse of the marker gate, which opens on every
 fault it meets. Both are the safe direction, and the asymmetry is the design: redoing
@@ -235,6 +238,12 @@ never reached from one killed before it could write.
 | `retry_exhausted`        | the step hit its retry bound                         | the run record              |
 | `orchestrator_died`      | the run's own process was killed under the step      | the run record              |
 | `assertion_interrupted`  | a signal ended the assertion before it exited        | the gate                    |
+| `quota_held`             | the step stopped at the subscription's allowance     | the gate                    |
+
+`quota_held` is a step held longer than it may wait at the subscription's allowance, or one
+whose session met the limit and could not be resumed. Its work was not judged; its own report
+names the window and the moment it reopens, and the run's next action is `await_allowance`
+([run-model.md](run-model.md)).
 
 `assertion_interrupted` is never `verify_failed`: an assertion the engine killed at its
 `verify_timeout`, or that anything else signalled, decided nothing about the work. Its own

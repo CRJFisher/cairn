@@ -7,7 +7,7 @@ from typing import Any, cast
 
 from cairn.emitters import emit_node, emit_step, emit_verify, retry_policy
 from cairn.plan.schema import (
-    AGENT_REPORT_GRACE,
+    AGENT_TIMEOUT,
     ENGINE_NAME_MAX_BYTES,
     GRAPH_VERSION,
     HANG_GUARD,
@@ -344,9 +344,10 @@ class Duration(unittest.TestCase):
             repository_root=REPOSITORY,
             parent_branch=PARENT,
         )
-        # An agent step's bound carries its report grace, exactly as the emitted node does
-        # ([22 B]): the number stated and the number the engine enforces are one number.
-        bound = HANG_GUARD + AGENT_REPORT_GRACE
+        # An agent step's bound carries its hold at the allowance and its report grace,
+        # exactly as the emitted node does ([22 B], [38]): the number stated and the number
+        # the engine enforces are one number.
+        bound = AGENT_TIMEOUT
         self.assertEqual(by_name(solo, "work_only")["max_seconds"], bound)
         self.assertEqual(by_name(retried, "work_only")["max_seconds"], bound * 2 + 1)
         command = derive(

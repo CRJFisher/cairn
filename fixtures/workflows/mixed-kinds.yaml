@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "mixed-kinds",
-    "cairn_generator": "9",
+    "cairn_generator": "10",
     "cairn_engine": "2.11.0",
     "cairn_graph_sha256": "ee127ac9bd22312901a2259efa1b8f8c19411ebee39dc7da551e6952006c9ac6",
-    "cairn_body_sha256": "454fc1ac39b31ef76abc7d809b4e4496416fb0687a02fa75b4496d16ca05d99e"
+    "cairn_body_sha256": "3aed72071d6553c78a74f231ef077169fa8117dbb1493781b230b193fc80c63a"
   },
   "params": [
     {
@@ -54,12 +54,12 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn lock acquire --plan mixed-kinds --run-timeout 49995"
+      "run": "python3 -m cairn lock acquire --plan mixed-kinds --run-timeout 71595"
     },
     {
       "name": "work_refresh_the_corpus",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 14580,
+      "timeout_sec": 36180,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1

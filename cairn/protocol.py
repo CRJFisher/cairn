@@ -53,6 +53,15 @@ This session is ending now and nothing will re-invoke it. Do no further work.
 Report what you have already done, through the structured output you are constrained to.
 """
 
+# What a session the subscription's limit stopped is asked, once its window has reopened. It
+# is the same session, so it still holds the task; what it does not hold is how far the turn
+# the limit refused got, and the preamble ahead of this text sends it to the tree to find out.
+RESUME_AFTER_LIMIT = """\
+Your previous turn in this session was stopped by the subscription's usage limit, which has
+since reset. Continue the task you were given earlier in this session from where the tree now
+stands, then report through the structured output you are constrained to.
+"""
+
 # What a remedy session is asked, after its own step's assertion ran and exited nonzero. The
 # assertion is the plan's definition of done, so the one move this text forbids is the one
 # that would make a failing assertion pass without the work changing.

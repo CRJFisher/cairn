@@ -27,6 +27,10 @@ from urllib.parse import quote
 # Dagu 2.11.0: an `env:` entry reaches a step, a precondition and the lifecycle handler
 # alike, which is what lets the run's release resolve its own report path.
 RUNS_ROOT_ENV = "CAIRN_RUNS_DIR"
+# The owner's opt-in to reading the subscription's usage endpoint ([headroom.py]). Read where
+# a workflow is generated and carried into its `env:` block the same way, because a step's
+# environment is the engine's curated one and not the shell the owner set it in.
+HEADROOM_ENDPOINT_ENV = "CAIRN_HEADROOM_USAGE_ENDPOINT"
 
 RUNS_DIRECTORY = "runs"
 REPORTS_DIRECTORY = "reports"
@@ -49,6 +53,13 @@ ENGINE_LOG_FILE = "engine.log"
 # The occasion this run is keyed on, beside its reports rather than under them: a report is
 # one step's account and this is the whole run's, and every step's gate reads it.
 OCCASION_FILE = "occasion"
+# The subscription reading every concurrent step and the scheduler share ([headroom.py]).
+# Beside the runs rather than in one, because the allowance is the account's and outlives any
+# run; the leading dot keeps it out of the run-id grammar, so no run can be named over it.
+HEADROOM_DIRECTORY = ".headroom"
+# Where a step announces that it is holding at the allowance, while it holds. A step's report
+# is written only when it ends, so a held run would otherwise read as stalled.
+HOLDS_DIRECTORY = "holds"
 
 # A run id reaches Cairn from `dagu start --run-id`, where a caller chooses it, and it is
 # used here as a path segment. Anything that is not one plain segment is refused rather
@@ -181,11 +192,22 @@ def occasion_path(runs_root: Path, run_id: str) -> Path:
     return run_directory(runs_root, run_id) / OCCASION_FILE
 
 
+def headroom_directory(runs_root: Path) -> Path:
+    return runs_root / HEADROOM_DIRECTORY
+
+
+def holds_directory(runs_root: Path, run_id: str) -> Path:
+    return run_directory(runs_root, run_id) / HOLDS_DIRECTORY
+
+
 __all__ = [
     "ASSERTIONS_DIRECTORY",
     "ENGINE_HOST_ENV",
     "ENGINE_LOG_FILE",
     "ENGINE_PORT_ENV",
+    "HEADROOM_DIRECTORY",
+    "HEADROOM_ENDPOINT_ENV",
+    "HOLDS_DIRECTORY",
     "MARKER_DIRECTORY",
     "MARKER_SUFFIX",
     "OCCASION_FILE",
@@ -201,6 +223,8 @@ __all__ = [
     "assertions_directory",
     "check_run_id",
     "engine_log_path",
+    "headroom_directory",
+    "holds_directory",
     "occasion_path",
     "record_path",
     "reports_directory",

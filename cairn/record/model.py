@@ -52,6 +52,44 @@ class Remedy(TypedDict):
     resumed_session: str | None
 
 
+class AllowanceWindow(TypedDict):
+    """One window of the subscription's allowance as one measurement saw it."""
+
+    window: str
+    used: float | None
+    status: str | None
+    resets_at: str | None
+    source: str | None
+    read_at: str | None
+
+
+class AllowanceHold(TypedDict):
+    """One stretch a step waited at the allowance: before its session, or after a limit."""
+
+    window: str | None
+    started: str | None
+    until: str | None
+    why: str | None
+    after: str | None
+
+
+class Headroom(TypedDict):
+    """What an agent step's session was admitted on, every hold, and every resume.
+
+    `holding` is the hold the step is in right now, read from its announcement while the
+    step is still running; it is what keeps a held run from reading as a stalled one.
+    """
+
+    admission: str | None
+    reason: str | None
+    reading: list[AllowanceWindow]
+    holds: list[AllowanceHold]
+    resumes: int
+    held_window: str | None
+    held_until: str | None
+    holding: AllowanceHold | None
+
+
 class StepRecord(TypedDict):
     """One step of the plan, and everything this run knows about it."""
 
@@ -99,6 +137,8 @@ class StepRecord(TypedDict):
     assertion_tail: str | None
     # Present only on a step that declared `remediate` and whose remedy gate left an account.
     remedy: Remedy | None
+    # Present on an agent step that reached its session's admission, or is holding now.
+    headroom: Headroom | None
     nodes: list[str]
     provenance: dict[str, str]
 
@@ -249,6 +289,10 @@ class RunRecord(TypedDict):
     view_url: str | None
     started_at: str | None
     finished_at: str | None
+    # The latest measurement of each window any step's admission rested on, with the moment
+    # and the source of each — so a reader can see how full the account was, and how old
+    # that knowledge is, without opening a step.
+    allowance: list[AllowanceWindow]
     trigger: Trigger
     lineage: Lineage
     steps: list[StepRecord]
@@ -263,6 +307,8 @@ class RunRecord(TypedDict):
 
 
 __all__ = [
+    "AllowanceHold",
+    "AllowanceWindow",
     "Attention",
     "Diffstat",
     "Divergence",
@@ -271,6 +317,7 @@ __all__ = [
     "ExcludedBranch",
     "Freshness",
     "GitFacts",
+    "Headroom",
     "Infrastructure",
     "Lineage",
     "NextAction",

@@ -27,6 +27,7 @@ from cairn.record.vocabulary import (
 )
 from cairn.report import graph
 from cairn.report.phrases import (
+    CAUSE_QUOTA_HELD,
     CAUSE_TIMED_OUT,
     HEADLINE_BY_VERDICT,
     LABEL_BY_ATTENTION,
@@ -185,6 +186,22 @@ def _verdict(record: RunRecord) -> list[Block]:
                 ),
             )
         )
+    # A step waiting hours for a window looks, from its node alone, exactly like a stalled
+    # one. Said above the fold, because "is it stuck" is the question a person opening a
+    # long-running run is asking.
+    for step in record["steps"]:
+        headroom = step["headroom"]
+        if headroom is not None and headroom["holding"] is not None:
+            blocks.append(
+                Statement(
+                    "statement",
+                    (
+                        Chrome(f"{step['step_id']} is waiting for the subscription's allowance, not stalled:"),
+                        Fact((f"step.{step['step_id']}.holding",)),
+                        Chrome("."),
+                    ),
+                )
+            )
     blocks.append(
         Fields(
             "fields",
@@ -237,6 +254,21 @@ def _next_action(record: RunRecord) -> list[Block]:
                             "Its assertion passed over the work it left, so that work is "
                             "in the tree; the two accounts stand side by side below."
                         ),
+                    ),
+                )
+            )
+        if subject["cause"] == CAUSE_QUOTA_HELD:
+            # The moment is what the whole action turns on: a re-run before it meets the
+            # same closed window.
+            blocks.append(
+                Statement(
+                    "statement",
+                    (
+                        Chrome("It was held on"),
+                        Fact((f"step.{subject['step_id']}.held_window",)),
+                        Chrome(", which reopens"),
+                        Fact((f"step.{subject['step_id']}.held_until",)),
+                        Chrome("."),
                     ),
                 )
             )
@@ -533,6 +565,7 @@ def _receipts(record: RunRecord) -> list[Block]:
                 ("earlier runs", Fact(("run.previous_runs",))),
                 ("the engine's own view", Fact(("run.view_url",), RULE_LINK)),
                 ("engine version", Fact(("run.engine_version",))),
+                ("subscription allowance, latest reading", Fact(("run.allowance",))),
             ),
         )
     ]
@@ -560,6 +593,14 @@ def _receipts(record: RunRecord) -> list[Block]:
                     ("assertion exit before the remedy", Fact((f"{key}.remedy_first_exit",))),
                     ("stopped at its bound of", Fact((f"{key}.timeout_seconds",))),
                     ("after running for", Fact((f"{key}.elapsed_seconds",))),
+                    ("admitted to the allowance", Fact((f"{key}.allowance",))),
+                    ("because", Fact((f"{key}.allowance_reason",))),
+                    ("the allowance it was admitted on", Fact((f"{key}.allowance_reading",))),
+                    ("held", Fact((f"{key}.holds",))),
+                    ("resumed after a limit", Fact((f"{key}.resumes",))),
+                    ("stopped holding on", Fact((f"{key}.held_window",))),
+                    ("which reopens", Fact((f"{key}.held_until",))),
+                    ("holding now", Fact((f"{key}.holding",))),
                     ("where a failure routes", Fact((f"{key}.position",))),
                     ("started", Fact((f"{key}.started_at",))),
                     ("finished", Fact((f"{key}.finished_at",))),

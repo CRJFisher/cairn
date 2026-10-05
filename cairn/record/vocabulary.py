@@ -12,7 +12,7 @@ Two structures — an enumeration and a separate ranking — drift.
 
 from __future__ import annotations
 
-RECORD_VERSION = 4
+RECORD_VERSION = 5
 
 # --- the run verdict -----------------------------------------------------------------
 #
@@ -137,6 +137,9 @@ NEXT_RERUN = "rerun"
 # The run halted at an assertion a signal ended. A re-run as it stands meets the same end,
 # so the cause of the signal is the thing to change first.
 NEXT_FIX_ASSERTION = "fix_assertion"
+# The run stopped at a step held at the subscription's allowance. The work is not wrong, so
+# the re-run is worth making once the window it was held on reopens, and not before.
+NEXT_AWAIT_ALLOWANCE = "await_allowance"
 NEXT_START_SCHEDULER = "start_scheduler"
 NEXT_WAIT = "wait"
 NEXT_NOTHING = "nothing"
@@ -145,6 +148,7 @@ NEXT_ACTIONS: tuple[str, ...] = (
     NEXT_SETTLE_MERGE,
     NEXT_RERUN,
     NEXT_FIX_ASSERTION,
+    NEXT_AWAIT_ALLOWANCE,
     NEXT_START_SCHEDULER,
     NEXT_WAIT,
     NEXT_NOTHING,
@@ -170,6 +174,7 @@ __all__ = [
     "EXIT_NO_RECORD",
     "EXIT_UNFINISHED",
     "NEXT_ACTIONS",
+    "NEXT_AWAIT_ALLOWANCE",
     "NEXT_DECIDE",
     "NEXT_FIX_ASSERTION",
     "NEXT_NOTHING",

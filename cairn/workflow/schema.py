@@ -102,7 +102,10 @@ ENGINE_VERSION = "2.11.0"
 # 9: every plan step is bounded by the one hang guard of four hours, and no agent or merge
 # body carries a bound of its own. An agent or merge body written by 8 passes arguments this
 # binary does not accept, so those steps fail `invalid_arguments` before opening a session.
-GENERATOR_VERSION = 9
+# 10: an agent step holds at the subscription's allowance inside its own body, so the
+# engine's bound on it carries the longest hold too. An agent step written by 9 is killed by
+# the engine part-way through a hold this binary would make.
+GENERATOR_VERSION = 10
 
 # The one execution type. The alternative reading serialises the graph, which is the defect
 # Cairn exists to avoid — and `type: chain` without `depends` validates clean and silently

@@ -1588,6 +1588,7 @@ class TheGateIsStatedOnce(unittest.TestCase):
                 "retry_exhausted",
                 "orchestrator_died",
                 "assertion_interrupted",
+                "quota_held",
             ),
         )
 

@@ -5,8 +5,14 @@ away. When the Claude subscription's 5-hour or weekly allowance runs low, Cairn 
 paid sessions, waits until the window that blocks the work reopens, and carries on. A limit is a
 pause in the run, never the end of it.
 
-**Status: researched plan, ready to build.** The measurement is settled by evidence below; two
-behaviours that need a real limit hit to observe are named as spikes (§ Spikes).
+**Status: built.** A–E are implemented (`cairn/headroom.py`, with the provider's own
+instruments in `cairn/providers.py`), merge resolutions are held the same way, and the
+contract is [supervision.md § Working within the subscription](../docs/supervision.md). The
+probe's command line was measured on Claude Code 2.1.220 (one settings-free haiku turn,
+`$0.014`, its `rate_limit_event` arriving before the reply). Spikes 1, 2, 3 and 5 still need
+a real limit hit or the owner's say-so on the credential, and the scheduler's own resume at
+the reported moment is not built: a `quota_held` run carries `await_allowance` and the
+recovery command, and a person or a schedule runs it.
 
 **Serves** the capability surface of **Run**, **Report** and **Schedule**. No invariant moves: the
 emitted graph stays static and digest-stamped (the wait lives inside a step body, as `cairn wait`

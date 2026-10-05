@@ -24,6 +24,7 @@ from cairn.record.vocabulary import (
     ATTENTION_HOUSEKEEPING_FAILURE,
     ATTENTION_ORDER,
     NEXT_ACTIONS,
+    NEXT_AWAIT_ALLOWANCE,
     NEXT_DECIDE,
     NEXT_FIX_ASSERTION,
     NEXT_NOTHING,
@@ -76,6 +77,9 @@ from cairn.verify import (
     PROVIDER_PROTOCOL as CAUSE_PROVIDER_PROTOCOL,
 )
 from cairn.verify import (
+    QUOTA_HELD as CAUSE_QUOTA_HELD,
+)
+from cairn.verify import (
     REPORTED_FAILURE as CAUSE_REPORTED_FAILURE,
 )
 from cairn.verify import (
@@ -126,6 +130,10 @@ SENTENCE_BY_ACTION: dict[str, str] = {
         "Find what stopped the assertion before it finished and change that first — a "
         "verify_timeout too small for it, or something that signalled it. Run as it stands, "
         "the assertion meets the same end."
+    ),
+    NEXT_AWAIT_ALLOWANCE: (
+        "Run it again as a recovery once the allowance it was held on reopens: every step "
+        "already done no-ops, and the held step starts again over the tree its session left."
     ),
     NEXT_START_SCHEDULER: "Start a scheduler: this run is queued and nothing is draining the queue.",
     NEXT_WAIT: "Wait: this run is still going.",
@@ -198,6 +206,12 @@ SENTENCE_BY_CAUSE: dict[str, str] = {
     ),
     CAUSE_ORCHESTRATOR_DIED: (
         "the run's own process was killed under the step, so nothing decided its fate at all"
+    ),
+    CAUSE_QUOTA_HELD: (
+        "the step stopped at the subscription's allowance — held longer than it may wait, or "
+        "met the limit and could not resume its session. Its work was not judged wrong; the "
+        "step names the window and when it reopens, and a re-run after that moment skips "
+        "everything already landed"
     ),
 }
 

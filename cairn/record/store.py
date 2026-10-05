@@ -18,9 +18,9 @@ from pathlib import Path
 from typing import Any, cast
 
 from cairn.core import CairnError, write_json
-from cairn.layout import RECORD_FILE, record_path, reports_directory
+from cairn.layout import RECORD_FILE, holds_directory, record_path, reports_directory
 from cairn.record.engine import find_attempts
-from cairn.record.extract import extract, read_reports
+from cairn.record.extract import extract, read_holds, read_reports
 from cairn.record.model import RunRecord
 from cairn.record.vocabulary import RECORD_VERSION
 
@@ -68,6 +68,7 @@ def build_run_record(
         attempt_count=max(len(attempts), 1),
         in_flight_node=in_flight_node,
         in_flight_cause=in_flight_cause,
+        holds=read_holds(holds_directory(runs_root, run_id), run_id),
     )
 
 

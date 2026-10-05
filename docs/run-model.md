@@ -138,6 +138,7 @@ is derived from the record rather than composed as prose, and is one of:
 | `settle_merge`    | a step or a census exclusion left work unlanded, in a run whose topology has a merge | none                                                                                                       |
 | `rerun`           | the run failed, or a merge-less run left work unlanded                               | `python3 -m cairn run start --plan <plan> --repository <repository> --trigger recovery --recovering <run>` |
 | `fix_assertion`   | as `rerun`, where a signal ended the assertion of the step the fault is at           | the same recovery command, to use once what stopped the assertion has changed                              |
+| `await_allowance` | as `rerun`, where the step the fault is at was held at the subscription's allowance  | the same recovery command, to use once the window the step names has reopened                              |
 | `start_scheduler` | the run is queued and nothing is draining the queue                                  | `python3 -m cairn schedule start`                                                                          |
 | `wait`            | the run is still in flight                                                           | none                                                                                                       |
 | `nothing`         | the run is green, or every step no-opped                                             | none                                                                                                       |
@@ -153,7 +154,9 @@ waves a plan by, so a chain reads front to back and a fan-out wave by wave — a
 whose edges will not level, a hand-edited or truncated one, falls back to id order rather
 than costing a person the record. `settle_merge` is prescribed only where the topology holds
 a merge: a merge node in the engine's record, or a wave's census, which only a join in an
-isolated wave takes. A chain has neither, and re-running is its whole remedy.
+isolated wave takes. A chain has neither, and re-running is its whole remedy. A step held at
+the allowance is `await_allowance` in either shape: its branch carried no work to settle,
+and what it waits on is the account rather than a person.
 
 **A command is carried only where it can be spelled completely.** The recovery command names
 the plan, the repository and the run, so a record missing the plan or the repository carries
@@ -216,8 +219,15 @@ Four things the engine never supplies, and where each field's authority sits ins
 Declared in `cairn/record/model.py`. The run carries `record_version`, `run_id`, `plan`,
 `graph_sha256`, `attempt_id`, `attempts`, `engine_version`, `engine_run_status`,
 `engine_run_status_name`, `engine_contradicted`, `owner_alive`, `verdict`, `exit_code`,
-`view_url`, `started_at`, `finished_at`, `trigger`, `lineage`, `steps`, `infrastructure`,
-`nodes`, `edges`, `waves`, `attention`, `git`, `next_action` and `provenance`.
+`view_url`, `started_at`, `finished_at`, `allowance`, `trigger`, `lineage`, `steps`,
+`infrastructure`, `nodes`, `edges`, `waves`, `attention`, `git`, `next_action` and
+`provenance`.
+
+`allowance` is the latest measurement of each subscription window that any step's admission
+rested on: how full it was (`used`, a fraction, where the measurement gave one), its
+`status`, when it `resets_at`, the `source` that measured it and when (`read_at`). It is how
+a reader sees what the account looked like, and how old that knowledge is, without opening a
+step ([supervision.md](supervision.md)).
 
 `view_url` is where the engine's own view serves this run — the same address live and cold,
 which is what makes a finished run readable from the surface that showed it running
@@ -239,7 +249,16 @@ Each step carries `step_id`, `outcome`, `overlays`, `cause`, `position`, `asked`
 `left_uncommitted`, `turns`, `session_id`, `model`, `transcript`, `stderr_log`,
 `resume_command`, `follow_up_work`, `started_at`, `finished_at`, `exit_code`,
 `assertion_exit`, `assertion_source`, `assertion_backed_by`, `timeout_seconds`,
-`elapsed_seconds`, `assertion_tail`, `remedy`, `nodes` and `provenance`.
+`elapsed_seconds`, `assertion_tail`, `remedy`, `headroom`, `nodes` and `provenance`.
+
+`headroom` is present on an agent step whose session reached admission, and on a step holding
+right now. It carries the `admission` decided — `admitted`, `warned`, `unknown`, `inert` or
+`held` — with the `reason`, the `reading` it rested on, every `holds` entry (window, from,
+until, why, and whether it came before the session or `after` a limit), the number of
+`resumes` after a limit, and, on a step that stopped at the allowance, the `held_window` and the
+moment it `held_until`. `holding` is the hold a running step is announcing now, read from
+`runs/<run-id>/holds/` and only while the engine still calls the step running — which is what
+lets a run waiting hours for a window read as waiting rather than stalled.
 
 `assertion_exit` is what the step's assertion exited, and `assertion_source` says which
 execution backed it — `executed` by the step's own assertion node, or `shared` from the

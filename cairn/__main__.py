@@ -42,6 +42,7 @@ from cairn.core import (
 )
 from cairn.enginehome import run_records_path
 from cairn.gitio import refuse_unusable_repository, tree_state
+from cairn.headroom import session_within_allowance
 from cairn.hooks import HOOK_VERB, hook_main
 from cairn.locks import (
     acquire_run_lock,
@@ -66,7 +67,6 @@ from cairn.parameters import repository as declared_repository
 from cairn.plan.cli import main as plan_main
 from cairn.plan.schema import AGENT_MODEL, SCOPES
 from cairn.protocol import compose_remedy_task
-from cairn.providers import run_provider
 from cairn.record.cli import main as record_main
 from cairn.record.store import build_run_record, write_record
 from cairn.report.cli import main as report_main
@@ -156,13 +156,13 @@ def _agent(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
             "resumed_session": resume,
         }
     before = tree_state(context.working_directory)
-    result = run_provider(
-        args.provider,
-        prompt,
-        context.working_directory,
-        "auto",
-        args.model,
-        args.tool or [],
+    result = session_within_allowance(
+        context,
+        provider=args.provider,
+        prompt=prompt,
+        working_directory=context.working_directory,
+        model=args.model,
+        tools=args.tool or [],
         resume_session=resume,
     )
     if remedy:

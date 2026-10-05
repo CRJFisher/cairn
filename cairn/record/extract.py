@@ -32,6 +32,8 @@ from cairn.layout import view_url
 from cairn.providers import resume_command
 from cairn.record import engine
 from cairn.record.model import (
+    AllowanceHold,
+    AllowanceWindow,
     Attention,
     Diffstat,
     Divergence,
@@ -40,6 +42,7 @@ from cairn.record.model import (
     ExcludedBranch,
     Freshness,
     GitFacts,
+    Headroom,
     Infrastructure,
     Lineage,
     NextAction,
@@ -60,6 +63,7 @@ from cairn.record.vocabulary import (
     EDGE_RUN,
     EDGE_STEP,
     EDGE_WAVE,
+    NEXT_AWAIT_ALLOWANCE,
     NEXT_DECIDE,
     NEXT_FIX_ASSERTION,
     NEXT_NOTHING,
@@ -113,6 +117,7 @@ from cairn.verify import (
     GATE_INDETERMINATE,
     NOT_REACHED,
     ORCHESTRATOR_DIED,
+    QUOTA_HELD,
     REPORTED_KILLED,
     TIMED_OUT,
     USER_DECISION_REQUIRED,
@@ -203,6 +208,131 @@ def read_reports(directory: Path, run_id: str) -> dict[str, dict[str, Any]]:
             continue
         found[path.stem] = report
     return found
+
+
+def read_holds(directory: Path, run_id: str) -> dict[str, dict[str, Any]]:
+    """Every hold this run's steps are announcing now, by the node that is holding.
+
+    An announcement is written while a step waits at the allowance and taken back when it
+    stops waiting, so one is read only for a step the engine still calls running; a step
+    killed mid-hold leaves one behind that its own outcome already outranks.
+    """
+    if not directory.is_dir():
+        return {}
+    found: dict[str, dict[str, Any]] = {}
+    for path in sorted(directory.glob("*.json")):
+        try:
+            raw: Any = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(raw, dict) and cast(dict[str, Any], raw).get("run_id") == run_id:
+            found[path.stem] = cast(dict[str, Any], raw)
+    return found
+
+
+def _fraction(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if 0.0 <= number <= 1.0 else None
+
+
+def _allowance_window(name: str, raw: object) -> AllowanceWindow | None:
+    if not isinstance(raw, dict):
+        return None
+    entry = cast(dict[str, Any], raw)
+    return AllowanceWindow(
+        window=flatten(name, limit=LINE_LIMIT),
+        used=_fraction(entry.get("used")),
+        status=_reported_text(entry.get("status")),
+        resets_at=_reported_text(entry.get("resets_at")),
+        source=_reported_text(entry.get("source")),
+        read_at=_reported_text(entry.get("read_at")),
+    )
+
+
+def _allowance_hold(raw: object) -> AllowanceHold | None:
+    if not isinstance(raw, dict):
+        return None
+    entry = cast(dict[str, Any], raw)
+    return AllowanceHold(
+        window=_reported_text(entry.get("window")),
+        started=_reported_text(entry.get("started")),
+        until=_reported_text(entry.get("until")),
+        why=_reported_text(entry.get("why")),
+        after=_reported_text(entry.get("after")),
+    )
+
+
+def _headroom(work_report: dict[str, Any] | None, holding: object) -> Headroom | None:
+    """An agent step's dealings with the allowance, from its report and its announcement."""
+    found: Any = _detail(work_report).get("headroom")
+    account = cast(dict[str, Any], found) if isinstance(found, dict) else None
+    now = _allowance_hold(holding)
+    if account is None and now is None:
+        return None
+    account = account or {}
+    reading: Any = account.get("reading")
+    holds: Any = account.get("holds")
+    resumes: Any = account.get("resumes")
+    return Headroom(
+        admission=_reported_text(account.get("admission")),
+        reason=_reported_text(account.get("reason")),
+        reading=[
+            window
+            for name, entry in sorted(cast(dict[str, Any], reading).items())
+            if (window := _allowance_window(name, entry)) is not None
+        ]
+        if isinstance(reading, dict)
+        else [],
+        holds=[
+            hold
+            for entry in cast(list[Any], holds)
+            if (hold := _allowance_hold(entry)) is not None
+        ]
+        if isinstance(holds, list)
+        else [],
+        resumes=len(cast(list[Any], resumes)) if isinstance(resumes, list) else 0,
+        held_window=_reported_text(account.get("held_window")),
+        held_until=_reported_text(account.get("held_until")),
+        holding=now,
+    )
+
+
+def _holding(
+    step_id: str,
+    outcome: str,
+    nodes: dict[str, dict[str, Any]],
+    holds: dict[str, dict[str, Any]],
+    orchestrator_gone: bool,
+) -> dict[str, Any] | None:
+    """The hold a step's own running node is announcing, if one is.
+
+    A remedy runs after the work node has ended, so the step's outcome no longer reads
+    running while its remedy holds; the remedy's own node is what says it still is.
+    """
+    if outcome == OUTCOME_RUNNING:
+        return holds.get(f"{WORK_ROLE}_{step_id}")
+    remedy = nodes.get(f"remedy_{step_id}")
+    if (
+        remedy is not None
+        and not orchestrator_gone
+        and _status(remedy) == engine.NODE_STATUS_RUNNING
+    ):
+        return holds.get(f"remedy_{step_id}")
+    return None
+
+
+def _latest_allowance(steps: list[StepRecord]) -> list[AllowanceWindow]:
+    """Each window's most recent measurement across every step's admission."""
+    latest: dict[str, AllowanceWindow] = {}
+    for step in steps:
+        headroom = step["headroom"]
+        for window in [] if headroom is None else headroom["reading"]:
+            held = latest.get(window["window"])
+            if held is None or (window["read_at"] or "") > (held["read_at"] or ""):
+                latest[window["window"]] = window
+    return [latest[name] for name in sorted(latest)]
 
 
 def _freshness(report: dict[str, Any] | None) -> Freshness | None:
@@ -674,7 +804,9 @@ def derive_next_action(
         # node list has been cut short. A chain has neither, and re-running is its whole
         # remedy ([23 B]).
         has_merge = bool(waves) or any(item["role"] == "merge" for item in infrastructure)
-        if has_merge:
+        subject = by_id.get(excluded) if excluded is not None else None
+        held = subject is not None and subject["cause"] == QUOTA_HELD
+        if has_merge and not held:
             return NextAction(action=NEXT_SETTLE_MERGE, subject=excluded, command=None)
         return NextAction(
             action=_rerun_or_fix(by_id.get(excluded) if excluded else None),
@@ -685,9 +817,12 @@ def derive_next_action(
 
 
 def _rerun_or_fix(subject: StepRecord | None) -> str:
-    """A re-run is the remedy unless the step's assertion never got to decide anything."""
+    """A re-run is the remedy unless the step's assertion never got to decide anything, or
+    the step is waiting on the subscription rather than on anything a person can change."""
     if subject is not None and subject["cause"] == ASSERTION_INTERRUPTED:
         return NEXT_FIX_ASSERTION
+    if subject is not None and subject["cause"] == QUOTA_HELD:
+        return NEXT_AWAIT_ALLOWANCE
     return NEXT_RERUN
 
 
@@ -740,6 +875,7 @@ def _step_record(
     *,
     nodes: dict[str, dict[str, Any]],
     reports: dict[str, dict[str, Any]],
+    holds: dict[str, dict[str, Any]],
     run_settled: bool,
     orchestrator_gone: bool,
 ) -> StepRecord:
@@ -842,6 +978,7 @@ def _step_record(
         "assertion_tail": assertion_tail,
         "remedy": _remedy(remedy_report, reports.get(f"verify_{step_id}")),
         "divergence": divergence,
+        "headroom": _headroom(work_report, _holding(step_id, outcome, nodes, holds, orchestrator_gone)),
     }
     return StepRecord(
         step_id=step_id,
@@ -1099,12 +1236,14 @@ def extract(
     attempt_count: int = 1,
     in_flight_node: str | None = None,
     in_flight_cause: str | None = None,
+    holds: dict[str, dict[str, Any]] | None = None,
 ) -> RunRecord:
     """One run's whole record, from the engine's last snapshot and this run's own reports.
 
     `in_flight_node` names the one node a record cannot judge, which is the node building
     it: the run's own release writes a record for the run it is still finishing
-    ([triggers.md]), and nothing else passes it.
+    ([triggers.md]), and nothing else passes it. `holds` is what running steps are
+    announcing about their wait at the allowance ([read_holds]).
     """
     record = status_record if status_record is not None else {}
     # Two views of the same nodes. `recorded` is the engine's own list, in its own order,
@@ -1139,6 +1278,7 @@ def extract(
             step_id,
             nodes=nodes,
             reports=reports,
+            holds={} if holds is None else holds,
             run_settled=run_settled,
             orchestrator_gone=orchestrator_gone,
         )
@@ -1201,6 +1341,7 @@ def extract(
         ),
         verdict=verdict,
         exit_code=VERDICT_EXIT_CODES[verdict],
+        allowance=_latest_allowance(steps),
         trigger=_trigger(record),
         lineage=_lineage(parameters, steps, reports),
         steps=steps,

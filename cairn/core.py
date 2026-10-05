@@ -19,10 +19,11 @@ from cairn.layout import RUNS_ROOT_ENV, reports_directory
 
 EXIT_OK = 0
 EXIT_FAILED = 1
-# A rate limit is the one failure an agent step can distinguish from outside, and the only
-# one worth retrying, so it leaves on its own exit status. The emitted step's retry policy
-# names this code and no other, which is how a deliberate bounded retry is expressed to an
-# engine that cannot see a cause (09). 75 is the conventional "temporary failure".
+# A step that stopped at the subscription's allowance leaves on its own exit status, so a
+# reader of the engine's record alone can tell a step waiting on the account from one whose
+# work was wrong. Nothing retries on it: the step holds inside its own body instead, and
+# reaches this status only when the hold would outlast what it may wait ([headroom.py]).
+# 75 is the conventional "temporary failure".
 EXIT_RATE_LIMITED = 75
 STATUSES = ("done", "noop", "failed")
 

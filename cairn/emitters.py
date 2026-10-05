@@ -5,8 +5,9 @@ unbounded step, and the engine supplies neither by default — its own step time
 and a step it inherits nothing from retries not at all while the *DAG* around it retries
 three times ([01]). Neither default is one Cairn is willing to run on, so both are written
 on every step and a test fails if any step is emitted without them. The timeout on a work
-step is the hang guard plus the grace its report needs; no body states a bound of its own,
-and no plan can vary one. An agent step carries its model as well, because a session whose
+step is the hang guard plus the grace its report needs, and on an agent step the longest
+hold at the subscription's allowance as well; no body states a bound of its own, and no plan
+can vary one. An agent step carries its model as well, because a session whose
 model the environment chose leaves a record that cannot say which model did the work
 ([17.3]).
 """
@@ -22,7 +23,7 @@ from cairn.assertions import NEEDED_VERB, REMEDY_VERB, command_digest
 from cairn.bounds import nonnegative_integer, positive_integer
 from cairn.plan.schema import (
     AGENT_FAMILY,
-    AGENT_REPORT_GRACE,
+    AGENT_TIMEOUT,
     HANG_GUARD,
     INPUTS_SCOPE,
     MERGE_MODEL,
@@ -74,8 +75,8 @@ def _base(step: Step, working_directory: str) -> EngineStep:
         "timeout_sec": HANG_GUARD,
         # Zero unless the plan asked for more. Every failure an agent step can have is
         # either a wrong task or a session that already changed the repository, and
-        # retrying either buys nothing; a rate limit is reported with the moment it clears
-        # rather than waited out blind (09).
+        # retrying either buys nothing; a subscription limit is held on inside the step,
+        # where the moment it clears can be read ([headroom.py]).
         "retry_policy": retry_policy(step["retries"], RETRY_INTERVAL),
     }
 
@@ -116,7 +117,7 @@ def emit_agent(step: Step, working_directory: str) -> EngineStep:
     could not say which model did the work ([17.3]).
     """
     emitted = _base(step, working_directory)
-    emitted["timeout_sec"] = HANG_GUARD + AGENT_REPORT_GRACE
+    emitted["timeout_sec"] = AGENT_TIMEOUT
     emitted["run"] = shlex.join(_agent_arguments(step))
     return emitted
 

@@ -42,9 +42,13 @@ session whose model came from the environment would leave a record that cannot s
 model did the work. Every session runs under the hang guard, a fixed Cairn constant enforced
 inside the wrapper, the way a wait's bound is: the session is stopped at the guard, resumed
 once under the report grace to say what it did, and its report reaches the run directory
-before the engine's own `timeout_sec`, which is the guard plus that grace and stops only a
-wrapper that never reported. The grace and the arithmetic are stated with every other bound
-in [supervision.md](supervision.md).
+before the engine's own `timeout_sec`, which is the guard plus the longest hold at the
+subscription's allowance plus that grace, and stops only a wrapper that never reported.
+Before the session the wrapper consults the shared allowance reading and holds where a
+window is closed or nearly so; a session that meets the limit is held and resumed by id once
+the window reopens, and a hold longer than the step may wait ends it `quota_held`. The
+grace, the hold and the arithmetic are stated with every other bound in
+[supervision.md](supervision.md).
 
 The plan author owns an agent step's `tools` deny list as its blast-radius declaration — and
 it **adds** to a floor Cairn denies in every session, which the plan cannot take back

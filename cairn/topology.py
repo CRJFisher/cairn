@@ -20,7 +20,7 @@ from typing import Any, NamedTuple, TypedDict
 
 from cairn.plan.schema import (
     AGENT_FAMILY,
-    AGENT_REPORT_GRACE,
+    AGENT_TIMEOUT,
     DEFAULT_KIND,
     ENGINE_NAME_MAX_BYTES,
     HANG_GUARD,
@@ -242,16 +242,16 @@ def _levels(graph: Graph) -> list[list[str]]:
 
 
 def _step_seconds(step: Step) -> int:
-    # A wait's and an agent's emitted bounds carry their report grace, so the arithmetic
-    # counts it too: the number stated and the number the engine enforces have to be the
-    # same one.
+    # A wait's emitted bound carries its report grace, and an agent's its hold at the
+    # allowance and its report grace, so the arithmetic counts them too: the number stated
+    # and the number the engine enforces have to be the same one.
     if step.get("command_type") == "wait_until":
-        grace = WAIT_REPORT_GRACE
+        bound = HANG_GUARD + WAIT_REPORT_GRACE
     elif step["kind"].startswith(AGENT_FAMILY):
-        grace = AGENT_REPORT_GRACE
+        bound = AGENT_TIMEOUT
     else:
-        grace = 0
-    return step_max_seconds(HANG_GUARD + grace, step["retries"], RETRY_INTERVAL)
+        bound = HANG_GUARD
+    return step_max_seconds(bound, step["retries"], RETRY_INTERVAL)
 
 
 def _support_seconds() -> int:
@@ -645,9 +645,9 @@ def _refuse_over_ceiling(topology: Topology) -> None:
     raise TopologyError(
         f"plan {topology['plan']!r} has a worst-case duration of "
         f"{topology['critical_path_seconds'] / 3600:.1f} hours along its slowest chain, over the "
-        f"{RUN_CEILING_SECONDS / 3600:.0f}-hour ceiling. Every step counts the hang guard "
-        "once per attempt plus the wait between attempts; drop a step, drop a wait, or "
-        "split the plan"
+        f"{RUN_CEILING_SECONDS / 3600:.0f}-hour ceiling. Every step counts the hang guard — "
+        "and an agent step its hold at the subscription's allowance too — once per attempt "
+        "plus the wait between attempts; drop a step, drop a wait, or split the plan"
     )
 
 

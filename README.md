@@ -37,6 +37,10 @@ record carries; and render that record for a terminal, a repository or a browser
 `python3 -m cairn report --run <run-id> --repository <path>`, which answers in order whether
 it worked, what to do next, what needs attention, what each step did, and what shape the run was. Every run leaves that record whether anyone watched it or not.
 And start a run of the definition that would execute, handing the engine exactly that one run.
+Every agent session runs within the subscription's allowance: a step holds where the 5-hour
+or weekly window is closed or nearly so, resumes a session that met the limit once the window
+reopens, and ends `quota_held`, naming the moment, only where the wait is longer than a step
+may make ([docs/supervision.md](docs/supervision.md)).
 
 What is built is the plan contract, the execution core, the step protocol, the verify gate
 and its authoring conversation, the branch topology, the merge step, the locks and repairs
@@ -72,7 +76,8 @@ the skill that drives all of it.
 - [docs/topology.md](docs/topology.md) — waves, branches and worktrees, the node-name
   contract, the four convergence cases, and the run's duration arithmetic.
 - [docs/supervision.md](docs/supervision.md) — the git write mutex, the repository run lock,
-  reconciling a killed run, and the hang guard on every emitted step.
+  reconciling a killed run, the hang guard on every emitted step, and working within the
+  subscription's allowance.
 - [docs/merge-step.md](docs/merge-step.md) — landing a wave one branch at a time, what the
   prediction may decide, how a merge is proven, and the halt that a person settles.
 - [docs/run-model.md](docs/run-model.md) — start here for a run's record: the frozen run

@@ -64,8 +64,9 @@ rejected rather than ignored.
   nothing quotes the document's words for it the way an edge's evidence does.
 - `retries` is `0` for every kind. Arbitrary shell is not assumed idempotent, and an agent
   failure is either a wrong task or a session that already changed the repository —
-  neither is worth running twice. A rate limit is reported with the moment it clears
-  rather than waited out ([supervision.md](supervision.md)). A plan may set its own value;
+  neither is worth running twice. A subscription limit is not a failure: the step holds
+  until the window reopens and resumes its session, inside its own body
+  ([supervision.md](supervision.md)). A plan may set its own value;
   the wait between attempts is 1s. A step's **assertion never retries**, whatever the
   step's own value. The engine records no per-node retry count, so a retried pass would
   read exactly like a first-try pass in the run record, and an assertion that passes on

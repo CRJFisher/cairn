@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "multi-wave",
-    "cairn_generator": "9",
+    "cairn_generator": "10",
     "cairn_engine": "2.11.0",
     "cairn_graph_sha256": "394628293238a9a912dde424166fae5bb0d972645eca78db65dd817904538090",
-    "cairn_body_sha256": "7f58136a005113e89301535c56b43f22ffeefb66f9c61df9d7d7b0e817398276"
+    "cairn_body_sha256": "767ebe6ed8e7b71fd0fa9ba952c1e0d4aceb7cf8b3aeeac36df943b4126dee2a"
   },
   "params": [
     {
@@ -54,12 +54,12 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn lock acquire --plan multi-wave --run-timeout 132120"
+      "run": "python3 -m cairn lock acquire --plan multi-wave --run-timeout 261720"
     },
     {
       "name": "work_export_schema",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 14580,
+      "timeout_sec": 36180,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
@@ -135,7 +135,7 @@
     {
       "name": "work_writer",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 14580,
+      "timeout_sec": 36180,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
@@ -224,7 +224,7 @@
     {
       "name": "work_reader",
       "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/multi-wave/reader",
-      "timeout_sec": 14580,
+      "timeout_sec": 36180,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
@@ -316,7 +316,7 @@
     {
       "name": "work_zip_packer",
       "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/multi-wave/zip_packer",
-      "timeout_sec": 14580,
+      "timeout_sec": 36180,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
@@ -474,7 +474,7 @@
     {
       "name": "work_reconcile",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 14580,
+      "timeout_sec": 36180,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
@@ -519,7 +519,7 @@
     {
       "name": "remedy_reconcile",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 14580,
+      "timeout_sec": 36180,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
