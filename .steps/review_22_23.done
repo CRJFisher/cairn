@@ -1,0 +1,7 @@
+{
+  "key": "once",
+  "run_id": "20261006T142133Z-daaf6b32",
+  "scope": "once",
+  "step_id": "review_22_23",
+  "summary": "The prior /code-review high run on the pause_before_22_23..implement_22_23 diff returned zero findings \u2014 it verified every new planning-doc claim (22-A/B/D, 23-A/B, fixture structure, cross-reference\u2026"
+}
