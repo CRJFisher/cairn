@@ -35,6 +35,7 @@ from cairn.gitio import (
     resolve_ref,
     tree_state,
 )
+from cairn.headroom import Instruments, session_within_allowance
 from cairn.locks import git_write_mutex, refuse_unresolved_merge, unresolved_merge
 from cairn.plan.schema import MERGE_MODEL
 from cairn.providers import run_provider
@@ -540,6 +541,7 @@ def run_merge(
     context: RuntimeContext,
     model: str | None = MERGE_MODEL,
     run_agent: ProviderCall = run_provider,
+    instruments: Instruments | None = None,
 ) -> CommandResult:
     """Land one of this wave's branches, or report honestly why none was landed."""
     model = model or MERGE_MODEL
@@ -648,14 +650,17 @@ def run_merge(
         # is five minutes, so holding it across one would turn every contender into a
         # failure rather than a wait. Nothing else in the run writes here — the slots are
         # chained, the join is upstream and the prune is downstream.
+        # Admitted against the subscription's allowance and held like any other session.
         try:
-            agent = run_agent(
-                provider,
-                merge_prompt(branch, into, conflicted),
-                repository,
-                "auto",
-                model,
-                [],
+            agent = session_within_allowance(
+                context,
+                provider=provider,
+                prompt=merge_prompt(branch, into, conflicted),
+                working_directory=repository,
+                model=model,
+                tools=[],
+                call=run_agent,
+                instruments=instruments,
             )
         except CairnError as exc:
             exc.detail = {

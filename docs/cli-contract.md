@@ -56,9 +56,11 @@ done/no-op except when `needs_user_decision` deliberately blocks routing with
 
 The cause vocabulary is closed. Doc 05 issues `command_failed`, `wait_timeout`,
 `timed_out`, `cancelled`, `provider_failed`, `provider_protocol`, `provider_unavailable`,
-`reported_failure`, `user_decision_required`, `rate_limited`, `turn_limit`,
+`reported_failure`, `user_decision_required`, `quota_held`, `turn_limit`,
 `process_launch_failed`, `invalid_command`, `invalid_wait`, `invalid_arguments`,
-`invalid_report`, `missing_runtime_identity`, and `internal_error`.
+`invalid_report`, `missing_runtime_identity`, and `internal_error`. A session that meets the
+subscription's limit is held and resumed rather than reported, so the limit reaches a report
+only as `quota_held`, where the step could not wait it out.
 Doc 06 adds `invalid_marker`, `invalid_occasion`, `invalid_reads`, `invalid_scope`,
 `invalid_step_id`, `marker_ignored`, and `missing_report`. Docs 07 and
 09 add `git_failed`, `not_a_repository`, `git_mutex_timeout`, `merge_in_progress`,
@@ -81,9 +83,10 @@ question about a branch in a run rather than about one process's exit status, an
 frozen in [verify-gate.md](verify-gate.md). The verify gate's report carries a value from
 that set as its `cause`.
 
-Exit status carries one further distinction. A rate-limited agent step leaves on **75**
-rather than 1, so a report can say the run stopped because of a limit rather than because
-the work was wrong. It drives no retry; see [supervision.md](supervision.md).
+Exit status carries one further distinction. A step that stopped at the subscription's
+allowance, `quota_held`, leaves on **75** rather than 1, so the engine's record alone says the
+run stopped on the account rather than because the work was wrong. It drives no retry; see
+[supervision.md](supervision.md).
 
 Once runtime identity resolves, a report is the one thing a subcommand always leaves.
 An unclassified crash becomes `internal_error` rather than a traceback with no record;

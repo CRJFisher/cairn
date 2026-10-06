@@ -174,31 +174,22 @@ reported as work to rescue.
 
 ## The run's maximum duration
 
-Every node carries a worst-case duration, and two numbers are derived from them because
-they answer two different questions.
-
-The **sum** is how long the run might still be _writing_, and it is what the run lock's
-lease is derived from. The slowest chain would be tighter and wrong for that: it holds only
-under unbounded concurrency, and the engine caps concurrent steps, so a wave wider than the
-cap outruns its own chain and a lease derived from it would come free mid-run.
-
-The **critical path** is how long the run plausibly _takes_, and it is what the ceiling is
-judged against — the number a plan author can act on, because shortening the slowest chain
-moves it. Gating admission on the sum instead would refuse a plan of sixteen ordinary agent
-steps for being wide, which is a plan-size cap nobody asked for.
+Every node carries a worst-case duration, and the run's maximum is their **sum**: how long
+the run might still be _writing_. It is what the run lock's lease is derived from. The
+slowest chain would be tighter and wrong for that: it holds only under unbounded concurrency,
+and the engine caps concurrent steps, so a wave wider than the cap outruns its own chain and
+a lease derived from it would come free mid-run.
 
 A step's own weight is `bound × attempts + interval × retries`, where the bound is the hang
 guard for every plan step, because **the engine applies
 `timeout_sec` to each attempt rather than to the step** — measured, not assumed. A bound
 counted once would understate a plan by hours. A `wait_until` step counts the fifteen-second
 grace its emitted bound carries and an agent step the 180-second report grace, so the number
-stated and the number the engine enforces are the same one — which is also why a plan close
-to the 336-hour ceiling can be refused for the graces alone.
+stated and the number the engine enforces are the same one.
 
-A plan whose slowest chain exceeds the 336-hour ceiling is refused at generation time, with
-the arithmetic named. A declared `cairn wait` counts in full, because it holds the run lock
-for its whole duration — so a plan's waits are part of its maximum duration and therefore of
-the lock's reclaim window ([supervision.md](supervision.md)).
+No plan is refused for its length. A declared `cairn wait` counts in full, because it holds
+the run lock for its whole duration — so a plan's waits are part of its maximum duration and
+therefore of the lock's reclaim window ([supervision.md](supervision.md)).
 
 ## Measured
 

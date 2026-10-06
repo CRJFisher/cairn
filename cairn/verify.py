@@ -48,10 +48,10 @@ from cairn.plan.schema import (
 )
 
 # Why a step contributed no verified work. Frozen: every exclusion the run record names
-# comes from here, and a message string never stands in for one. The last three are the
-# engine's own verdicts on a step, derived from the run record rather than from this gate —
-# and the last of them is what a step carries when nothing decided its fate at all, because
-# the process that would have was killed under it.
+# comes from here, and a message string never stands in for one. `retry_exhausted` and
+# `orchestrator_died` are the engine's own verdicts on a step, derived from the run record
+# rather than from this gate — and the second is what a step carries when nothing decided its
+# fate at all, because the process that would have was killed under it.
 VERIFY_FAILED = "verify_failed"
 REPORTED_FAILURE = "reported_failure"
 PROVIDER_PROTOCOL = "provider_protocol"
@@ -64,6 +64,10 @@ ORCHESTRATOR_DIED = "orchestrator_died"
 # The assertion was ended by a signal — the engine's kill at its bound or anything else —
 # before it exited. It decided nothing about the work, so it is never `verify_failed`.
 ASSERTION_INTERRUPTED = "assertion_interrupted"
+# The step stopped at the subscription's allowance: held longer than it may wait, or met the
+# limit and could not be resumed. The work is not wrong and was not judged; the step's own
+# report names the window and the moment it reopens ([headroom.py]).
+QUOTA_HELD = "quota_held"
 EXCLUSION_CAUSES: tuple[str, ...] = (
     VERIFY_FAILED,
     REPORTED_FAILURE,
@@ -75,6 +79,7 @@ EXCLUSION_CAUSES: tuple[str, ...] = (
     RETRY_EXHAUSTED,
     ORCHESTRATOR_DIED,
     ASSERTION_INTERRUPTED,
+    QUOTA_HELD,
 )
 
 # How a failure routes onward. The engine spells a chain halt and a branch exclusion both
@@ -110,6 +115,20 @@ REPORTED_UNREADABLE = "unreadable"
 # assertion still ran over whatever the step left, and this is the reading that lets the
 # record weigh that against a session nobody heard from.
 REPORTED_KILLED = "killed"
+# And where the step stopped at the subscription's allowance before it reported. Not
+# `killed`: nothing stopped the work for taking too long, and a reader weighing a re-run
+# needs to know the step is waiting on the account rather than on the task.
+REPORTED_HELD = "held"
+
+# The causes of a step that stopped before it reported without ever saying its work failed,
+# with the reading its divergence carries and the words its verdict says it in.
+_STOPPED_BEFORE_REPORTING: dict[str, tuple[str, str]] = {
+    TIMED_OUT: (REPORTED_KILLED, "the step was stopped at its own bound before it reported"),
+    QUOTA_HELD: (
+        REPORTED_HELD,
+        "the step was held at the subscription's allowance before it reported",
+    ),
+}
 
 
 class Divergence(TypedDict):
@@ -161,6 +180,11 @@ def divergence_line(divergence: Divergence) -> str:
         return (
             f"the step was stopped at its bound before it reported, and its assertion "
             f"{asserted} over the work it left"
+        )
+    if divergence["reported"] == REPORTED_HELD:
+        return (
+            f"the step was held at the subscription's allowance before it reported, and its "
+            f"assertion {asserted} over the work it left"
         )
     return f"the step reported {divergence['reported']!r} while its assertion {asserted}"
 
@@ -275,21 +299,19 @@ def judge(verify_exit: int | None, report: dict[str, Any] | None) -> Verdict:
                 else f"{said}, so nothing said what it did"
             ),
         )
-    if reported == "failed" and report.get("cause") == TIMED_OUT:
-        # The wrapper stopped the session at the step's own bound and it never reported.
-        # That is not a veto — the step said nothing — so the divergence weighs the
-        # assertion against a session nobody heard from, as the engine's own kill does
-        # in the run record ([22 B]).
+    cause = report.get("cause")
+    stopped = _STOPPED_BEFORE_REPORTING.get(cause) if isinstance(cause, str) else None
+    if reported == "failed" and stopped is not None:
+        # Stopped at the step's own bound, or held at the allowance: either way the step
+        # never said its work failed. That is not a veto, so the divergence weighs the
+        # assertion against a session nobody heard from, as the engine's own kill does in
+        # the run record ([22 B]).
+        reading, said = stopped
         return Verdict(
             record=False,
-            cause=TIMED_OUT,
-            divergence=Divergence(reported=REPORTED_KILLED, asserted=True) if asserted else None,
-            summary=(
-                "the step was stopped at its own bound before it reported, over an "
-                "assertion that passed"
-                if asserted
-                else "the step was stopped at its own bound before it reported"
-            ),
+            cause=cause,
+            divergence=Divergence(reported=reading, asserted=True) if asserted else None,
+            summary=f"{said}, over an assertion that passed" if asserted else said,
         )
     if reported == "failed":
         return Verdict(

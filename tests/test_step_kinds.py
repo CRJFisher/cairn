@@ -27,11 +27,13 @@ from cairn.core import (
     write_report,
 )
 from cairn.emitters import KIND_EMITTERS, emit_step, emit_verify
+from cairn.headroom import Instruments
 from cairn.layout import reports_directory
 from cairn.plan.schema import (
     AGENT_REPORT_GRACE,
     GRAPH_VERSION,
     HANG_GUARD,
+    QUOTA_WAIT,
     WAIT_REPORT_GRACE,
     normalise,
 )
@@ -44,6 +46,7 @@ from cairn.providers import (
     RESUME_ATTEMPTED,
     RESUME_FAILED,
     RESUME_STILL_SILENT,
+    Observer,
     ended_without_reporting,
     run_claude,
     run_provider,
@@ -61,9 +64,10 @@ def run_echo(
     popen_factory: PopenFactory = subprocess.Popen,
     deadline_seconds: float | None = None,
     resume_session: str | None = None,
+    observe: Observer | None = None,
 ) -> CommandResult:
     """A whole second provider: doc 05's seam claim is that this is all it takes."""
-    del popen_factory, deadline_seconds, resume_session
+    del popen_factory, deadline_seconds, resume_session, observe
     return CommandResult(
         EXIT_OK,
         "done",
@@ -119,6 +123,22 @@ def wait_for_exit(pid: int, *, seconds: float = GONE_SECONDS) -> bool:
         if time.monotonic() >= deadline:
             return False
         time.sleep(POLL_SECONDS)
+
+
+def unmeasured() -> Any:
+    """The allowance's instruments with nothing to say, so no test ever starts a probe.
+
+    An agent step on a metered provider measures the subscription before its session when
+    the shared reading is stale, and a test's reading always is. Unknown admits, which is
+    what every test not about the allowance wants.
+    """
+    def silent(_timeout: float) -> list[dict[str, Any]]:
+        return []
+
+    return patch(
+        "cairn.headroom.default_instruments",
+        lambda: Instruments(probe=silent, endpoint=None),
+    )
 
 
 def runtime_env(root: Path) -> dict[str, str]:
@@ -619,6 +639,7 @@ class ExecAndWait(unittest.TestCase):
             tools: list[str],
             *,
             resume_session: str | None = None,
+            **_: Any,
         ) -> CommandResult:
             self.assertIsNone(resume_session)
             seen.append((provider, working_directory, model, tools))
@@ -628,7 +649,8 @@ class ExecAndWait(unittest.TestCase):
             env = runtime_env(Path(temporary))
             with (
                 engine_step(Path(temporary), env),
-                patch("cairn.__main__.run_provider", record),
+                patch("cairn.headroom.run_provider", record),
+                unmeasured(),
             ):
                 self.assertEqual(
                     main(
@@ -675,6 +697,7 @@ class ExecAndWait(unittest.TestCase):
             _tools: list[str],
             *,
             resume_session: str | None = None,
+            **_: Any,
         ) -> CommandResult:
             asked.append((prompt, resume_session))
             return CommandResult(0, "done", "fixed it", [], False, None, {})
@@ -699,7 +722,8 @@ class ExecAndWait(unittest.TestCase):
             }))
             with (
                 engine_step(root, env),
-                patch("cairn.__main__.run_provider", record),
+                patch("cairn.headroom.run_provider", record),
+                unmeasured(),
             ):
                 code = main([
                     "agent", "run", "--provider", "claude", "--prompt", "Write the parser.",
@@ -1857,13 +1881,18 @@ class EverySessionWaitsForItsSubagents(unittest.TestCase):
 
 
 class EmitterContract(unittest.TestCase):
-    def test_an_agent_body_states_no_bound_and_the_engine_allows_the_grace(self) -> None:
-        """The wrapper stops the session at the hang guard it owns, so the body carries no
-        bound, and the engine's kill lands the report grace later ([22 B])."""
+    def test_an_agent_body_states_no_bound_and_the_engine_allows_the_hold_and_the_grace(
+        self,
+    ) -> None:
+        """The wrapper stops the session at the hang guard it owns and holds at the
+        allowance inside its own body, so the body carries no bound, and the engine's kill
+        lands after the longest hold and still the report grace later ([22 B], [38])."""
         emitted = emit_step(plan_step(), "/repo")
         tokens = shlex.split(emitted["run"])
         self.assertNotIn("--timeout", tokens)
-        self.assertEqual(emitted["timeout_sec"], HANG_GUARD + AGENT_REPORT_GRACE)
+        self.assertEqual(
+            emitted["timeout_sec"], HANG_GUARD + QUOTA_WAIT + AGENT_REPORT_GRACE
+        )
 
     def test_table_handles_mixed_plan_kinds(self) -> None:
         self.assertEqual(set(KIND_EMITTERS), {"command", "agent.*"})
@@ -1975,7 +2004,7 @@ class EmitterContract(unittest.TestCase):
         with (
             tempfile.TemporaryDirectory() as temporary,
             engine_step(Path(temporary)),
-            patch("cairn.__main__.run_provider", record),
+            patch("cairn.headroom.run_provider", record),
         ):
             main(["agent", "run", "--provider", "someone_else", "--prompt", "x"])
         self.assertEqual(seen, ["someone_else"])

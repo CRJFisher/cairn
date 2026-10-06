@@ -261,7 +261,7 @@ session the guard stops is reported as stopped by the hang guard.
 
 | Kind                     | Timeout                                                    | Retries |
 | ------------------------ | ---------------------------------------------------------- | ------- |
-| `agent.*`                | `HANG_GUARD` + 180s                                        | 0       |
+| `agent.*`                | `HANG_GUARD` + `QUOTA_WAIT` (6h) + 180s                    | 0       |
 | `command`                | `HANG_GUARD`                                               | 0       |
 | `command` (`wait_until`) | `HANG_GUARD` + 15s                                         | 0       |
 | verify                   | the step's `verify_timeout` (600s unless the plan sets it) | 0       |
@@ -270,7 +270,10 @@ session the guard stops is reported as stopped by the hang guard.
 The wrapper enforces the guard on an agent session: the session is stopped there, resumed
 once under the 180-second grace to give the account it owes, and its report is written
 before the engine's kill — which lands the grace later and erases nothing a report could
-have said. The grace is for the report, never the work. A `wait` keeps its own `--timeout`,
+have said. The grace is for the report, never the work. `QUOTA_WAIT` is the longest an agent
+step may hold at the subscription's allowance (below); held time is never charged to the
+guard, so the engine's bound is the work, the hold and the grace, in that order. A `wait`
+keeps its own `--timeout`,
 because how long to wait for a condition is what that step means; the emitter sets it to the
 guard.
 
@@ -288,14 +291,104 @@ A step that failed because the provider blinked and one that failed because the 
 wrong are indistinguishable from outside, and a second session would run against a
 repository the first one already changed. So a failure stops the step, once, loudly.
 
-A rate limit is the one distinguishable case — it arrives as a typed stream event carrying
-`resetsAt`, and `cairn agent run` leaves on exit **75** rather than 1 — and it is still not
-retried. The engine's retry policy is a static number in a file and cannot read `resetsAt`.
-A fixed wait short enough to be worth making is far shorter than a real limit's reset, so
-the retry would usually meet the same limit and meet it again. The moment is reported
-instead: `detail.resets_at` says when the plan is worth running again, and the committed
-marker means the re-run skips every step that already landed.
+A subscription limit is not a failure, and it is not retried either: the engine's retry
+policy is a static number in a file and cannot read the moment a limit reopens. The step
+holds instead, inside its own body, as the next section describes.
 
-Exit 75 survives as the distinction it always was — a report can say the run stopped
-because of a limit rather than because the work was wrong — it simply no longer drives a
-retry.
+## Working within the subscription
+
+A Claude subscription meters work in a 5-hour window and a weekly one. A queue of agent steps
+is bounded by that allowance rather than by what the plan wants to run, so an agent step
+**holds** where it would otherwise run into a closed window, and carries on when the window
+reopens ([principle 4](../PRINCIPLES.md)). A limit is a pause in the run, never the end of it.
+
+### One shared reading
+
+Every step reads one **headroom reading**, kept at `<runs root>/.headroom/reading.json` and
+replaced whole under a lock, so concurrent steps share one fact and none measures on its own
+account. Each window carries how full it is (`used`, a 0–1 fraction, where a measurement
+gave one), its `status` (`allowed`, `allowed_warning`, `rejected`), when it `resets_at`, the
+`source` that measured it, and when. A window measured more than **10 minutes** ago is
+unknown rather than trusted, and one whose reset has passed is void — except a rejection,
+which is measured again rather than assumed over.
+
+Three feeders write it, cheapest first:
+
+1. **The stream.** Every session's `rate_limit_event` updates its window as it arrives, so a
+   limit one step meets holds every other step at once. It is free, and the only feeder that
+   sees `rejected`. The session's `system` message also records how the account is funded.
+2. **The usage endpoint**, `GET https://api.anthropic.com/api/oauth/usage`, **off unless**
+   `CAIRN_HEADROOM_USAGE_ENDPOINT=1` is set in the environment a workflow is generated from —
+   the generator carries it into the workflow's `env:` block, because the engine hands a step
+   a curated environment rather than the caller's. It reads Claude Code's own credential
+   (the macOS keychain item `Claude Code-credentials`, else `~/.claude/.credentials.json`),
+   never refreshes it, and treats an expired one as unknown. It is asked at most every 180
+   seconds and backed off 3 → 6 → 12 → 15 minutes after a 429. It is the only feeder that
+   gives both windows' percentages on demand, and it is undocumented, which is why a person
+   turns it on.
+3. **A probe**, when nothing fresh is known and the endpoint did not answer: one turn of
+   `claude -p --model haiku` with no settings, no tools, no MCP and no session persistence,
+   in a scratch directory, read for its `rate_limit_event` and discarded. Concurrent steps
+   that find the reading stale cause one probe between them: the first takes a refresh lock
+   and the rest re-read what it wrote.
+
+### Admission
+
+Before a step opens its session, the reading decides:
+
+| Reading                                                | Decision                                         |
+| ------------------------------------------------------ | ------------------------------------------------ |
+| the session is funded by an API key                    | `inert` — no subscription window applies         |
+| a window `rejected`                                    | `held` until that window's reset                 |
+| a window's `used` at or past its hold threshold (0.95) | `held` until that window's reset                 |
+| a window `allowed_warning` below the threshold         | `warned` — admitted, and the warning is recorded |
+| nothing measured recently enough, by any feeder        | `unknown` — admitted, and why is recorded        |
+| otherwise                                              | `admitted`                                       |
+
+A per-model weekly window (`seven_day_opus`, `seven_day_sonnet`) holds only a step whose model
+is of that family. Where several windows are closed, the hold lasts until the last of them
+reopens.
+
+**Unknown admits.** A guard that blocked on its own blindness would stall a queue for a fault
+in the instrument, and the backstop below makes a wrong admission a short wait rather than a
+lost step. This is the inverse of the verify gate on purpose: nothing durable depends on this
+check having run.
+
+### The hold, and measuring again
+
+A hold sleeps until the reported reset plus one minute, then **measures again** and believes
+only a reading taken after the reset. Cairn never computes a reset itself: a window that
+reopens late, or a weekly window whose reset moves, is held on for 5, 10, then 20 minutes at a
+time until a measurement says it is open. While it holds, the step announces the hold at
+`runs/<run-id>/holds/<node>.json`, so the run reads as waiting for a window rather than
+stalled, and takes the announcement back when it stops.
+
+A step may hold for at most `QUOTA_WAIT`, **6 hours** — enough to wait out a whole 5-hour
+window. A hold that would end later, typically a weekly window days away, does not sleep a
+worker for days: the step ends **`quota_held`**, exit **75**, and its summary names the moment
+and the window — _held until Thu 08 Oct 04:00 BST — the weekly allowance at 97%_. The run's
+next action is then `await_allowance`, whose recovery command is the one to run after that
+moment; the committed markers mean it skips every step that already landed.
+
+### The backstop: a limit met mid-session
+
+Admission lowers the odds of meeting a limit; it cannot remove them, because one session
+spends an unknown share of a window. A session that ends on `blocking_limit` is held, then
+**resumed by id** (`--resume`) once its window reopens, and asked to continue from where the
+tree now stands. The window it met is written into the shared reading at once, so every other
+step holds on it too. A resumed session may meet the limit again and is held and resumed
+again, within the same 6-hour hold budget. A resume that cannot continue the session —
+refused, or failing before it reports — ends the step `quota_held` with the session's id.
+A merge slot's resolving session is admitted, held and resumed the same way, within the
+same 6-hour hold budget, and its outcome feeds the same reading.
+
+Held time is never charged as work: every session the step opens shares one hang guard,
+counted as time inside a session, and each resume is given what is left of it.
+
+### What the step's report carries
+
+`detail.headroom` records the admission decision and its reason, the reading it rested on
+with each window's age and source, every hold (window, from, until, why, and whether it came
+before the session or after a limit), and every resume. `detail.resets_at` is the ISO-8601
+UTC moment of the furthest `resetsAt` the session's stream reported. The run record and every
+report state the same facts ([run-model.md](run-model.md)).

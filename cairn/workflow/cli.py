@@ -26,6 +26,7 @@ from cairn.gitio import (
     runs_root,
     working_tree_root,
 )
+from cairn.headroom import endpoint_enabled
 from cairn.plan.schema import SchemaError
 from cairn.plan.validate import validate_for_publication
 from cairn.topology import TopologyError, derive
@@ -109,6 +110,7 @@ def _author(args: argparse.Namespace) -> int:
         python_path=python_path,
         runs_root=str(runs_root(repository)),
         schedule=args.schedule,
+        usage_endpoint=endpoint_enabled(),
     )
 
     target = Path(args.out) if args.out else workflow_path(repository, graph["plan"]["slug"])

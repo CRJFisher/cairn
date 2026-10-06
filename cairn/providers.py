@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+import functools
+import http.client
 import json
 import math
 import os
 import shlex
 import subprocess
 import sys
+import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 import uuid
 from collections.abc import Callable, Iterable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO, cast
 
@@ -40,6 +46,15 @@ from cairn.verify import PROVIDER_PROTOCOL, TIMED_OUT
 PROMPT_WRITER_JOIN_SECONDS = 5.0
 PROVIDER_EXIT_GRACE_SECONDS = 30.0
 
+# The cause a session that met the subscription's limit ends on. It is a fact about one
+# session; whether the step holds and resumes it is decided above the provider ([headroom.py]).
+RATE_LIMITED = "rate_limited"
+
+# Handed each stream message that speaks about the account — a `rate_limit_event`, and the
+# `system` message naming how the session is funded — as it arrives, so a concurrent step
+# reads a limit this session met before this session has finished.
+Observer = Callable[[dict[str, Any]], None]
+
 ProviderRunner = Callable[
     [
         StepPrompt,
@@ -50,6 +65,7 @@ ProviderRunner = Callable[
         PopenFactory,
         float,
         str | None,
+        Observer | None,
     ],
     CommandResult,
 ]
@@ -126,8 +142,26 @@ def _filed_reports(message: dict[str, Any]) -> list[object]:
     ]
 
 
+def _tell(observe: Observer | None, message: dict[str, Any]) -> None:
+    """Hand one message to the observer, whose failure is never the session's.
+
+    The observer keeps a shared reading for admission, which fails open by design; a
+    session that died because a file beside it could not be written would turn a fault in
+    the instrument into lost work.
+    """
+    if observe is None:
+        return
+    try:
+        observe(message)
+    except Exception as exc:  # noqa: BLE001 — see the docstring
+        print(f"the subscription reading was not updated: {exc}", file=sys.stderr)
+
+
 def _parse_lines(
-    lines: Iterable[str], *, tee: TextIO | None = None
+    lines: Iterable[str],
+    *,
+    tee: TextIO | None = None,
+    observe: Observer | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """The session's result message and its rate-limit warnings.
 
@@ -163,6 +197,9 @@ def _parse_lines(
             break
         if message_type == "rate_limit_event":
             rate_limits.append(message)
+            _tell(observe, message)
+        elif message_type == "system" and "apiKeySource" in message:
+            _tell(observe, message)
     if result is None:
         raise CairnError("provider_protocol", "stream ended without a result message")
     _required(
@@ -180,19 +217,34 @@ def _parse_lines(
     return result, rate_limits
 
 
-def _latest_reset(rate_limits: list[dict[str, Any]]) -> str | None:
-    """The furthest reset time the session was warned about, or None.
+def reset_epoch(event: dict[str, Any]) -> int | None:
+    """When the window one `rate_limit_event` speaks for reopens, in epoch seconds.
 
-    A rate-limited step is an exclusion that can name the time the plan could be re-run
-    ([02]), so the moment is carried out of the stream even when the session then succeeds.
+    Measured on Claude Code 2.1.220: the moment is nested under `rate_limit_info` and is an
+    integer. Anything else is not a moment this reader will act on.
     """
-    moments = [
-        value
-        for event in rate_limits
-        for value in (event.get("resetsAt"),)
-        if isinstance(value, str) and value
-    ]
-    return max(moments) if moments else None
+    info: object = event.get("rate_limit_info")
+    if not isinstance(info, dict):
+        return None
+    value: object = cast(dict[str, Any], info).get("resetsAt")
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
+
+
+def iso_moment(epoch: float) -> str:
+    """An epoch moment as the ISO-8601 UTC string every report spells time in."""
+    return datetime.fromtimestamp(epoch, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _latest_reset(rate_limits: list[dict[str, Any]]) -> str | None:
+    """The furthest reset time the session was told about, or None.
+
+    Carried out of the stream even when the session then succeeds, because a step that
+    stops at the allowance names the moment the plan is worth running again.
+    """
+    moments = [moment for event in rate_limits if (moment := reset_epoch(event)) is not None]
+    return iso_moment(max(moments)) if moments else None
 
 
 def _translate_result(
@@ -230,7 +282,7 @@ def _translate_result(
         )
     if process_exit != 0:
         causes: dict[str, str] = {
-            "blocking_limit": "rate_limited",
+            "blocking_limit": RATE_LIMITED,
             "max_turns": "turn_limit",
             "structured_output_retry_exhausted": "provider_protocol",
         }
@@ -240,7 +292,7 @@ def _translate_result(
             else "provider_failed"
         )
         return CommandResult(
-            EXIT_RATE_LIMITED if cause == "rate_limited" else EXIT_FAILED,
+            EXIT_RATE_LIMITED if cause == RATE_LIMITED else EXIT_FAILED,
             "failed",
             f"agent process ended with {cause}",
             [],
@@ -341,6 +393,7 @@ def _session_in(
     popen_factory: PopenFactory,
     *,
     deadline_seconds: float | None = None,
+    observe: Observer | None = None,
 ) -> tuple[int, dict[str, Any], list[dict[str, Any]], bool]:
     """One provider invocation, drained to its result message.
 
@@ -390,7 +443,7 @@ def _session_in(
             target=_send_prompt, args=(process.stdin, prompt), daemon=True
         )
         writer.start()
-        result, rate_limits = _parse_lines(process.stdout, tee=sys.stdout)
+        result, rate_limits = _parse_lines(process.stdout, tee=sys.stdout, observe=observe)
         # The provider has answered, so the bound has nothing left to stop. Cancelled here
         # rather than in `finally`: a timer firing during the exit wait below would stop a
         # session that had already reported, and its negative exit status would be read as
@@ -501,6 +554,7 @@ def run_claude(
     popen_factory: PopenFactory = subprocess.Popen,
     deadline_seconds: float = HANG_GUARD,
     resume_session: str | None = None,
+    observe: Observer | None = None,
 ) -> CommandResult:
     """Run the selected plain-CLI path and translate its two status channels.
 
@@ -514,7 +568,8 @@ def run_claude(
     passes share the one guard.
 
     `resume_session` continues an earlier session instead of opening one: a remedy, asked
-    to fix what its own step's assertion found, in the tree only that step has touched.
+    to fix what its own step's assertion found, in the tree only that step has touched — or
+    a session the subscription's limit stopped, once its window has reopened.
     """
     session_id = resume_session or str(uuid.uuid4())
     started = time.monotonic()
@@ -569,6 +624,7 @@ def run_claude(
             permission_mode=permission_mode,
             deny_patterns=denied,
             model=model,
+            observe=observe,
         )
         return stopped._replace(detail={**stopped.detail, **led})
 
@@ -596,6 +652,7 @@ def run_claude(
                 working_directory,
                 popen_factory,
                 deadline_seconds=deadline_seconds,
+                observe=observe,
             )
         except Deadline:
             return stopped_at_deadline()
@@ -624,6 +681,7 @@ def run_claude(
             working_directory,
             popen_factory,
             deadline_seconds=remaining,
+            observe=observe,
         )
     except Deadline:
         return stopped_at_deadline()
@@ -678,6 +736,7 @@ def run_claude(
                 # engine's bound and leave the step with no report at all — the very
                 # loss the rescue exists to prevent ([22 B]).
                 deadline_seconds=resume_bound_seconds(),
+                observe=observe,
             )
         except Deadline:
             # Stopped at its bound before it answered: as silent as a resume that answered
@@ -768,6 +827,7 @@ def _report_after_deadline(
     permission_mode: str,
     deny_patterns: list[str],
     model: str | None,
+    observe: Observer | None,
 ) -> CommandResult:
     """The one resume a session stopped by the hang guard is given, and what it comes to.
 
@@ -806,6 +866,7 @@ def _report_after_deadline(
             working_directory,
             popen_factory,
             deadline_seconds=resume_bound_seconds(),
+            observe=observe,
         )
     except Deadline:
         return silence(RESUME_STILL_SILENT, {})
@@ -829,9 +890,188 @@ def _report_after_deadline(
     return translated._replace(detail={**translated.detail, **stopped})
 
 
+# --- the subscription's own instruments ----------------------------------------------
+#
+# What the allowance is measured with, beyond the stream every session already gives
+# ([headroom.py]). Provider-specific to the bone — a model, a command line, a credential
+# store and an endpoint — so they live here, and the reading they feed does not know whose
+# they are.
+
+PROBE_MODEL = "haiku"
+PROBE_PROMPT = "Reply with the single word ok."
+USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+USAGE_BETA = "oauth-2025-04-20"
+USAGE_TIMEOUT = 10.0
+CREDENTIAL_SERVICE = "Claude Code-credentials"
+CREDENTIAL_FILE = Path(".claude") / ".credentials.json"
+# A token this close to expiry is treated as expired: the CLI refreshes it, and a reader
+# outside the CLI that refreshed it too would race that refresh.
+CREDENTIAL_MARGIN = 60.0
+
+
+class Unmeasured(Exception):
+    """An instrument could not give a reading; its message says why, for the report."""
+
+
+class EndpointRefused(Unmeasured):
+    """The usage endpoint answered 429, which backs every reader on this machine off."""
+
+
+def probe_command() -> list[str]:
+    """One turn on the smallest model, with no settings, tools or context loaded.
+
+    Measured on Claude Code 2.1.220: this answers with the `rate_limit_event` before the
+    model replies, so one turn is enough to read the allowance. `--bare` is not used
+    because it never reads the subscription's own credential.
+    """
+    return [
+        PROVIDER_BINARY,
+        "-p",
+        "--model",
+        PROBE_MODEL,
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--no-session-persistence",
+        "--setting-sources",
+        "",
+        "--strict-mcp-config",
+        "--tools",
+        "",
+    ]
+
+
+def run_probe(timeout: float) -> list[dict[str, Any]]:
+    """The probe's stream, every line that is a JSON object, from a scratch directory.
+
+    Run where no project lives, so no `CLAUDE.md` is discovered into a turn that exists only
+    to be metered.
+    """
+    try:
+        with tempfile.TemporaryDirectory(prefix="cairn-probe-") as where:
+            completed = subprocess.run(
+                probe_command(),
+                input=PROBE_PROMPT,
+                capture_output=True,
+                text=True,
+                errors="replace",
+                timeout=timeout,
+                cwd=where,
+                check=False,
+            )
+    except subprocess.TimeoutExpired as exc:
+        raise Unmeasured(f"the probe gave no answer within {timeout:g} seconds") from exc
+    except OSError as exc:
+        raise Unmeasured(f"the probe could not start: {exc}") from exc
+    messages: list[dict[str, Any]] = []
+    for line in completed.stdout.splitlines():
+        try:
+            parsed: Any = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(parsed, dict):
+            messages.append(cast(dict[str, Any], parsed))
+    return messages
+
+
+def _credential_text() -> str | None:
+    if sys.platform == "darwin":
+        try:
+            completed = subprocess.run(
+                ["security", "find-generic-password", "-s", CREDENTIAL_SERVICE, "-w"],
+                capture_output=True,
+                text=True,
+                timeout=USAGE_TIMEOUT,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            completed = None
+        if completed is not None and completed.returncode == 0 and completed.stdout.strip():
+            return completed.stdout
+    try:
+        return (Path.home() / CREDENTIAL_FILE).read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def access_token(now: float, text: str | None) -> str | None:
+    """The subscription's access token, or None where there is none still worth using.
+
+    Never refreshed here: Claude Code refreshes its own token while it runs, and a second
+    refresher would race it. An expired token is an unknown reading, not a reason to act.
+    """
+    if text is None:
+        return None
+    try:
+        parsed: Any = json.loads(text)
+    except ValueError:
+        return None
+    oauth: Any = cast(dict[str, Any], parsed).get("claudeAiOauth") if isinstance(parsed, dict) else None
+    if not isinstance(oauth, dict):
+        return None
+    fields = cast(dict[str, Any], oauth)
+    token: object = fields.get("accessToken")
+    expires: object = fields.get("expiresAt")
+    if not isinstance(token, str) or not token:
+        return None
+    if (
+        isinstance(expires, (int, float))
+        and not isinstance(expires, bool)
+        and expires / 1000 <= now + CREDENTIAL_MARGIN
+    ):
+        return None
+    return token
+
+
+@functools.cache
+def _user_agent() -> str:
+    """Claude Code's own agent string, without which the endpoint answers 429 at once."""
+    try:
+        completed = subprocess.run(
+            [PROVIDER_BINARY, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=USAGE_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return "claude-code"
+    version = completed.stdout.split()[:1]
+    return f"claude-code/{version[0]}" if completed.returncode == 0 and version else "claude-code"
+
+
+def read_usage(now: float) -> object:
+    """The usage endpoint's answer, as the JSON it sent. Undocumented; the owner opts in."""
+    token = access_token(now, _credential_text())
+    if token is None:
+        raise Unmeasured("no unexpired credential was readable")
+    request = urllib.request.Request(
+        USAGE_URL,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "anthropic-beta": USAGE_BETA,
+            "User-Agent": _user_agent(),
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=USAGE_TIMEOUT) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 429:
+            raise EndpointRefused("the usage endpoint answered 429") from exc
+        raise Unmeasured(f"the usage endpoint answered {exc.code}") from exc
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as exc:
+        raise Unmeasured(f"the usage endpoint could not be read: {exc}") from exc
+
+
 PROVIDER_RUNNERS: dict[str, ProviderRunner] = {
     "claude": run_claude,
 }
+
+# The providers whose sessions spend a Claude subscription's allowance, and so are admitted,
+# held and resumed against it ([headroom.py]). A provider outside it has no windows Cairn can
+# read, and its sessions start as they always did.
+METERED_PROVIDERS: frozenset[str] = frozenset({"claude"})
 
 
 def resume_command(session_id: str, working_directory: str) -> str:
@@ -860,12 +1100,13 @@ def run_provider(
     popen_factory: PopenFactory = subprocess.Popen,
     deadline_seconds: float = HANG_GUARD,
     resume_session: str | None = None,
+    observe: Observer | None = None,
 ) -> CommandResult:
-    """Open one session under the hang guard.
+    """Open one session under the hang guard, or under what is left of it.
 
-    The guard is Cairn's own constant and no caller chooses it: this is the one place a
-    session's deadline is applied, so every session in every run is stopped by the same
-    one.
+    This is the one place a session's deadline is applied. Its default is Cairn's own
+    constant; a step resuming after a hold at the allowance passes what remains of that same
+    guard, so held time is never charged as work and work is never given more than the guard.
     """
     try:
         runner = runners[provider]
@@ -880,4 +1121,5 @@ def run_provider(
         popen_factory,
         deadline_seconds,
         resume_session,
+        observe,
     )

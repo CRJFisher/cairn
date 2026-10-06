@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "fan-out",
-    "cairn_generator": "9",
+    "cairn_generator": "11",
     "cairn_engine": "2.11.0",
     "cairn_graph_sha256": "e01051f3d799685929a7025788b8ece8192055c3f2d9d35434ea5e07da9dc267",
-    "cairn_body_sha256": "c57916f21788beaee841fa8b648d2a286235a17e927eb135110b748cf830957f"
+    "cairn_body_sha256": "ba02405ff47f7c09e5abd4c3c68c6286da4761e8b7a4f485ee5bd16ffec0b020"
   },
   "params": [
     {
@@ -54,12 +54,12 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn lock acquire --plan fan-out --run-timeout 84180"
+      "run": "python3 -m cairn lock acquire --plan fan-out --run-timeout 192180"
     },
     {
       "name": "work_extract_the_loader_interface",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 14580,
+      "timeout_sec": 36180,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
@@ -148,7 +148,7 @@
     {
       "name": "work_keymap_reader",
       "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/fan-out/keymap_reader",
-      "timeout_sec": 14580,
+      "timeout_sec": 36180,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
@@ -240,7 +240,7 @@
     {
       "name": "work_theme_reader",
       "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/fan-out/theme_reader",
-      "timeout_sec": 14580,
+      "timeout_sec": 36180,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
@@ -333,7 +333,7 @@
     {
       "name": "merge_w2_1",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 15120,
+      "timeout_sec": 36720,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
@@ -359,7 +359,7 @@
     {
       "name": "merge_w2_2",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 15120,
+      "timeout_sec": 36720,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1

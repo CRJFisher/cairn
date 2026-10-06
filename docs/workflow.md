@@ -68,17 +68,18 @@ stand in, because a path names one target. `cairn merge land`, `cairn merge veri
 Omission is inheritance, not neutrality: the engine writes `~/.config/dagu/base.yaml` on its
 first invocation and every DAG on that machine inherits it.
 
-| Field                | Emitted as                    | What omission would mean                                                   |
-| -------------------- | ----------------------------- | -------------------------------------------------------------------------- |
-| `type`               | `graph`                       | the machine decides; `chain` silently serialises it                        |
-| `max_active_steps`   | the node count                | **zero also means "unset"** — see below                                    |
-| `retry_policy`       | `{limit: 0, interval_sec: 1}` | three replays of every agent session                                       |
-| `timeout_sec`        | on every step                 | there is no default; a step ran 35m uninterrupted                          |
-| `working_dir`        | on every step                 | the step runs in a generated scratch directory                             |
-| `env: PYTHONPATH`    | the package root              | the gate cannot import Cairn and every step skips                          |
-| `catchup_window`     | the empty string              | every cron slot missed while the machine slept replays as an agent session |
-| `overlap_policy`     | `skip`                        | the machine decides what a firing arriving mid-run does                    |
-| no top-level `name:` | —                             | the validator rejects the file a run would accept                          |
+| Field                                | Emitted as                                        | What omission would mean                                                   |
+| ------------------------------------ | ------------------------------------------------- | -------------------------------------------------------------------------- |
+| `type`                               | `graph`                                           | the machine decides; `chain` silently serialises it                        |
+| `max_active_steps`                   | the node count                                    | **zero also means "unset"** — see below                                    |
+| `retry_policy`                       | `{limit: 0, interval_sec: 1}`                     | three replays of every agent session                                       |
+| `timeout_sec`                        | on every step                                     | there is no default; a step ran 35m uninterrupted                          |
+| `working_dir`                        | on every step                                     | the step runs in a generated scratch directory                             |
+| `env: PYTHONPATH`                    | the package root                                  | the gate cannot import Cairn and every step skips                          |
+| `env: CAIRN_HEADROOM_USAGE_ENDPOINT` | `1`, only where the authoring environment sets it | no step can read the subscription's usage endpoint the owner opted into    |
+| `catchup_window`                     | the empty string                                  | every cron slot missed while the machine slept replays as an agent session |
+| `overlap_policy`                     | `skip`                                            | the machine decides what a firing arriving mid-run does                    |
+| no top-level `name:`                 | —                                                 | the validator rejects the file a run would accept                          |
 
 `schedule` is the one optional root key, written when `author --schedule` is given and
 absent otherwise. Measured, the empty catchup window is the only spelling that turns

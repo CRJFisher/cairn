@@ -13,7 +13,7 @@ agreeing with it quietly.
 
 from __future__ import annotations
 
-from cairn.record.model import RunRecord
+from cairn.record.model import AllowanceHold, AllowanceWindow, Headroom, RunRecord
 from cairn.record.vocabulary import PROVENANCE_ABSENT, STEP_OUTCOMES
 
 ABSENT = PROVENANCE_ABSENT
@@ -35,6 +35,58 @@ def _value(value: object) -> str:
 
 def _list(values: list[str]) -> str:
     return ", ".join(values) if values else NONE
+
+
+def _window(window: AllowanceWindow) -> str:
+    """One window's measurement as one fact: how full, its state, when it reopens, whose word."""
+    used = "usage not given" if window["used"] is None else f"{window['used'] * 100:.0f}% used"
+    parts = [f"{window['window']} {used}"]
+    if window["status"] is not None:
+        parts.append(window["status"])
+    if window["resets_at"] is not None:
+        parts.append(f"reopens {window['resets_at']}")
+    parts.append(f"read {window['read_at'] or 'at an unrecorded time'} from the {window['source'] or 'unknown source'}")
+    return ", ".join(parts)
+
+
+def _windows(windows: list[AllowanceWindow]) -> str:
+    return "; ".join(_window(window) for window in windows) if windows else NONE
+
+
+def _hold(hold: AllowanceHold) -> str:
+    return (
+        f"{hold['window'] or 'the allowance'} from {hold['started'] or 'an unrecorded time'} "
+        f"until {hold['until'] or 'an unrecorded time'}: {hold['why'] or 'no reason recorded'}"
+    )
+
+
+def _headroom(key: str, headroom: Headroom | None) -> list[tuple[str, str]]:
+    """An agent step's dealings with the allowance, each one fact a rendering can state."""
+    if headroom is None:
+        return [
+            (f"{key}.allowance", ABSENT),
+            (f"{key}.allowance_reason", ABSENT),
+            (f"{key}.allowance_reading", ABSENT),
+            (f"{key}.holds", ABSENT),
+            (f"{key}.resumes", ABSENT),
+            (f"{key}.held_window", ABSENT),
+            (f"{key}.held_until", ABSENT),
+            (f"{key}.holding", ABSENT),
+        ]
+    holding = headroom["holding"]
+    return [
+        (f"{key}.allowance", _value(headroom["admission"])),
+        (f"{key}.allowance_reason", _value(headroom["reason"])),
+        (f"{key}.allowance_reading", _windows(headroom["reading"])),
+        (
+            f"{key}.holds",
+            "; ".join(_hold(hold) for hold in headroom["holds"]) if headroom["holds"] else NONE,
+        ),
+        (f"{key}.resumes", _value(headroom["resumes"])),
+        (f"{key}.held_window", _value(headroom["held_window"])),
+        (f"{key}.held_until", _value(headroom["held_until"])),
+        (f"{key}.holding", ABSENT if holding is None else _hold(holding)),
+    ]
 
 
 def canonical_facts(record: RunRecord) -> list[tuple[str, str]]:
@@ -65,6 +117,7 @@ def canonical_facts(record: RunRecord) -> list[tuple[str, str]]:
         ("run.next_subject", _value(record["next_action"]["subject"])),
         ("run.next_command", _value(record["next_action"]["command"])),
         ("run.view_url", _value(record["view_url"])),
+        ("run.allowance", _windows(record["allowance"])),
         ("git.repository", _value(record["git"]["repository"])),
         ("git.parent_branch", _value(record["git"]["parent_branch"])),
         ("git.commits", _list(record["git"]["commits"])),
@@ -149,6 +202,7 @@ def canonical_facts(record: RunRecord) -> list[tuple[str, str]]:
                 (f"{key}.completed_by", _value(step["completed_by_run"])),
                 (f"{key}.left_uncommitted", _list(step["left_uncommitted"])),
                 (f"{key}.follow_up_work", _list(step["follow_up_work"])),
+                *_headroom(key, step["headroom"]),
             ]
         )
     for index, item in enumerate(record["attention"]):

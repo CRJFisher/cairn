@@ -115,13 +115,12 @@ AGENT_MODEL = "sonnet"
 # because the task is wrong are indistinguishable from outside, and a second session would
 # run against a repository the first one already changed.
 #
-# A rate limit is distinguishable — the agent reports it on its own exit status — and was
-# the one case argued to be worth a bounded retry. It is not, because the engine's retry
-# policy is a static number in a file and cannot read the `resetsAt` the agent supplies.
-# A fixed wait short enough to be worth anything is far shorter than a real limit's reset,
-# so the retry would usually meet the same limit and meet it again. The moment is reported
-# instead: a run that stops on a limit says when it is worth
-# starting again, and the committed marker means the re-run skips what already landed.
+# A subscription limit is not a failure and is not retried either: the engine's retry policy
+# is a static number in a file and cannot read the reset time a limit carries. The step
+# itself holds instead — before a session, when the shared reading says a window is closed or
+# closing, and after one, when a session meets the limit and is resumed once the window
+# reopens ([headroom.py]). A hold longer than the step can wait ends it `quota_held`, naming
+# the moment, and the committed marker means the re-run skips what already landed.
 AGENT_RETRIES = 0
 COMMAND_RETRIES = 0
 RETRY_INTERVAL = 1
@@ -170,13 +169,34 @@ AGENT_REPORT_GRACE = 180
 # bound, whatever the resumed session does.
 AGENT_RESUME_MARGIN = 30
 
+# How long an agent step may spend held at the subscription's allowance, on top of the hang
+# guard it may spend working. Long enough to wait out a whole 5-hour window and the backed-off
+# re-measurements behind it; a hold that would end later — a weekly window days away — ends
+# the step `quota_held` instead of sleeping a worker for days. The engine's bound grows by it
+# exactly as it grows by the report grace, so the run's maximum and the lock's reclaim window
+# stay derivable from the graph ([headroom.py]).
+QUOTA_WAIT = 21600
+
+# How full a window may be before a session is not started into it. One figure per window,
+# because 0.95 of a 5-hour window reopens within hours and 0.95 of a weekly one may not
+# reopen for days; both start at the same bet until a measurement says otherwise.
+HOLD_THRESHOLDS: dict[str, float] = {
+    "five_hour": 0.95,
+    "seven_day": 0.95,
+    "seven_day_opus": 0.95,
+    "seven_day_sonnet": 0.95,
+}
+
+# The engine's bound on an agent step: the work, the longest hold, and the report after
+# them. The hold lives inside the step's own body, so the engine's kill lands after both and
+# still the grace later.
+AGENT_TIMEOUT = HANG_GUARD + QUOTA_WAIT + AGENT_REPORT_GRACE
+
 # A merge resolver is an agent role like any other, so it names its model and runs under the
-# same hang guard. Its engine step also leaves the same report grace as an ordinary agent
-# session after the internal deadline.
+# same hang guard and the same hold at the allowance. Its engine step also leaves the same
+# report grace as an ordinary agent session after the internal deadline.
 MERGE_MODEL = AGENT_MODEL
-MERGE_TIMEOUT = (
-    MUTEX_WAIT + GIT_TIMEOUT + HANG_GUARD + AGENT_REPORT_GRACE
-)
+MERGE_TIMEOUT = MUTEX_WAIT + GIT_TIMEOUT + HANG_GUARD + QUOTA_WAIT + AGENT_REPORT_GRACE
 MERGE_RETRIES = 0
 
 # The engine applies `timeout_sec` to each attempt rather than to the step [V], so a step's

@@ -18,7 +18,7 @@ import json
 from typing import Any, cast
 
 from cairn.emitters import emit_node
-from cairn.layout import RUNS_ROOT_ENV
+from cairn.layout import HEADROOM_ENDPOINT_ENV, RUNS_ROOT_ENV
 from cairn.plan.schema import RETRY_INTERVAL, Graph, Step
 from cairn.topology import WORKTREES_SUFFIX, Topology
 from cairn.workflow.schema import (
@@ -109,6 +109,7 @@ def envelope(
     runs_root: str,
     handler: EngineStep | None = None,
     schedule: str | None = None,
+    usage_endpoint: bool = False,
 ) -> Workflow:
     """The file around a set of steps, with every machine-level default written out.
 
@@ -120,6 +121,9 @@ def envelope(
     escalation — a persistent daemon, a watched directory, and a retry
     policy neutralised before it starts ([triggers.md]) — so it is never a side effect of
     wanting a recurring plan.
+
+    `usage_endpoint` carries the owner's opt-in to the subscription's usage endpoint into the
+    steps, which the engine would otherwise never hand them ([headroom.py]).
     """
     # Placed straight after `type` so a person opening the file reads what it is and when it
     # runs before anything else. The expression is the engine's to judge: measured, `dagu
@@ -153,7 +157,11 @@ def envelope(
         # ([run-model.md]). Measured against Dagu 2.11.0, an `env:` entry reaches the
         # lifecycle handler as well as every step, so the run's release can write its own
         # report — which is the one report a failed run always has to leave.
-        "env": [{PYTHONPATH_ENV: python_path}, {RUNS_ROOT_ENV: runs_root}],
+        "env": [
+            {PYTHONPATH_ENV: python_path},
+            {RUNS_ROOT_ENV: runs_root},
+            *([{HEADROOM_ENDPOINT_ENV: "1"}] if usage_endpoint else []),
+        ],
         # The release is a lifecycle handler rather than a node: the engine never dispatches
         # a step whose dependency failed, so a failed run would otherwise hold its
         # repository for the whole reclaim window ([topology.py]).
@@ -171,6 +179,7 @@ def build(
     python_path: str,
     runs_root: str,
     schedule: str | None = None,
+    usage_endpoint: bool = False,
 ) -> Workflow:
     """Assemble the whole file: graph → topology → bodies → a validated definition."""
     steps: dict[str, Step] = {step["id"]: step for step in graph["steps"]}
@@ -200,6 +209,7 @@ def build(
         runs_root=runs_root,
         handler=release,
         schedule=schedule,
+        usage_endpoint=usage_endpoint,
     )
     document["labels"] = _stamp_labels(graph, document)
     return document
