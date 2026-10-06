@@ -1,0 +1,7 @@
+{
+  "key": "once",
+  "run_id": "20261006T150411Z-984bd260",
+  "scope": "once",
+  "step_id": "wait_for_allowance",
+  "summary": "condition succeeded after 5988 attempt(s)"
+}
