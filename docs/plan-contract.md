@@ -278,6 +278,7 @@ traceback — because a caller cannot tell a crash from a rejection.
 | `cycle`                 | a cycle, named step by step — a cycle is not a topology                                                                                                          |
 | `empty_graph`           | no steps                                                                                                                                                         |
 | `empty_task`            | a step carrying no task                                                                                                                                          |
+| `not_a_step`            | an agent step whose task leads with a built-in command that does nothing a step could be verified for: `/clear`, `/compact`, `/help`, `/login`, `/loop`          |
 | `model`                 | an agent step naming no model                                                                                                                                    |
 | `scope_inputs`          | `scope: inputs` with nothing in `reads`                                                                                                                          |
 | `omitted_and_included`  | one name appearing as both a step and an omission                                                                                                                |

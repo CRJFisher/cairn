@@ -35,8 +35,9 @@ from cairn.plan.schema import (
     WAIT_REPORT_GRACE,
     normalise,
 )
-from cairn.protocol import RESUME_FOR_REPORT, compose_prompt
+from cairn.protocol import RESUME_FOR_REPORT, StepPrompt, compose_prompt
 from cairn.providers import (
+    BACKGROUND_WAIT_CEILING,
     ENDED_WITHOUT_REPORTING,
     NEVER_DELIVERED,
     PROVIDER_RUNNERS,
@@ -52,7 +53,7 @@ from tests.test_step_protocol import plan_step
 
 
 def run_echo(
-    prompt: str,
+    prompt: StepPrompt,
     working_directory: Path,
     permission_mode: str,
     model: str | None,
@@ -66,7 +67,7 @@ def run_echo(
     return CommandResult(
         EXIT_OK,
         "done",
-        prompt,
+        prompt.prompt,
         [],
         False,
         None,
@@ -909,6 +910,40 @@ class FakeOutput:
         pass
 
 
+def filed_report(report: object, *, parent: str | None = None) -> str:
+    """One stream line in which a session files `report`, as the provider writes it.
+
+    `parent` is the call a subagent was started by; the session's own lines carry none.
+    """
+    return json.dumps(
+        {
+            "type": "assistant",
+            "parent_tool_use_id": parent,
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_report",
+                        "name": "StructuredOutput",
+                        "input": report,
+                    }
+                ]
+            },
+        }
+    )
+
+
+def session_stream(record: dict[str, Any]) -> str:
+    """The stream of a session whose result message is `record`.
+
+    The provider streams every report the session files as a call to its report tool and
+    closes with the result, so a record carrying a report is preceded by its filing.
+    """
+    report = record.get("structured_output")
+    filed = [] if report is None else [filed_report(report)]
+    return "".join(line + "\n" for line in [*filed, json.dumps(record)])
+
+
 class FakeProcess:
     """A provider double that models exit state, so cleanup assertions are not no-ops."""
 
@@ -920,7 +955,7 @@ class FakeProcess:
         self.stopped = False
         self.finished = False
         self.stdin = FakeInput()
-        self.stdout = FakeOutput(json.dumps(self.output()) + "\n")
+        self.stdout = FakeOutput(session_stream(self.output()))
 
     def session(self) -> str:
         flag = "--session-id" if "--session-id" in self.command else "--resume"
@@ -987,7 +1022,7 @@ class ProviderBehavior(unittest.TestCase):
         stream = io.StringIO()
         with redirect_stdout(stream):
             result = run_claude(
-                "do work", Path("/tmp"), "auto", None, ["Bash(rm:*)"], factory
+                StepPrompt(None, "do work"), Path("/tmp"), "auto", None, ["Bash(rm:*)"], factory
             )
         self.assertEqual(
             result.detail["deny_patterns"], [*NEVER_DELIVERED, "Bash(rm:*)"]
@@ -1003,7 +1038,7 @@ class ProviderBehavior(unittest.TestCase):
 
         with redirect_stdout(io.StringIO()):
             result = run_claude(
-                "fix it", Path("/tmp"), "auto", "sonnet", [], factory, resume_session="session-7"
+                StepPrompt(None, "fix it"), Path("/tmp"), "auto", "sonnet", [], factory, resume_session="session-7"
             )
         command = made[0].command
         self.assertEqual(command[command.index("--resume") + 1], "session-7")
@@ -1021,7 +1056,7 @@ class ProviderBehavior(unittest.TestCase):
         stream = io.StringIO()
         with redirect_stdout(stream):
             result = run_claude(
-                "do work",
+                StepPrompt(None, "do work"),
                 Path("/tmp"),
                 "auto",
                 "opus",
@@ -1061,7 +1096,7 @@ class ProviderBehavior(unittest.TestCase):
                 return record
 
         result = run_claude(
-            "fail", Path.cwd(), "auto", None, [], Failed
+            StepPrompt(None, "fail"), Path.cwd(), "auto", None, [], Failed
         )
         self.assertNotEqual(result[0], 0)
         self.assertEqual(result[5], "reported_failure")
@@ -1074,7 +1109,8 @@ class ProviderBehavior(unittest.TestCase):
                 return record
 
         with self.assertRaisesRegex(CairnError, "num_turns"):
-            run_claude("x", Path.cwd(), "auto", None, [], Missing)
+            run_claude(
+                StepPrompt(None, "x"), Path.cwd(), "auto", None, [], Missing)
 
     def test_nonzero_provider_outcomes_keep_typed_causes_without_a_report(self) -> None:
         causes = {
@@ -1101,7 +1137,7 @@ class ProviderBehavior(unittest.TestCase):
                 io.StringIO()
             ):
                 result = run_claude(
-                    "x",
+                StepPrompt(None, "x"),
                     Path.cwd(),
                     "auto",
                     None,
@@ -1120,7 +1156,7 @@ class ProviderBehavior(unittest.TestCase):
 
         with self.assertRaises(CairnError) as caught:
             run_claude(
-                "x", Path.cwd(), "auto", None, [], Mismatched
+                StepPrompt(None, "x"), Path.cwd(), "auto", None, [], Mismatched
             )
         self.assertEqual(caught.exception.cause, "provider_protocol")
         self.assertEqual(caught.exception.detail["session_id"], "foreign-session")
@@ -1144,7 +1180,8 @@ class ProviderBehavior(unittest.TestCase):
             redirect_stdout(io.StringIO()),
             self.assertRaisesRegex(CairnError, "not valid JSON"),
         ):
-            run_claude("x", Path.cwd(), "auto", None, [], factory)
+            run_claude(
+                StepPrompt(None, "x"), Path.cwd(), "auto", None, [], factory)
         self.assertIsNotNone(made[0].poll())
 
     def test_prompt_and_stream_larger_than_a_pipe_buffer_both_flow(self) -> None:
@@ -1170,7 +1207,7 @@ class ProviderBehavior(unittest.TestCase):
                 'sys.stdout.write(\'{"type": "noise"}\\n\' * 20000)\n'
                 "sys.stdout.flush()\n"
                 "received = sys.stdin.read()\n"
-                f"sys.stdout.write({record!r} + '\\n')\n"
+                f"sys.stdout.write({session_stream(json.loads(record))!r})\n"
                 'sys.stdout.write(\'{"type": "echo", "length": %d}\\n\' % len(received))\n'
             )
             process = subprocess.Popen([sys.executable, "-c", script], **kwargs)
@@ -1184,7 +1221,7 @@ class ProviderBehavior(unittest.TestCase):
         def call() -> None:
             with redirect_stdout(io.StringIO()):
                 outcome.append(
-                    run_claude("x" + prompt, Path.cwd(), "auto", None, [], factory)
+                    run_claude(StepPrompt(None, "x" + prompt), Path.cwd(), "auto", None, [], factory)
                 )
 
         thread = threading.Thread(target=call, daemon=True)
@@ -1227,7 +1264,7 @@ class ProviderBehavior(unittest.TestCase):
             # its own long-lived children looks like from here.
             script = (
                 "import sys, time\n"
-                f"sys.stdout.write({record!r} + '\\n')\n"
+                f"sys.stdout.write({session_stream(json.loads(record))!r})\n"
                 "sys.stdout.flush()\n"
                 "time.sleep(300)\n"
             )
@@ -1240,7 +1277,8 @@ class ProviderBehavior(unittest.TestCase):
                 patch("cairn.providers.PROVIDER_EXIT_GRACE_SECONDS", 0.5),
                 redirect_stdout(io.StringIO()),
             ):
-                result = run_claude("x", Path.cwd(), "auto", None, [], factory)
+                result = run_claude(
+                StepPrompt(None, "x"), Path.cwd(), "auto", None, [], factory)
             self.assertEqual(result.status, "done")
             self.assertEqual(result.summary, "answered then lingered")
             self.assertIsNone(result.cause)
@@ -1284,7 +1322,7 @@ class ProviderBehavior(unittest.TestCase):
             report = json.loads(
                 report_file(env).read_text()
             )
-            self.assertEqual(report["summary"], compose_prompt("hello"))
+            self.assertEqual(report["summary"], compose_prompt("hello").prompt)
             self.assertEqual(report["status"], "done")
             self.assertEqual(report["detail"]["deny_patterns"], ["Bash(rm:*)"])
             self.assertEqual(
@@ -1313,9 +1351,7 @@ class ASessionThatEndedWithoutReportingIsResumedOnce(unittest.TestCase):
                 # Without it a scripted `terminal_reason` is inert, because
                 # `_translate_result` reads one only for a process that exited nonzero.
                 process.returncode = int(said.pop("exit", 0))
-                process.stdout = FakeOutput(
-                    json.dumps({**process.output(), **said}) + "\n"
-                )
+                process.stdout = FakeOutput(session_stream({**process.output(), **said}))
             made.append(process)
             return process
 
@@ -1324,7 +1360,8 @@ class ASessionThatEndedWithoutReportingIsResumedOnce(unittest.TestCase):
     def _ran(self, factory: Callable[..., FakeProcess]):
         stream = io.StringIO()
         with redirect_stdout(stream):
-            return run_claude("do work", Path("/tmp"), "auto", "sonnet", [], factory)
+            return run_claude(
+                StepPrompt(None, "do work"), Path("/tmp"), "auto", "sonnet", [], factory)
 
     UNREPORTED: ClassVar[dict[str, Any]] = {
         "stop_reason": "tool_use",
@@ -1332,8 +1369,8 @@ class ASessionThatEndedWithoutReportingIsResumedOnce(unittest.TestCase):
     }
 
     def test_a_correct_report_also_stops_for_a_tool_call_and_is_never_resumed(self) -> None:
-        """The trap the discrimination exists for. A structured report *is* a tool call, so
-        `stop_reason` alone says nothing — a rescue keyed on it would resume every step."""
+        """A structured report *is* a tool call, so a session that reported stops on one
+        too — a rescue keyed on how the session stopped would resume every step."""
         self.assertFalse(
             ended_without_reporting(
                 0, {"stop_reason": "tool_use", "structured_output": {"status": "done"}}
@@ -1375,24 +1412,60 @@ class ASessionThatEndedWithoutReportingIsResumedOnce(unittest.TestCase):
         self.assertEqual(made[1].prompt, RESUME_FOR_REPORT)
         self.assertNotIn("do work", made[1].prompt)
 
-    def test_every_half_of_the_discrimination_is_load_bearing(self) -> None:
-        """Measured: a correct report is itself a tool call, so `stop_reason` decides
-        nothing alone. Each of the three facts is asserted, or a variant dropping one of
-        them would resume a session that failed and run it twice."""
-        silent = {"stop_reason": "tool_use", "structured_output": None}
-        self.assertTrue(ended_without_reporting(0, silent))
+    def test_the_absent_report_is_the_whole_discrimination(self) -> None:
+        """Measured: a session whose only move was a forked skill ends with no turn of its
+        own and no stop reason, and one that reported stops on a tool call. How the session
+        stopped decides nothing; whether it reported decides everything."""
+        silent: dict[str, Any] = {"structured_output": None}
+        for stopped in ("tool_use", "end_turn", None):
+            with self.subTest(stop_reason=stopped):
+                self.assertTrue(ended_without_reporting(0, {**silent, "stop_reason": stopped}))
         # A session that failed for its own typed reason is not a silence.
         self.assertFalse(ended_without_reporting(1, silent))
-        # A turn that genuinely ended is not a silence either.
-        self.assertFalse(
-            ended_without_reporting(0, {**silent, "stop_reason": "end_turn"})
-        )
-        # And the trap: a correct report stops for a tool call too.
         self.assertFalse(
             ended_without_reporting(
                 0, {"stop_reason": "tool_use", "structured_output": {"status": "done"}}
             )
         )
+
+    def test_a_forked_skill_that_left_the_session_no_turn_is_resumed_for_its_report(
+        self,
+    ) -> None:
+        factory, made = self._scripted(
+            {"stop_reason": None, "num_turns": 0, "structured_output": None}
+        )
+        result = self._ran(factory)
+        self.assertEqual(len(made), 2)
+        self.assertEqual(made[1].prompt, RESUME_FOR_REPORT)
+        self.assertEqual(result.status, "done")
+
+    def test_a_resume_stopped_at_its_bound_is_the_silence_it_was(self) -> None:
+        """The resume is bounded; reaching the bound is one more way of not reporting, and
+        is recorded as one rather than escaping as an unhandled stop."""
+        made: list[FakeProcess] = []
+
+        def factory(command: list[str], **kwargs: object) -> FakeProcess:
+            if made:
+                process: FakeProcess = HangingProcess(command, **kwargs)
+            else:
+                process = FakeProcess(command, **kwargs)
+                process.stdout = FakeOutput(
+                    session_stream({**process.output(), **self.UNREPORTED})
+                )
+            made.append(process)
+            return process
+
+        with (
+            patch("cairn.providers.AGENT_REPORT_GRACE", 0.6),
+            patch("cairn.providers.AGENT_RESUME_MARGIN", 0.2),
+            patch("cairn.providers.PROVIDER_EXIT_GRACE_SECONDS", 0.2),
+            self.assertRaises(CairnError) as caught,
+        ):
+            self._ran(factory)
+        self.assertEqual(len(made), 2)
+        self.assertTrue(made[1].stopped)
+        self.assertEqual(caught.exception.cause, "provider_protocol")
+        self.assertEqual(caught.exception.detail["resumed_for_report"], RESUME_STILL_SILENT)
 
     def test_a_resume_that_fails_for_its_own_reason_stays_the_silence_it_was(self) -> None:
         """A resume that ends on its own terminal reason must not overwrite the honest cause:
@@ -1422,7 +1495,7 @@ class ASessionThatEndedWithoutReportingIsResumedOnce(unittest.TestCase):
             process = FakeProcess(command, **kwargs)
             if replies:
                 process.stdout = FakeOutput(
-                    json.dumps({**process.output(), **replies.pop(0)}) + "\n"
+                    session_stream({**process.output(), **replies.pop(0)})
                 )
             else:
                 # A stream that ends before its result message — what a resume that cannot
@@ -1520,7 +1593,8 @@ class ASessionIsStoppedByTheHangGuard(unittest.TestCase):
     def _run(self, factory: Callable[..., FakeProcess], deadline: float) -> CommandResult:
         stream = io.StringIO()
         with redirect_stdout(stream):
-            return run_claude("do work", Path("/tmp"), "auto", "sonnet", [], factory, deadline)
+            return run_claude(
+                StepPrompt(None, "do work"), Path("/tmp"), "auto", "sonnet", [], factory, deadline)
 
     def test_a_session_that_outruns_its_bound_is_stopped_and_resumed_for_its_report(self) -> None:
         made: list[FakeProcess] = []
@@ -1613,6 +1687,173 @@ class ASessionIsStoppedByTheHangGuard(unittest.TestCase):
         self.assertFalse(verdict["record"])
         self.assertIsNone(judge(1, stopped)["divergence"])
         self.assertEqual(judge(None, stopped)["cause"], TIMED_OUT)
+
+
+def report(status: str, summary: str) -> dict[str, Any]:
+    return {
+        "status": status,
+        "summary": summary,
+        "follow_up_work": [],
+        "needs_user_decision": False,
+    }
+
+
+class TheReportIsTheLastOneTheSessionFiled(unittest.TestCase):
+    """Measured: the provider's result carries the first report it accepted. A review that
+    ended a turn to wait for two subagents filed an interim `failed`, then `done` once they
+    finished — and was recorded as the `failed`."""
+
+    def _ran(self, *lines: str, structured: object = None) -> CommandResult:
+        def factory(command: list[str], **kwargs: object) -> FakeProcess:
+            process = FakeProcess(command, **kwargs)
+            closing = {**process.output(), "structured_output": structured}
+            process.stdout = FakeOutput(
+                "".join(line + "\n" for line in [*lines, json.dumps(closing)])
+            )
+            return process
+
+        with redirect_stdout(io.StringIO()):
+            return run_claude(
+                StepPrompt(None, "do work"), Path("/tmp"), "auto", "sonnet", [], factory
+            )
+
+    def test_a_later_report_supersedes_an_earlier_one(self) -> None:
+        interim = report("failed", "waiting on two reviewers")
+        result = self._ran(
+            filed_report(interim),
+            filed_report(report("done", "both reviews finished")),
+            structured=interim,
+        )
+        self.assertEqual(result.status, "done")
+        self.assertEqual(result.summary, "both reviews finished")
+
+    def test_a_filing_the_provider_rejected_is_not_the_report(self) -> None:
+        rejected = {"status": "done", "summary": "missing its fields"}
+        result = self._ran(
+            filed_report(report("noop", "nothing to change")),
+            filed_report(rejected),
+            structured=report("noop", "nothing to change"),
+        )
+        self.assertEqual(result.status, "noop")
+
+    def test_a_subagents_filing_never_reports_for_the_step(self) -> None:
+        result = self._ran(
+            filed_report(report("noop", "the session's own")),
+            filed_report(report("failed", "a subagent's"), parent="toolu_agent"),
+        )
+        self.assertEqual(result.summary, "the session's own")
+
+    def test_a_report_only_the_result_carries_is_no_report(self) -> None:
+        """The stream is the one source: a result whose report was never filed in it is a
+        session that did not report, and is asked for one."""
+        made: list[FakeProcess] = []
+
+        def factory(command: list[str], **kwargs: object) -> FakeProcess:
+            process = FakeProcess(command, **kwargs)
+            if not made:
+                process.stdout = FakeOutput(json.dumps(process.output()) + "\n")
+            made.append(process)
+            return process
+
+        with redirect_stdout(io.StringIO()):
+            run_claude(StepPrompt(None, "do work"), Path("/tmp"), "auto", None, [], factory)
+        self.assertEqual(len(made), 2)
+        self.assertEqual(made[1].prompt, RESUME_FOR_REPORT)
+
+
+class AStepLedByACommandRunsItAloneFirst(unittest.TestCase):
+    """A headless session takes everything after a command's name as its arguments, and a
+    command run under the report schema has its own subagents trying to satisfy it. So the
+    command opens the session alone, and the same session is then asked for the rest."""
+
+    PROMPT = compose_prompt("/code-review high --fix\nFix what it finds.")
+
+    def _ran(
+        self, factory: Callable[..., FakeProcess], prompt: StepPrompt = PROMPT
+    ) -> CommandResult:
+        with redirect_stdout(io.StringIO()):
+            return run_claude(prompt, Path("/tmp"), "auto", "sonnet", [], factory)
+
+    def _factory(
+        self, *, command_exit: int = 0
+    ) -> tuple[Callable[..., FakeProcess], list[FakeProcess]]:
+        made: list[FakeProcess] = []
+
+        def factory(command: list[str], **kwargs: object) -> FakeProcess:
+            process = FakeProcess(command, **kwargs)
+            if not made:
+                # The command's own pass: no report is asked of it, and none is filed.
+                process.returncode = command_exit
+                process.stdout = FakeOutput(
+                    session_stream(
+                        {
+                            **process.output(),
+                            "num_turns": 3,
+                            "structured_output": None,
+                            "terminal_reason": "max_turns",
+                        }
+                    )
+                )
+            made.append(process)
+            return process
+
+        return factory, made
+
+    def test_the_command_is_given_alone_and_asked_for_no_report(self) -> None:
+        factory, made = self._factory()
+        self._ran(factory)
+        opening = made[0].command
+        self.assertEqual(made[0].prompt, "/code-review high --fix")
+        self.assertNotIn("--json-schema", opening)
+        self.assertIn("--session-id", opening)
+
+    def test_the_same_session_is_then_asked_for_the_rest_and_reports(self) -> None:
+        factory, made = self._factory()
+        result = self._ran(factory)
+        self.assertEqual(len(made), 2)
+        opening, rest = made[0].command, made[1].command
+        self.assertIn("--json-schema", rest)
+        self.assertEqual(
+            rest[rest.index("--resume") + 1], opening[opening.index("--session-id") + 1]
+        )
+        self.assertEqual(made[1].prompt, self.PROMPT.prompt)
+        self.assertEqual(result.status, "done")
+        self.assertEqual(result.detail["led_by"], "/code-review high --fix")
+        self.assertEqual(result.detail["turn_count"], 5)
+
+    def test_a_command_that_fails_is_the_steps_failure_with_its_own_cause(self) -> None:
+        factory, made = self._factory(command_exit=1)
+        result = self._ran(factory)
+        self.assertEqual(len(made), 1)
+        self.assertEqual(result.cause, "turn_limit")
+        self.assertEqual(result.detail["led_by"], "/code-review high --fix")
+
+    def test_a_remedy_of_a_command_led_step_continues_its_session(self) -> None:
+        factory, made = self._factory()
+        with redirect_stdout(io.StringIO()):
+            run_claude(
+                self.PROMPT, Path("/tmp"), "auto", None, [], factory, resume_session="s-1"
+            )
+        self.assertEqual(made[0].command[made[0].command.index("--resume") + 1], "s-1")
+        self.assertNotIn("--session-id", made[0].command)
+
+
+class EverySessionWaitsForItsSubagents(unittest.TestCase):
+    def test_the_providers_own_wait_ceiling_is_lifted(self) -> None:
+        """The hang guard is the one bound on a session; a ceiling of the provider's own
+        would end a long review silently short of its findings."""
+        made: list[FakeProcess] = []
+
+        def factory(command: list[str], **kwargs: object) -> FakeProcess:
+            process = FakeProcess(command, **kwargs)
+            made.append(process)
+            return process
+
+        with redirect_stdout(io.StringIO()):
+            run_claude(StepPrompt(None, "do work"), Path("/tmp"), "auto", None, [], factory)
+        env = cast(dict[str, str], made[0].kwargs["env"])
+        self.assertEqual(env[BACKGROUND_WAIT_CEILING], "0")
+        self.assertEqual(env.get("PATH"), os.environ.get("PATH"))
 
 
 class EmitterContract(unittest.TestCase):

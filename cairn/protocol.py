@@ -8,7 +8,7 @@ comes from the schema, and nothing anywhere parses a status out of prose.
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, NamedTuple
 
 # The measured value of this text is 69 percentage points of re-run work (02): a resumed
 # session without it never inspected the tree, rewrote six files that were already correct,
@@ -32,7 +32,8 @@ This session is one shot: the process ends when your turn ends, and nothing re-i
 you for a background shell. Subagents and `Monitor` are yours to use — a background
 subagent is waited for, and `Monitor` blocks — but anything you start with `Bash`'s
 `run_in_background` dies unread when your turn ends. Wait for whatever you start, and
-end only by reporting.
+end only by reporting. Ending a turn to wait for a subagent asks you for a report early;
+give one, then report again once it finishes. Your last report is the one that counts.
 
 Report through the structured output you are constrained to. `status` is `done` when the
 end state now holds, `noop` when it already held and you changed nothing, and `failed`
@@ -97,23 +98,64 @@ def compose_remedy_task(task: str, assertion: str, exit_code: int, said: str) ->
 
 # A first line that is a slash command: `/name`, then optional arguments. A path such as
 # `/usr/bin/env` is not one, because a command name holds no further slash.
-_SLASH_COMMAND = re.compile(r"/[A-Za-z][\w:.-]*(?: [^\n]*)?")
+_SLASH_COMMAND = re.compile(r"/([A-Za-z][\w:.-]*)(?: [^\n]*)?")
+
+# Built-in commands that do nothing a step could be verified for. Each has no file whose
+# frontmatter could say so, which is why Cairn keeps the list: the validator refuses a task
+# led by one, naming what it would do instead.
+NOT_A_STEP: dict[str, str] = {
+    "clear": "empties the session it would run in, so it leaves nothing to verify",
+    "compact": "summarises the session it would run in, so it leaves nothing to verify",
+    "help": "prints help to a session nobody reads",
+    "login": "asks a person to sign in, and no person is at a step's session",
+    "loop": "schedules itself to run again, and a step's session denies scheduling",
+}
+
+# What the reporting half of a step led by a command is told about the half before it. The
+# command has already run in this session, so its findings are above; what is not
+# guaranteed is that the tree holds every change it claimed, so that is checked here.
+FOLLOW_THROUGH = """\
+The task's first line, `{command}`, has already run in this session, and what it said is
+above. Do not run it again. Check the working tree with `git status` and `git diff` against
+what it says it changed, and make every change it reported but did not apply. Then bring
+the tree to the rest of the task's end state.
+"""
 
 
-def compose_prompt(task: str) -> str:
-    """The prompt one agent step actually receives: the protocol, then the task.
+class StepPrompt(NamedTuple):
+    """What one agent step's session is given.
+
+    `command` is a slash command the session runs alone, before anything else, with no
+    report asked of it; `prompt` is what the same session is given next, and what it
+    reports against. A step that leads with no command is the prompt alone.
+    """
+
+    command: str | None
+    prompt: str
+
+
+def leading_command(task: str) -> tuple[str, str] | None:
+    """The slash command a task leads with, as its name and its whole line, or None."""
+    first = task.partition("\n")[0]
+    matched = _SLASH_COMMAND.fullmatch(first)
+    return (matched.group(1), first) if matched else None
+
+
+def compose_prompt(task: str) -> StepPrompt:
+    """What one agent step's session is given: the protocol, then the task.
 
     Composed here rather than baked into the emitted workflow so the whole preamble stays
     out of a step's argv, and so a provider added later inherits it without knowing it.
 
-    A task whose first line is a slash command is the one exception to "protocol first". A
-    headless session runs `/skill args` as the person's own command only when it is the very
-    first thing it is given; anywhere later it is prose, and a skill that only a person may
-    start (`disable-model-invocation`) is then refused, which is how `/code-review` failed a
-    step that asked for nothing else. So the command leads and everything else follows it,
-    preamble included. The skill receives only the command's own line as its arguments.
+    A task whose first line is a slash command runs in two halves of one session. A headless
+    session runs `/skill args` as the person's own command only when it is the very first
+    thing it is given, and the command takes everything after its name as its arguments, so
+    the line is given alone: anything that followed it would become the command's target. The
+    protocol, the whole task and the follow-through then continue the same session, which is
+    where the command's findings are and where the report is asked for.
     """
-    first, separator, rest = task.partition("\n")
-    if _SLASH_COMMAND.fullmatch(first):
-        return f"{first}\n\n{PREAMBLE}\n{rest if separator else ''}"
-    return f"{PREAMBLE}\n{task}"
+    led = leading_command(task)
+    if led is None:
+        return StepPrompt(None, f"{PREAMBLE}\n{task}")
+    _, line = led
+    return StepPrompt(line, f"{PREAMBLE}\n{task}\n\n{FOLLOW_THROUGH.format(command=line)}")

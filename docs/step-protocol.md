@@ -165,16 +165,17 @@ parsed:
 }
 ```
 
+**The report is the last one the session filed.** Each report is a call to the provider's
+report tool, and the provider streams every call; the step's report is the last call the
+session made on its own behalf whose output has this shape. The provider's closing result
+carries the first one it accepted instead, and a session that ends a turn to wait for a
+subagent is made to report each time it does: measured, a review that dispatched two
+subagents filed an interim `failed` while they ran and `done` once both had finished. A
+subagent's calls report for the subagent, never for the step.
+
 ## The preamble
 
-Every agent step's prompt is this text followed by the step's task, with one exception: a
-task whose first line is a slash command (`/skill args`) leads the prompt, then a blank
-line, then this text and the rest of the task. A headless session runs a slash command as a
-person's own only when it is the first thing it is given, and a skill that only a person
-may start is refused anywhere else. The skill receives the command's own line as its
-arguments and nothing after it.
-
-The prompt is otherwise this text followed by the step's task. Measured against a
+Every agent step's prompt is this text followed by the step's task. Measured against a
 resumed step: without it a fresh session never inspected the tree, rewrote six files that
 were already correct, and took 152% of the time of doing the work from scratch; with it the
 same resume took 83% and finished in a third of the time. That difference is what makes
@@ -199,7 +200,8 @@ This session is one shot: the process ends when your turn ends, and nothing re-i
 you for a background shell. Subagents and `Monitor` are yours to use — a background
 subagent is waited for, and `Monitor` blocks — but anything you start with `Bash`'s
 `run_in_background` dies unread when your turn ends. Wait for whatever you start, and
-end only by reporting.
+end only by reporting. Ending a turn to wait for a subagent asks you for a report early;
+give one, then report again once it finishes. Your last report is the one that counts.
 
 Report through the structured output you are constrained to. `status` is `done` when the
 end state now holds, `noop` when it already held and you changed nothing, and `failed`
@@ -216,6 +218,32 @@ task converges is a reading of the plan, so the derivation declares it — a
 `non_convergent_task` question quoting the sentence it read
 ([plan-contract.md](plan-contract.md)) — and the author restates the task; no code at
 emission or anywhere else re-reads the sentence.
+
+**A session waits for its subagents for as long as they run.** The provider's own ceiling on
+that wait is lifted for every step's session, so the hang guard is the one bound on a
+session and a long review is never ended short of its findings.
+
+### A task led by a command
+
+A task whose first line is a slash command (`/skill args`) runs in two passes of one
+session. The first pass is the command's line alone, with no report asked of it: a headless
+session runs a slash command as a person's own only when it is the first thing it is given,
+and the command takes everything after its name as its arguments. The second pass continues
+the same session, where the command's findings are, with this text, the whole task, and
+then:
+
+```text
+The task's first line, `{command}`, has already run in this session, and what it said is
+above. Do not run it again. Check the working tree with `git status` and `git diff` against
+what it says it changed, and make every change it reported but did not apply. Then bring
+the tree to the rest of the task's end state.
+```
+
+The second pass is the one that reports. A command that applies fixes does not reliably
+apply all it claims, and the check against the tree is what makes its claim true before
+the assertion reads it. Both passes share the one hang guard, and the record names the
+command under `led_by`. A command that ends its pass in failure is the step's failure, with
+the cause it ended on.
 
 ## The remedy
 
@@ -345,10 +373,9 @@ mid-stream, so the resume asks the same session for its account under the same t
 outcome is exactly the `provider_protocol` failure it already was, with the attempt recorded
 beside it — the rescue can never make the outcome worse than not attempting it.
 
-The discrimination is narrow and it is measured: a **correct** structured report is itself a
-tool call, so a session that reported returns `stop_reason: "tool_use"` too. The stop reason
-decides nothing on its own; the absent `structured_output` beside it is what says the session
-never reported.
+The discrimination is the absent report and nothing else. How a session stopped decides
+nothing: measured, a session that reported stops on a tool call, and a session whose only
+move was a forked skill ends with no turn of its own and no stop reason at all.
 
 **Resuming a step killed mid-work** is the worktree's own contents. The marker is absent
 because verification never ran, the partial edits are still there because the worktree is

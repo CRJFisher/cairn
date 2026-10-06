@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import shlex
 import subprocess
 import sys
@@ -28,7 +29,12 @@ from cairn.core import (
 )
 from cairn.hooks import HOOK_VERB, STOP_EVENT
 from cairn.plan.schema import AGENT_REPORT_GRACE, AGENT_RESUME_MARGIN, HANG_GUARD
-from cairn.protocol import RESUME_FOR_REPORT, STEP_REPORT_SCHEMA, compose_prompt
+from cairn.protocol import (
+    RESUME_FOR_REPORT,
+    STEP_REPORT_SCHEMA,
+    StepPrompt,
+    compose_prompt,
+)
 from cairn.verify import PROVIDER_PROTOCOL, TIMED_OUT
 
 PROMPT_WRITER_JOIN_SECONDS = 5.0
@@ -36,7 +42,7 @@ PROVIDER_EXIT_GRACE_SECONDS = 30.0
 
 ProviderRunner = Callable[
     [
-        str,
+        StepPrompt,
         Path,
         str,
         str | None,
@@ -68,11 +74,73 @@ def _required(record: dict[str, Any], names: tuple[str, ...]) -> None:
         )
 
 
+# The tool a session files its report through. Its calls are in the stream, which is where
+# the report is read from ([_parse_lines]).
+REPORT_TOOL = "StructuredOutput"
+
+
+def _report_fault(output: object) -> str | None:
+    """Why `output` is not a step report, or None when it is one."""
+    if not isinstance(output, dict):
+        return "structured_output is not an object"
+    report = cast(dict[str, Any], output)
+    missing = [
+        name
+        for name in ("status", "summary", "follow_up_work", "needs_user_decision")
+        if name not in report
+    ]
+    if missing:
+        return "structured_output missing required fields: " + ", ".join(missing)
+    if report["status"] not in ("done", "noop", "failed"):
+        return f"unknown structured status {report['status']!r}"
+    if not isinstance(report["summary"], str):
+        return "structured summary is not a string"
+    follow_up: object = report["follow_up_work"]
+    if not isinstance(follow_up, list) or not all(
+        isinstance(item, str) for item in cast(list[object], follow_up)
+    ):
+        return "follow_up_work is not a string array"
+    if not isinstance(report["needs_user_decision"], bool):
+        return "needs_user_decision is not a boolean"
+    return None
+
+
+def _filed_reports(message: dict[str, Any]) -> list[object]:
+    """The reports one stream message files on the session's own behalf.
+
+    A subagent's messages carry the id of the call that started it; only the session's own,
+    which carry none, report for the step.
+    """
+    if message.get("type") != "assistant" or message.get("parent_tool_use_id") is not None:
+        return []
+    body: object = message.get("message")
+    content: object = cast(dict[str, Any], body).get("content") if isinstance(body, dict) else None
+    if not isinstance(content, list):
+        return []
+    return [
+        cast(dict[str, Any], block).get("input")
+        for block in cast(list[object], content)
+        if isinstance(block, dict)
+        and cast(dict[str, Any], block).get("type") == "tool_use"
+        and cast(dict[str, Any], block).get("name") == REPORT_TOOL
+    ]
+
+
 def _parse_lines(
     lines: Iterable[str], *, tee: TextIO | None = None
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """The session's result message and its rate-limit warnings.
+
+    The result's `structured_output` is replaced by the **last** report the session filed
+    that has the report's shape. Measured: the provider's result carries the *first* report
+    it accepted, and a session that ends a turn to wait for a subagent is made to report each
+    time it does — so a review that dispatched two subagents was recorded as the interim
+    `failed` it filed while waiting, over the `done` it filed once both had finished. A filed
+    report without the shape is one the provider rejected and the session filed again.
+    """
     result: dict[str, Any] | None = None
     rate_limits: list[dict[str, Any]] = []
+    filed: list[object] = []
     for number, raw_line in enumerate(lines, 1):
         if tee is not None:
             tee.write(raw_line)
@@ -86,6 +154,7 @@ def _parse_lines(
                 "provider_protocol", f"line {number} is not valid JSON: {exc}"
             ) from exc
         message_type = message.get("type")
+        filed.extend(_filed_reports(message))
         if message_type == "result":
             # The result is terminal. Reading on would wait for EOF, which needs every
             # inheritor of the pipe to close it — a provider's own children can hold it
@@ -104,6 +173,9 @@ def _parse_lines(
             "num_turns",
             "permission_denials",
         ),
+    )
+    result["structured_output"] = next(
+        (report for report in reversed(filed) if _report_fault(report) is None), None
     )
     return result, rate_limits
 
@@ -177,30 +249,14 @@ def _translate_result(
             detail,
         )
 
-    try:
-        output = _object(structured, "structured_output")
-        _required(
-            output,
-            ("status", "summary", "follow_up_work", "needs_user_decision"),
-        )
-        status = output["status"]
-        summary = output["summary"]
-        follow_up: object = output["follow_up_work"]
-        decision = output["needs_user_decision"]
-        if status not in ("done", "noop", "failed"):
-            raise CairnError("provider_protocol", f"unknown structured status {status!r}")
-        if not isinstance(summary, str):
-            raise CairnError("provider_protocol", "structured summary is not a string")
-        if not isinstance(follow_up, list):
-            raise CairnError("provider_protocol", "follow_up_work is not a string array")
-        follow_up_items = cast(list[object], follow_up)
-        if not all(isinstance(item, str) for item in follow_up_items):
-            raise CairnError("provider_protocol", "follow_up_work is not a string array")
-        if not isinstance(decision, bool):
-            raise CairnError("provider_protocol", "needs_user_decision is not a boolean")
-    except CairnError as exc:
-        exc.detail = detail
-        raise
+    fault = _report_fault(structured)
+    if fault is not None:
+        raise CairnError("provider_protocol", fault, detail=detail)
+    output = cast(dict[str, Any], structured)
+    status = output["status"]
+    summary = output["summary"]
+    follow_up_items = cast(list[str], output["follow_up_work"])
+    decision = output["needs_user_decision"]
 
     if status == "failed":
         exit_code, cause = EXIT_FAILED, "reported_failure"
@@ -212,7 +268,7 @@ def _translate_result(
         exit_code,
         status,
         summary,
-        cast(list[str], follow_up_items),
+        follow_up_items,
         decision,
         cause,
         detail,
@@ -251,6 +307,12 @@ PROVIDER_BINARY = "claude"
 # three `Cron*` tools are gone from the session's tool list and `Monitor` and `Agent` remain.
 # An unmatched deny pattern is silently a no-op, which reads as protection while being none.
 NEVER_DELIVERED: tuple[str, ...] = ("ScheduleWakeup", "Cron*")
+
+# Under `-p` the provider stops waiting for background subagents at a ceiling of its own and
+# terminates them, so a long high-effort review would end silently short of its findings.
+# Zero waits for as long as they run, which leaves the hang guard as the one bound on a
+# session ([run_provider]).
+BACKGROUND_WAIT_CEILING = "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"
 
 
 def hook_settings() -> str:
@@ -303,6 +365,7 @@ def _session_in(
         stdout=subprocess.PIPE,
         stderr=None,
         text=True,
+        env={**os.environ, BACKGROUND_WAIT_CEILING: "0"},
     )
     writer: threading.Thread | None = None
     stopped = threading.Event()
@@ -386,21 +449,16 @@ def resume_bound_seconds() -> float:
 
 
 def ended_without_reporting(process_exit: int, result: dict[str, Any]) -> bool:
-    """Whether the session ended a turn without reporting, rather than failing.
+    """Whether the session ended without reporting, rather than failing.
 
-    **Measured, and this is the trap:** a *correct* report is itself a tool call, so a
-    session that reported returns `stop_reason: "tool_use"` too. The stop reason decides
-    nothing on its own — the absent `structured_output` beside it is what says the session
-    never reported. A rescue keyed on the reason alone would resume every successful step.
+    The absent report is the whole of the fact. How the session stopped says nothing about
+    it: measured, a session that reported stops on a tool call, and one whose only move was a
+    forked skill stops with no turn of its own at all and no stop reason.
 
-    A nonzero process exit is a different fact again, and `_translate_result` already has
-    typed causes for each of its terminal reasons.
+    A nonzero process exit is a different fact, and `_translate_result` already has typed
+    causes for each of its terminal reasons.
     """
-    return (
-        process_exit == 0
-        and result.get("stop_reason") == "tool_use"
-        and result.get("structured_output") is None
-    )
+    return process_exit == 0 and result.get("structured_output") is None
 
 
 # What a rescue did, as the run's record spells it. One vocabulary rather than a field that
@@ -435,7 +493,7 @@ def _as_list(value: object) -> list[Any]:
 
 
 def run_claude(
-    prompt: str,
+    prompt: StepPrompt,
     working_directory: Path,
     permission_mode: str,
     model: str | None,
@@ -451,6 +509,10 @@ def run_claude(
     has done its work answers in a turn. Either way a report reaches the run directory
     before the engine's own bound, which lands the grace later.
 
+    A prompt that leads with a command opens the session with that command alone and no
+    report asked of it, then continues the same session with the rest, which reports. Both
+    passes share the one guard.
+
     `resume_session` continues an earlier session instead of opening one: a remedy, asked
     to fix what its own step's assertion found, in the tree only that step has touched.
     """
@@ -459,46 +521,45 @@ def run_claude(
     # The plan's own list **adds** to Cairn's; it never replaces it. A plan cannot hand a
     # step back a tool whose contract the session cannot keep.
     denied = [*NEVER_DELIVERED, *tools]
+    led: dict[str, Any] = {} if prompt.command is None else {"led_by": prompt.command}
 
-    def invocation(*, resuming: bool) -> list[str]:
-        """The argv for one session — a fresh one, or the same one asked to report.
+    def invocation(*, resuming: bool, reporting: bool = True) -> list[str]:
+        """The argv for one pass of the session — opening it, or continuing it.
 
         Exactly one of `--session-id` and `--resume`, never both and never neither, so a
-        rescue continues the session it is rescuing rather than opening a second one.
+        later pass continues the session it follows rather than opening a second one. A
+        pass that is not reporting carries no schema: a command run under one has its own
+        subagents trying to satisfy the step's report, and its findings never reach the
+        session as text.
         """
-        composed = [
-            PROVIDER_BINARY,
-            "-p",
-            "--output-format",
-            "stream-json",
-            "--verbose",
-            "--json-schema",
-            json.dumps(STEP_REPORT_SCHEMA, separators=(",", ":"), sort_keys=True),
-            "--resume" if resuming else "--session-id",
-            session_id,
-            "--permission-mode",
-            permission_mode,
-            # The session is held to the shape the preamble states: a turn does not end
-            # while a background shell it started is still running ([hooks.py]).
-            "--settings",
-            hook_settings(),
-        ]
+        composed = [PROVIDER_BINARY, "-p", "--output-format", "stream-json", "--verbose"]
+        if reporting:
+            composed.extend(
+                (
+                    "--json-schema",
+                    json.dumps(STEP_REPORT_SCHEMA, separators=(",", ":"), sort_keys=True),
+                )
+            )
+        composed.extend(
+            (
+                "--resume" if resuming else "--session-id",
+                session_id,
+                "--permission-mode",
+                permission_mode,
+                # The session is held to the shape the preamble states: a turn does not end
+                # while a background shell it started is still running ([hooks.py]).
+                "--settings",
+                hook_settings(),
+            )
+        )
         if model is not None:
             composed.extend(("--model", model))
         for pattern in denied:
             composed.extend(("--disallowedTools", pattern))
         return composed
 
-    try:
-        return_code, result, rate_limits, exited_on_its_own = _session_in(
-            invocation(resuming=resume_session is not None),
-            prompt,
-            working_directory,
-            popen_factory,
-            deadline_seconds=deadline_seconds,
-        )
-    except Deadline:
-        return _report_after_deadline(
+    def stopped_at_deadline() -> CommandResult:
+        stopped = _report_after_deadline(
             invocation(resuming=True),
             working_directory,
             popen_factory,
@@ -509,7 +570,9 @@ def run_claude(
             deny_patterns=denied,
             model=model,
         )
-    except CairnError as exc:
+        return stopped._replace(detail={**stopped.detail, **led})
+
+    def name_the_session(exc: CairnError) -> None:
         exc.detail = {
             **exc.detail,
             "session_id": session_id,
@@ -517,8 +580,68 @@ def run_claude(
             "model": model,
             "permission_mode": permission_mode,
             "deny_patterns": list(denied),
+            **led,
         }
+
+    opened = resume_session is not None
+    remaining = deadline_seconds
+    commanded: dict[str, Any] | None = None
+    command_limits: list[dict[str, Any]] = []
+    command_exited = True
+    if prompt.command is not None:
+        try:
+            command_code, commanded, command_limits, command_exited = _session_in(
+                invocation(resuming=opened, reporting=False),
+                prompt.command,
+                working_directory,
+                popen_factory,
+                deadline_seconds=deadline_seconds,
+            )
+        except Deadline:
+            return stopped_at_deadline()
+        except CairnError as exc:
+            name_the_session(exc)
+            raise
+        if command_code != 0:
+            # The command's own failure is the step's, with the typed cause it ended on.
+            failed = _translate_result(
+                command_code,
+                commanded,
+                command_limits,
+                generated_session_id=session_id,
+                permission_mode=permission_mode,
+                deny_patterns=denied,
+                model=model,
+            )
+            return failed._replace(detail={**failed.detail, **led})
+        opened = True
+        remaining = max(0.0, deadline_seconds - (time.monotonic() - started))
+
+    try:
+        return_code, result, rate_limits, exited_on_its_own = _session_in(
+            invocation(resuming=opened),
+            prompt.prompt,
+            working_directory,
+            popen_factory,
+            deadline_seconds=remaining,
+        )
+    except Deadline:
+        return stopped_at_deadline()
+    except CairnError as exc:
+        name_the_session(exc)
         raise
+    if commanded is not None:
+        # Measured: each pass of a session reports its own invocation's turns, so the
+        # step's are the sum of its passes.
+        result["num_turns"] = int(_as_float(commanded.get("num_turns"))) + int(
+            _as_float(result.get("num_turns"))
+        )
+        result["permission_denials"] = [
+            *_as_list(commanded.get("permission_denials")),
+            *_as_list(result.get("permission_denials")),
+        ]
+        rate_limits = [*command_limits, *rate_limits]
+        exited_on_its_own = exited_on_its_own and command_exited
 
     rescue: dict[str, Any] = {}
     if ended_without_reporting(return_code, result):
@@ -556,6 +679,10 @@ def run_claude(
                 # loss the rescue exists to prevent ([22 B]).
                 deadline_seconds=resume_bound_seconds(),
             )
+        except Deadline:
+            # Stopped at its bound before it answered: as silent as a resume that answered
+            # without a report, and recorded the same way.
+            resumed_code, resumed, more_limits, resumed_exited = 0, {}, [], False
         except CairnError as unreachable:
             # The first session's account is now the only one there is.
             #
@@ -622,9 +749,9 @@ def run_claude(
         # The rescue's own account has to survive the failure it was trying to prevent:
         # a step recorded `provider_protocol` with no word about whether a resume was
         # attempted leaves nobody able to tell a rescue that failed from one never tried.
-        unreported.detail = {**unreported.detail, **rescue}
+        unreported.detail = {**unreported.detail, **rescue, **led}
         raise
-    detail = {**translated.detail, **rescue}
+    detail = {**translated.detail, **rescue, **led}
     if not exited_on_its_own:
         detail["provider_exit"] = "stopped_after_result"
     return translated._replace(detail=detail)

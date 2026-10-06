@@ -29,6 +29,7 @@ from cairn.plan.schema import (
     is_unverified,
     normalise,
 )
+from cairn.protocol import NOT_A_STEP, leading_command
 
 _WHITESPACE = re.compile(r"\s+")
 
@@ -519,6 +520,16 @@ def validate(raw: Any, source_root: str | None = None) -> Result:
             )
         if not step["task"].strip():
             errors.append(Finding("empty_task", f"step {step_id!r} carries no task", step_id))
+        led = leading_command(step["task"]) if step["kind"].startswith(AGENT_FAMILY) else None
+        if led is not None and led[0] in NOT_A_STEP:
+            errors.append(
+                Finding(
+                    "not_a_step",
+                    f"step {step_id!r} leads with `{led[1]}`, which {NOT_A_STEP[led[0]]}; "
+                    "restate the step's work or leave the step out",
+                    step_id,
+                )
+            )
         command = step.get("command")
         if command is not None and corpus is not None and _flatten(command) not in corpus:
             errors.append(

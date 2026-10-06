@@ -376,6 +376,24 @@ class UncoveredCodes(unittest.TestCase):
         graph["steps"][0]["task"] = "   "
         self.assertIn("empty_task", [f.code for f in validate(graph).errors])
 
+    def test_a_task_led_by_a_command_that_is_not_a_step_is_refused(self) -> None:
+        """Each does nothing a step could be verified for, and none has a file whose
+        frontmatter could say so, which is why Cairn keeps the list."""
+        for command in ("/clear", "/compact", "/help", "/login", "/loop 5m /code-review"):
+            with self.subTest(command=command):
+                graph = minimal()
+                graph["steps"][0]["task"] = f"{command}\nThen carry on."
+                refused = [f for f in validate(graph).errors if f.code == "not_a_step"]
+                self.assertEqual(len(refused), 1)
+                self.assertIn(command, refused[0].message)
+
+    def test_a_task_led_by_a_command_that_runs_as_a_step_is_admitted(self) -> None:
+        for task in ("/code-review high --fix\nFix what it finds.", "Clear the cache: /clear"):
+            with self.subTest(task=task):
+                graph = minimal()
+                graph["steps"][0]["task"] = task
+                self.assertNotIn("not_a_step", [f.code for f in validate(graph).errors])
+
     def test_a_non_positive_verify_timeout_and_a_negative_retry_count_are_refused(self) -> None:
         graph = minimal()
         graph["steps"][0]["verify_timeout"] = 0

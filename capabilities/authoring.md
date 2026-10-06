@@ -30,9 +30,10 @@ rather than to prevent it.
    authoring is for — and a graph shared between plans would let authoring one overwrite the
    answers already given for another. Below, `<graph>` is the path it printed.
 
-   **Skills are the derivation's to check.** A task that runs a skill is only runnable
-   headless if the skill may be model-invoked; one that only a person may start is written
-   with its slash command as the task's first line, and one that cannot run headless is a
+   **Skills and commands are the derivation's to check.** A task that runs a skill is only
+   runnable headless if the skill may be model-invoked; one that only a person may start,
+   and a built-in command, is written with its slash command as the task's first line; and
+   one that cannot run headless, or does nothing a step could be verified for, is a
    question rather than a task ([../docs/plan-derivation.md](../docs/plan-derivation.md)).
    The parse report in step 3 shows the first line, so say which skills you checked.
 

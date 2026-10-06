@@ -38,7 +38,13 @@ from cairn.marker import (
     write_marker,
 )
 from cairn.plan.schema import GRAPH_VERSION, SCOPES, normalise
-from cairn.protocol import PREAMBLE, STEP_REPORT_SCHEMA, compose_prompt
+from cairn.protocol import (
+    FOLLOW_THROUGH,
+    PREAMBLE,
+    STEP_REPORT_SCHEMA,
+    StepPrompt,
+    compose_prompt,
+)
 from cairn.providers import PROVIDER_RUNNERS, hook_settings, run_claude
 from cairn.topology import node_name
 
@@ -272,7 +278,7 @@ class TheSessionIsHeldOpenForWhatItLeftRunning(unittest.TestCase):
             raise AssertionError("the argv is the subject; nothing is launched")
 
         with contextlib.suppress(AssertionError):
-            run_claude("do work", Path("/tmp"), "auto", None, [], factory)
+            run_claude(StepPrompt(None, "do work"), Path("/tmp"), "auto", None, [], factory)
         self.assertTrue(made)
         self.assertIn("--settings", made[0])
         self.assertEqual(
@@ -309,6 +315,9 @@ class TheProtocolIsStatedOnce(unittest.TestCase):
     def test_preamble_is_reproduced_verbatim_in_the_document(self) -> None:
         self.assertIn(PREAMBLE.strip(), PROTOCOL_DOC.read_text(encoding="utf-8"))
 
+    def test_follow_through_is_reproduced_verbatim_in_the_document(self) -> None:
+        self.assertIn(FOLLOW_THROUGH.strip(), PROTOCOL_DOC.read_text(encoding="utf-8"))
+
     def test_report_schema_is_reproduced_in_the_document(self) -> None:
         blocks = re.findall(r"```json\n(.*?)```", PROTOCOL_DOC.read_text(), re.DOTALL)
         parsed = [json.loads(block) for block in blocks]
@@ -316,27 +325,41 @@ class TheProtocolIsStatedOnce(unittest.TestCase):
 
     def test_prompt_is_the_protocol_then_the_task(self) -> None:
         composed = compose_prompt("Do the thing.")
-        self.assertTrue(composed.startswith(PREAMBLE))
-        self.assertTrue(composed.rstrip().endswith("Do the thing."))
+        self.assertIsNone(composed.command)
+        self.assertTrue(composed.prompt.startswith(PREAMBLE))
+        self.assertTrue(composed.prompt.rstrip().endswith("Do the thing."))
 
-    def test_a_task_led_by_a_slash_command_is_led_by_it_in_the_prompt(self) -> None:
+    def test_a_task_led_by_a_slash_command_gives_the_command_alone(self) -> None:
         """A headless session runs `/skill args` as a person's command only as the first thing
-        it is given, and a person-only skill is refused anywhere else."""
+        it is given, and takes everything after the name as the command's arguments."""
         composed = compose_prompt("/code-review high --fix\nFix what it finds in the diff.")
-        self.assertTrue(composed.startswith("/code-review high --fix\n\n"))
-        self.assertIn(PREAMBLE, composed)
-        self.assertEqual(composed.count("/code-review"), 1)
-        self.assertTrue(composed.rstrip().endswith("Fix what it finds in the diff."))
+        self.assertEqual(composed.command, "/code-review high --fix")
 
-    def test_a_slash_command_alone_still_carries_the_preamble(self) -> None:
+    def test_the_rest_of_a_command_led_task_is_the_protocol_the_task_and_the_follow_through(
+        self,
+    ) -> None:
+        task = "/code-review high --fix\nFix what it finds in the diff."
+        composed = compose_prompt(task)
+        self.assertEqual(
+            composed.prompt,
+            f"{PREAMBLE}\n{task}\n\n{FOLLOW_THROUGH.format(command='/code-review high --fix')}",
+        )
+        self.assertIn("Do not run it again", composed.prompt)
+        self.assertIn("git diff", composed.prompt)
+
+    def test_a_slash_command_alone_still_reports_under_the_preamble(self) -> None:
         composed = compose_prompt("/probe")
-        self.assertTrue(composed.startswith("/probe\n\n"))
-        self.assertIn(PREAMBLE, composed)
+        self.assertEqual(composed, StepPrompt("/probe", composed.prompt))
+        self.assertTrue(composed.prompt.startswith(PREAMBLE))
 
     def test_a_path_or_prose_is_not_a_slash_command(self) -> None:
         for task in ("/usr/bin/env python3 -m build", "Run /code-review high.", " /probe", ""):
             with self.subTest(task=task):
-                self.assertTrue(compose_prompt(task).startswith(PREAMBLE))
+                self.assertIsNone(compose_prompt(task).command)
+
+    def test_the_preamble_says_the_last_report_counts(self) -> None:
+        """A session that ends a turn to wait for a subagent is made to report early."""
+        self.assertIn("Your last report is the one that counts.", PREAMBLE)
 
     def test_preamble_never_asks_the_agent_to_record_completion(self) -> None:
         self.assertIn("Completion is recorded by the verification", PREAMBLE)
