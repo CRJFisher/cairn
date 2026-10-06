@@ -2,7 +2,7 @@
 
 The engine killed `work_alpha` at its 2-second bound before any report was written. Its
 node is a plain **`failed`** whose only account of the kill is its error —
-`step timed out after 2.001s (timeout: 2s): context deadline exceeded` — and the node is a
+`step timed out after 2s (timeout: 2s): context deadline exceeded` — and the node is a
 raw `sleep`, not a `cairn exec`, because the wrapper would have caught the engine's signal
 and left a `cancelled` report; the fault this shape pins is a step that left none.
 
