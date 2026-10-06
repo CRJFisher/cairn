@@ -193,11 +193,10 @@ HOLD_THRESHOLDS: dict[str, float] = {
 AGENT_TIMEOUT = HANG_GUARD + QUOTA_WAIT + AGENT_REPORT_GRACE
 
 # A merge resolver is an agent role like any other, so it names its model and runs under the
-# same hang guard. Its engine step also leaves the same report grace as an ordinary agent
-# session after the internal deadline. It carries no hold at the allowance: a wave's slots
-# are chained, so a hold in each would multiply along the run's critical path.
+# same hang guard and the same hold at the allowance. Its engine step also leaves the same
+# report grace as an ordinary agent session after the internal deadline.
 MERGE_MODEL = AGENT_MODEL
-MERGE_TIMEOUT = MUTEX_WAIT + GIT_TIMEOUT + HANG_GUARD + AGENT_REPORT_GRACE
+MERGE_TIMEOUT = MUTEX_WAIT + GIT_TIMEOUT + HANG_GUARD + QUOTA_WAIT + AGENT_REPORT_GRACE
 MERGE_RETRIES = 0
 
 # The engine applies `timeout_sec` to each attempt rather than to the step [V], so a step's

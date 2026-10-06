@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "multi-wave",
-    "cairn_generator": "10",
+    "cairn_generator": "11",
     "cairn_engine": "2.11.0",
     "cairn_graph_sha256": "394628293238a9a912dde424166fae5bb0d972645eca78db65dd817904538090",
-    "cairn_body_sha256": "767ebe6ed8e7b71fd0fa9ba952c1e0d4aceb7cf8b3aeeac36df943b4126dee2a"
+    "cairn_body_sha256": "53d2ffffb504396e99a2e35ddb3b5b05d9eb23ee8d7c7782307547c79a731b69"
   },
   "params": [
     {
@@ -54,7 +54,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn lock acquire --plan multi-wave --run-timeout 261720"
+      "run": "python3 -m cairn lock acquire --plan multi-wave --run-timeout 304920"
     },
     {
       "name": "work_export_schema",
@@ -409,7 +409,7 @@
     {
       "name": "merge_w3_1",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 15120,
+      "timeout_sec": 36720,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
@@ -435,7 +435,7 @@
     {
       "name": "merge_w3_2",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 15120,
+      "timeout_sec": 36720,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1

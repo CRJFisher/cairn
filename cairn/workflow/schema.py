@@ -105,7 +105,9 @@ ENGINE_VERSION = "2.11.0"
 # 10: an agent step holds at the subscription's allowance inside its own body, so the
 # engine's bound on it carries the longest hold too. An agent step written by 9 is killed by
 # the engine part-way through a hold this binary would make.
-GENERATOR_VERSION = 10
+# 11: a merge slot holds at the allowance as an agent step does, so its engine bound carries
+# the longest hold too. A merge slot written by 10 is killed part-way through such a hold.
+GENERATOR_VERSION = 11
 
 # The one execution type. The alternative reading serialises the graph, which is the defect
 # Cairn exists to avoid — and `type: chain` without `depends` validates clean and silently

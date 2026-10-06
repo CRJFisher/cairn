@@ -61,19 +61,6 @@ ENGINE_NAME = re.compile(r"[a-zA-Z][a-zA-Z0-9_]*")
 WORKTREES_SUFFIX = ".cairn-worktrees"
 BRANCH_PREFIX = "step/"
 
-# Two numbers, because they answer two questions at different scales.
-#
-# The **critical path** is how long the run can plausibly take, and a plan whose slowest
-# chain runs past two weeks is refused at generation time: past that, a repository
-# held against every other run is itself the failure, whatever the plan would achieve. This
-# is the number a plan author can act on — shorten the chain and it moves.
-#
-# The **sum** is how long the run might *still be writing*, which is what a lease has to
-# survive: the engine caps concurrent steps, so a wave wider than the cap outruns its own
-# critical path. Gating admission on the sum instead would refuse a plan of sixteen
-# ordinary agent steps, which is a plan-size cap nobody asked for.
-RUN_CEILING_SECONDS = 1209600
-
 
 class TopologyError(Exception):
     """A graph that cannot become a topology — refused at generation time, never at run time."""
@@ -123,7 +110,6 @@ class Topology(TypedDict):
     on_exit: Node
     merge_order: list[list[str]]
     max_seconds: int
-    critical_path_seconds: int
 
 
 class Naming(NamedTuple):
@@ -599,9 +585,7 @@ def derive(
         "on_exit": release,
         "merge_order": merge_order,
         "max_seconds": total_seconds([*nodes, release]),
-        "critical_path_seconds": critical_path_seconds([*nodes, release]),
     }
-    _refuse_over_ceiling(topology)
     return topology
 
 
@@ -620,42 +604,11 @@ def total_seconds(nodes: list[Node]) -> int:
     return sum(node["max_seconds"] for node in nodes)
 
 
-def critical_path_seconds(nodes: list[Node]) -> int:
-    """How long the run plausibly takes: the slowest chain through it.
-
-    This is what the ceiling is judged against, because it is the number a plan author can
-    do something about. Nodes are weighed in dependency order, which `derive` produces.
-    """
-    longest: dict[str, int] = {}
-    for node in nodes:
-        upstream = max((longest.get(name, 0) for name in node["after"]), default=0)
-        longest[node["name"]] = upstream + node["max_seconds"]
-    return max(longest.values(), default=0)
-
-
-def _refuse_over_ceiling(topology: Topology) -> None:
-    """Refuse a plan that could hold the repository longer than Cairn will wait.
-
-    A deliberate `cairn wait` holds the run lock for its whole duration, so a plan's
-    declared waits are part of this arithmetic — and a plan whose waits push it past the
-    ceiling is an error here, naming the numbers, rather than a run that dies halfway.
-    """
-    if topology["critical_path_seconds"] <= RUN_CEILING_SECONDS:
-        return
-    raise TopologyError(
-        f"plan {topology['plan']!r} has a worst-case duration of "
-        f"{topology['critical_path_seconds'] / 3600:.1f} hours along its slowest chain, over the "
-        f"{RUN_CEILING_SECONDS / 3600:.0f}-hour ceiling. Every step counts the hang guard — "
-        "and an agent step its hold at the subscription's allowance too — once per attempt "
-        "plus the wait between attempts; drop a step, drop a wait, or split the plan"
-    )
-
 
 __all__ = [
     "BRANCH_PREFIX",
     "RESERVED_NAMES",
     "ROLES",
-    "RUN_CEILING_SECONDS",
     "Branch",
     "Naming",
     "Node",
@@ -663,7 +616,6 @@ __all__ = [
     "TopologyError",
     "Wave",
     "check_name",
-    "critical_path_seconds",
     "dependency_levels",
     "derive",
     "node_name",

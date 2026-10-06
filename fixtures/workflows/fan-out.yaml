@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "fan-out",
-    "cairn_generator": "10",
+    "cairn_generator": "11",
     "cairn_engine": "2.11.0",
     "cairn_graph_sha256": "e01051f3d799685929a7025788b8ece8192055c3f2d9d35434ea5e07da9dc267",
-    "cairn_body_sha256": "859e5387e6e49a772cc23655c263a871aa37abb31e3c6caee487043578f7ee96"
+    "cairn_body_sha256": "ba02405ff47f7c09e5abd4c3c68c6286da4761e8b7a4f485ee5bd16ffec0b020"
   },
   "params": [
     {
@@ -54,7 +54,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn lock acquire --plan fan-out --run-timeout 148980"
+      "run": "python3 -m cairn lock acquire --plan fan-out --run-timeout 192180"
     },
     {
       "name": "work_extract_the_loader_interface",
@@ -333,7 +333,7 @@
     {
       "name": "merge_w2_1",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 15120,
+      "timeout_sec": 36720,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
@@ -359,7 +359,7 @@
     {
       "name": "merge_w2_2",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 15120,
+      "timeout_sec": 36720,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1

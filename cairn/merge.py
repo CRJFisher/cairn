@@ -650,11 +650,7 @@ def run_merge(
         # is five minutes, so holding it across one would turn every contender into a
         # failure rather than a wait. Nothing else in the run writes here — the slots are
         # chained, the join is upstream and the prune is downstream.
-        # Admitted against the subscription's allowance like any other session, but never
-        # held: a wave's slots run one after another, so a hold carried in every slot's bound
-        # would multiply into a ceiling an ordinary wide plan could not fit under. A closed
-        # window ends the slot `quota_held`, naming the moment, before a session starts into
-        # it — and a limit met mid-resolution ends it the same way.
+        # Admitted against the subscription's allowance and held like any other session.
         try:
             agent = session_within_allowance(
                 context,
@@ -665,7 +661,6 @@ def run_merge(
                 tools=[],
                 call=run_agent,
                 instruments=instruments,
-                hold_budget=0,
             )
         except CairnError as exc:
             exc.detail = {

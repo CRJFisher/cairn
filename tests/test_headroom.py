@@ -654,44 +654,6 @@ class ALimitMetMidSessionIsAPause(Fixture):
         self.assertIn("weekly allowance spent", result.summary)
 
 
-class AMergeSlotNeverWaits(Fixture):
-    """A wave's slots are chained, so a hold in each would multiply along the critical path.
-    A slot is admitted against the reading and ends `quota_held` rather than waiting."""
-
-    def step_without_budget(
-        self, first: Callable[[float], CommandResult]
-    ) -> CommandResult:
-        def refuse(_session: str, _deadline: float) -> CommandResult:
-            raise AssertionError("a merge slot resumed after a hold it may not make")
-
-        return within_allowance(
-            first,
-            refuse,
-            gauge=self.gauge,
-            model="sonnet",
-            instruments=self.instruments(),
-            announce=self.announced.append,
-            sleep=self.clock.sleep,
-            hold_budget=0,
-        )
-
-    def test_a_closed_window_ends_the_slot_before_a_session_starts(self) -> None:
-        self.gauge.observe(event(status="rejected"))
-
-        def first(_deadline: float) -> CommandResult:
-            raise AssertionError("a session was started into a closed window")
-
-        result = self.step_without_budget(first)
-        self.assertEqual((result.cause, self.clock.slept), (QUOTA_HELD, []))
-
-    def test_a_limit_met_mid_resolution_ends_the_slot_held(self) -> None:
-        self.gauge.observe(event())
-        result = self.step_without_budget(lambda _deadline: limited(FIVE_HOUR_RESET))
-        self.assertEqual(result.cause, QUOTA_HELD)
-        self.assertEqual(result.detail["session_id"], "session-1")
-        self.assertEqual(self.clock.slept, [])
-
-
 class AnUnmeteredProviderStartsAsItAlwaysDid(unittest.TestCase):
     def test_no_reading_no_hold_no_account(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

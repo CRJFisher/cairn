@@ -379,12 +379,8 @@ tree now stands. The window it met is written into the shared reading at once, s
 step holds on it too. A resumed session may meet the limit again and is held and resumed
 again, within the same 6-hour hold budget. A resume that cannot continue the session —
 refused, or failing before it reports — ends the step `quota_held` with the session's id.
-A merge slot's resolving session is admitted against the same reading and feeds it, but never
-waits: a wave's slots run one after another, so a hold carried in every slot's bound would
-multiply along the run's critical path until an ordinary wide plan no longer fit under its
-ceiling. A closed window ends the slot `quota_held` before a session starts into it, and a
-limit met mid-resolution ends it the same way, naming the moment in both cases; the merge is
-left in place for the re-run, as any halted merge is ([merge-step.md](merge-step.md)).
+A merge slot's resolving session is admitted, held and resumed the same way, within the
+same 6-hour hold budget, and its outcome feeds the same reading.
 
 Held time is never charged as work: every session the step opens shares one hang guard,
 counted as time inside a session, and each resume is given what is left of it.

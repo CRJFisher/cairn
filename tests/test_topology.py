@@ -21,12 +21,10 @@ from cairn.plan.schema import (
 from cairn.topology import (
     RESERVED_NAMES,
     ROLES,
-    RUN_CEILING_SECONDS,
     Node,
     Topology,
     TopologyError,
     check_name,
-    critical_path_seconds,
     derive,
     node_name,
     parse_node_name,
@@ -415,45 +413,7 @@ class Duration(unittest.TestCase):
             by_name(waiting, "work_only")["max_seconds"], HANG_GUARD + WAIT_REPORT_GRACE
         )
 
-    def test_a_plan_of_ordinary_agent_steps_is_not_refused_for_being_wide(self) -> None:
-        # Gating admission on the sum would make the ceiling a plan-size cap: enough
-        # perfectly ordinary parallel steps to outrun it would be refused for existing.
-        steps = [
-            {
-                "id": f"s{index}",
-                "slug": f"s{index}",
-                "title": f"S{index}",
-                "task": "Do the thing.",
-                "verify": "test -f out",
-            }
-            for index in range(40)
-        ]
-        graph = normalise(
-            {
-                "cairn_graph_version": GRAPH_VERSION,
-                "plan": {"slug": "wide", "title": "W", "source": "w.md"},
-                "steps": steps,
-            }
-        )
-        derived = derive(graph, repository_root=REPOSITORY, parent_branch=PARENT)
-        self.assertGreater(derived["max_seconds"], RUN_CEILING_SECONDS)
-        self.assertLess(derived["critical_path_seconds"], RUN_CEILING_SECONDS)
-
-    def test_the_lease_is_the_sum_and_the_ceiling_is_the_chain(self) -> None:
-        fan = topology("fan-out")
-        self.assertEqual(
-            fan["max_seconds"], total_seconds([*fan["nodes"], fan["on_exit"]])
-        )
-        self.assertEqual(
-            fan["critical_path_seconds"],
-            critical_path_seconds([*fan["nodes"], fan["on_exit"]]),
-        )
-        self.assertGreater(fan["max_seconds"], fan["critical_path_seconds"])
-
-    def test_a_plan_whose_chain_runs_past_the_ceiling_is_refused_with_the_arithmetic(
-        self,
-    ) -> None:
-        count = RUN_CEILING_SECONDS // HANG_GUARD + 1
+    def test_a_long_chain_is_not_refused_for_its_length(self) -> None:
         steps = [
             {
                 "id": f"s{index}",
@@ -467,25 +427,23 @@ class Duration(unittest.TestCase):
                     else []
                 ),
             }
-            for index in range(count)
+            for index in range(200)
         ]
-        with self.assertRaises(TopologyError) as caught:
-            derive(
-                normalise(
-                    {
-                        "cairn_graph_version": GRAPH_VERSION,
-                        "plan": {"slug": "long", "title": "Long", "source": "long.md"},
-                        "steps": steps,
-                    }
-                ),
-                repository_root=REPOSITORY,
-                parent_branch=PARENT,
-            )
-        message = str(caught.exception)
-        self.assertIn("worst-case duration", message)
-        self.assertIn("slowest chain", message)
-        self.assertIn("once per attempt", message)
-        self.assertIn("336-hour ceiling", message)
+        derived = derive(
+            normalise(
+                {
+                    "cairn_graph_version": GRAPH_VERSION,
+                    "plan": {"slug": "long", "title": "Long", "source": "long.md"},
+                    "steps": steps,
+                }
+            ),
+            repository_root=REPOSITORY,
+            parent_branch=PARENT,
+        )
+        self.assertGreaterEqual(len(derived["nodes"]), 200)
+        self.assertEqual(
+            derived["max_seconds"], total_seconds([*derived["nodes"], derived["on_exit"]])
+        )
 
 
 class Emission(unittest.TestCase):
