@@ -11,7 +11,7 @@
     "cairn_plan": "mixed-kinds",
     "cairn_generator": "11",
     "cairn_engine": "2.11.0",
-    "cairn_graph_sha256": "ee127ac9bd22312901a2259efa1b8f8c19411ebee39dc7da551e6952006c9ac6",
+    "cairn_graph_sha256": "93f02ef8ac979e730df935265a2421b6ae42ad830dc740de83e47432ae58b2c0",
     "cairn_body_sha256": "3aed72071d6553c78a74f231ef077169fa8117dbb1493781b230b193fc80c63a"
   },
   "params": [

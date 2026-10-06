@@ -11,7 +11,7 @@
     "cairn_plan": "fan-out",
     "cairn_generator": "11",
     "cairn_engine": "2.11.0",
-    "cairn_graph_sha256": "e01051f3d799685929a7025788b8ece8192055c3f2d9d35434ea5e07da9dc267",
+    "cairn_graph_sha256": "b97756700ae22f181a7b7f458f0b42eab757c9ec8565e5e119851362fd5e1a30",
     "cairn_body_sha256": "ba02405ff47f7c09e5abd4c3c68c6286da4761e8b7a4f485ee5bd16ffec0b020"
   },
   "params": [

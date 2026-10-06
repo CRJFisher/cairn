@@ -49,7 +49,7 @@ from cairn.merge import (
     verify_landed,
 )
 from cairn.plan.schema import (
-    MERGE_MODEL,
+    AGENT_MODEL,
     MERGE_TIMEOUT,
     RESERVED_ID_PREFIXES,
     SUPPORT_TIMEOUT,
@@ -207,8 +207,17 @@ class TheChainTheTopologyEmits(unittest.TestCase):
     def test_a_slot_body_names_the_resolver_model_and_no_bound(self) -> None:
         graph = fixture("fan-out")
         body = emitted(topology("fan-out"), "merge_w2_1", graph)["run"]
-        self.assertIn(f"--model {MERGE_MODEL}", body)
+        self.assertIn(f"--model {graph['plan']['default_model']}", body)
         self.assertNotIn("--timeout", body)
+
+    def test_a_plan_wide_model_binds_the_resolver_too(self) -> None:
+        """The resolver is the plan's default agent, so a plan that pins every session to a
+        model pins the one that settles its conflicts ([30 C])."""
+        graph = fixture("fan-out")
+        graph["plan"]["default_model"] = "opus"
+        graph["plan"]["model_evidence"] = "run every step on opus"
+        derived = derive(graph, repository_root=REPOSITORY, parent_branch=PARENT)
+        self.assertIn("--model opus", emitted(derived, "merge_w2_1", graph)["run"])
 
     def test_the_topology_bounds_a_slot_as_the_session_too(self) -> None:
         """The run's own maximum and the lock lease derive from the node, not the body."""
@@ -520,7 +529,7 @@ class RepositoryCase(unittest.TestCase):
             into="main",
             candidates=candidates,
             provider="stub",
-            model=kwargs.pop("model", None),
+            model=kwargs.pop("model", AGENT_MODEL),
             context=self.context,
             run_agent=kwargs.pop("run_agent", self.refusing_agent),
         )
@@ -567,12 +576,15 @@ class TheCallersModelReachesTheResolvingSession(RepositoryCase):
         )
         self.assertEqual(self.passed[4], "claude-haiku-4-5-20251001")
 
-    def test_a_caller_naming_none_gets_the_merge_roles_model(self) -> None:
+    def test_a_resolution_named_no_model_is_refused_before_a_session_opens(self) -> None:
+        """There is no model of the engine's to fall back to: the plan names it, the
+        definition carries it, and a blank one is a record that could not say who resolved."""
         self.branch("step/a", "shared.txt", "one\nfrom-a\nthree\n")
         self.branch("step/b", "shared.txt", "one\nfrom-b\nthree\n")
-        self.land(["step/a", "step/b"], slot=1, run_agent=self.recording_agent)
-        self.land(["step/a", "step/b"], slot=2, run_agent=self.recording_agent)
-        self.assertEqual(self.passed[4], MERGE_MODEL)
+        with self.assertRaises(CairnError) as raised:
+            self.land(["step/a", "step/b"], slot=1, model="  ", run_agent=self.recording_agent)
+        self.assertEqual(raised.exception.cause, "invalid_arguments")
+        self.assertEqual(self.calls, [])
 
 
 class ARealConflictLandsAndIsProven(RepositoryCase):
@@ -650,7 +662,7 @@ class TheHaltPathConverges(RepositoryCase):
         self.assertEqual(
             result.detail["resolution"],
             {
-                "model": MERGE_MODEL,
+                "model": AGENT_MODEL,
                 "session_id": "session-1",
                 "timed_out": True,
             },

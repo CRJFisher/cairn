@@ -5,7 +5,7 @@
 | Capability     | `run`                                                                                              |
 | Entered when   | the dispatch table selected **run**                                                                |
 | Preconditions  | a generated definition exists for the plan; the repository came from the request                   |
-| Bound on entry | `capability` · `repository` · `workflow` · `occasion_reading`                                      |
+| Bound on entry | `capability` · `repository` · `workflow` · `plan_document` · `model` · `occasion_reading`          |
 | Owns           | the occasion reading, the engine trigger, and the address the run is watched at                    |
 | Defers to      | [../SKILL.md](../SKILL.md) · [../docs/triggers.md](../docs/triggers.md) · [reading.md](reading.md) |
 | Triggers       | a run                                                                                              |

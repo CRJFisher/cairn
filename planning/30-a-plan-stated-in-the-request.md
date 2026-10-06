@@ -135,3 +135,47 @@ rules_ or _Reading a request_), `tests/test_workflow.py`.
 - A request whose model cannot be honoured exactly stops and says so before any authoring.
 - The new `canonical` and `model` fixture cases pass, and every existing dispatch case
   still passes.
+
+## Close-out
+
+Done. Every criterion above holds, and all three sections — A, B and C — are built.
+
+A person can now hand Cairn a plan in a sentence. A request that names work and the order it
+runs in is a `plan_document`, which `SKILL.md` says in the subject shapes themselves, so the
+table holds it: `executing` over `plan_document` is **run**, and running a plan with no
+definition is authoring first. Authoring's step zero writes the request's own words into
+`<git-common-dir>/cairn/plans/<slug>.md` — printed by `python3 -m cairn plan home <slug>
+--repository <path> --document`, outside the working tree a run refuses to start over — beside
+a link to each task document the request names. From there it is a plan document like any
+other: the dependencies are read from the request's own sentences and quoted verbatim, and the
+person confirms the parse report before anything is generated. The first reply after `/cairn`
+names the capability entered and what the subject was read as.
+
+A person can also choose the model without knowing where the setting lives. `model` is a third
+qualifier in `SKILL.md`, beside `repository` and `cadence`. A model the plan's words state is
+`plan.default_model`, the sentence it was read from is `plan.model_evidence`, and
+`--source-root` rechecks that quotation like an edge's — a model resting on words no document
+holds is refused, and a model stated with nothing quoted for it is `unquoted_model`. Every
+agent session takes that value, **the merge resolver included**: `MERGE_MODEL` is gone, the
+topology carries the plan's model into each merge slot, and `cairn merge land` has no model of
+its own to fall back on. The parse report's Models section shows the value beside the sentence,
+names the resolver, and names any step that departs from the plan's; a step that departs is a
+`derived_model` warning, as a non-default `verify_timeout` already was.
+
+A condition a person puts on going ahead is theirs to waive. Where a model cannot be honoured
+exactly, the skill says so and stops — before the plan document is written and before anything
+is derived — rather than deciding on their behalf that a near miss meets the condition.
+
+**The open question, settled.** `--source-root` admits the task documents the request document
+links to, pinned in `plan.sources` like any other document read, with the repository that holds
+them all as the source root. The alternative was forced: a step's `verify` must appear in a
+pinned source or it is `invented_verify`, so quoting only the request document would leave
+every step unasserted and the assertion conversation with nothing to propose — the opposite of
+what a plan sequencing existing task documents is for.
+
+**What proves it.** `fixtures/plans/stated-in-the-request/` is the request above, written down
+whole, with the seven documents it names beside it. Its parse report shows 7 steps in 3 waves,
+the "By then TASK-376.21 has landed" edge in the person's own words, and every session — the
+resolver included — on the model value they confirmed. `fixtures/invocations/cases.json` holds
+the request as a `canonical` Run case and a second case carrying the `model` qualifier, and
+`SKILL.md` is now held to naming every qualifier it has.

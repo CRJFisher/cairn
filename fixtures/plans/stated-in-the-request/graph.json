@@ -1,0 +1,207 @@
+{
+  "cairn_graph_version": 2,
+  "plan": {
+    "slug": "stated-in-the-request",
+    "title": "TASK-376 close-out, as the request stated it",
+    "source": "stated-in-the-request.md",
+    "sources": [
+      {
+        "path": "TASK-376.21.md",
+        "sha256": "29a1008e423393c32402d3f630dea6362efcd80582f612de87874b6749824194"
+      },
+      {
+        "path": "TASK-376.22.md",
+        "sha256": "369b4e6c695debdb50554d3c40901bf6365760d6b394b199445a075662cab630"
+      },
+      {
+        "path": "TASK-376.24.md",
+        "sha256": "7cb1b10bcf150cea4004c648e52149c76a9ad6cf748a006a4b30a8bf73831c0c"
+      },
+      {
+        "path": "TASK-376.27.md",
+        "sha256": "ac7d58cd1ae246f382d2888236ed5ba9d4f3570a46c212c789cbae59c34caf22"
+      },
+      {
+        "path": "TASK-376.md",
+        "sha256": "eb474474cbbf9078bbe1d8667a21f134bbc004d005b38373f026f98f52518de1"
+      },
+      {
+        "path": "TASK-397.md",
+        "sha256": "dbbf1396c1ecfaeb9544fc1fe9244e40ffa7768097fc06b6ab1c8fb5752b04bc"
+      },
+      {
+        "path": "TASK-398.md",
+        "sha256": "6b543be9425c806e753486091646aa4b9e6cbf25043d439c4efc088daa975d3d"
+      },
+      {
+        "path": "stated-in-the-request.md",
+        "sha256": "02f521317d1de82a7946d481877969bd4955380424da0d30c5b1e6e82d3cab69"
+      }
+    ],
+    "default_kind": "agent.claude",
+    "default_model": "claude-sonnet-5-5",
+    "model_evidence": "All steps should use sonnet 5.5.",
+    "id_collisions": []
+  },
+  "steps": [
+    {
+      "id": "task_376_24",
+      "slug": "TASK-376.24",
+      "title": "Parse cache keyed by content hash",
+      "task": "Bring `src/incremental/cache.ts` to a state where a parse result is stored under the SHA-256 of the file's bytes, so a file whose content returns to an earlier state is served from the cache rather than re-parsed.",
+      "deps": [],
+      "verify": "npm test -- cache",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "verify_timeout": 600,
+      "model": "claude-sonnet-5-5",
+      "remediate": false
+    },
+    {
+      "id": "task_376_21",
+      "slug": "TASK-376.21",
+      "title": "Edit ranges from the watcher",
+      "task": "Bring `src/incremental/ranges.ts` to a state where a watcher event becomes the byte ranges that changed, merged where they overlap and ordered by start offset.",
+      "deps": [],
+      "verify": "npm test -- ranges",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "verify_timeout": 600,
+      "model": "claude-sonnet-5-5",
+      "remediate": false
+    },
+    {
+      "id": "task_376_22",
+      "slug": "TASK-376.22",
+      "title": "Symbol table diffing",
+      "task": "Bring `src/incremental/diff.ts` to a state where two symbol tables produce the added, removed and moved symbols between them, with a moved symbol reported once rather than as a removal and an addition.",
+      "deps": [],
+      "verify": "npm test -- diff",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "verify_timeout": 600,
+      "model": "claude-sonnet-5-5",
+      "remediate": false
+    },
+    {
+      "id": "task_398",
+      "slug": "TASK-398",
+      "title": "Watcher debounce",
+      "task": "Bring `src/watch/debounce.ts` to a state where a burst of events for one file collapses into a single event carrying the last state, and events for different files are never collapsed together.",
+      "deps": [],
+      "verify": "npm test -- watcher",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "verify_timeout": 600,
+      "model": "claude-sonnet-5-5",
+      "remediate": false
+    },
+    {
+      "id": "task_376_27",
+      "slug": "TASK-376.27",
+      "title": "Re-index only the ranges that moved",
+      "task": "Bring `src/incremental/reindex.ts` to a state where the index is rebuilt for the edit ranges alone, leaving every symbol outside them untouched and their references intact.",
+      "deps": [
+        {
+          "id": "task_376_21",
+          "origin": "declared",
+          "evidence": "By then TASK-376.21 has landed, and these two touch different files."
+        }
+      ],
+      "verify": "npm test -- reindex",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "verify_timeout": 600,
+      "model": "claude-sonnet-5-5",
+      "remediate": false
+    },
+    {
+      "id": "task_397",
+      "slug": "TASK-397",
+      "title": "Index metrics",
+      "task": "Bring `src/metrics/index.ts` to a state where every index build records how many files it read, how many it parsed and how long each phase took.",
+      "deps": [
+        {
+          "id": "task_376_21",
+          "origin": "declared",
+          "evidence": "By then TASK-376.21 has landed, and these two touch different files."
+        }
+      ],
+      "verify": "npm test -- metrics",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "verify_timeout": 600,
+      "model": "claude-sonnet-5-5",
+      "remediate": false
+    },
+    {
+      "id": "task_376_close_out_measurement",
+      "slug": "TASK-376 close-out measurement",
+      "title": "Incremental re-parse",
+      "task": "Bring `docs/measurements/incremental.md` to a state where it records the measured cost of a one-file re-parse against a whole-project parse, taken on this repository, and the acceptance criteria TASK-376 still leaves open are ticked.",
+      "deps": [
+        {
+          "id": "task_376_24",
+          "origin": "derived",
+          "evidence": "Finally, do the TASK-376 close-out measurement and tick the remaining criteria."
+        },
+        {
+          "id": "task_376_22",
+          "origin": "derived",
+          "evidence": "Finally, do the TASK-376 close-out measurement and tick the remaining criteria."
+        },
+        {
+          "id": "task_398",
+          "origin": "derived",
+          "evidence": "Finally, do the TASK-376 close-out measurement and tick the remaining criteria."
+        },
+        {
+          "id": "task_376_27",
+          "origin": "derived",
+          "evidence": "Finally, do the TASK-376 close-out measurement and tick the remaining criteria."
+        },
+        {
+          "id": "task_397",
+          "origin": "derived",
+          "evidence": "Finally, do the TASK-376 close-out measurement and tick the remaining criteria."
+        }
+      ],
+      "verify": "npm run measure:incremental -- --check",
+      "assertion": null,
+      "tools": null,
+      "scope": "once",
+      "reads": [],
+      "retries": 0,
+      "kind": "agent.claude",
+      "verify_timeout": 600,
+      "model": "claude-sonnet-5-5",
+      "remediate": false
+    }
+  ],
+  "omissions": [],
+  "questions": []
+}

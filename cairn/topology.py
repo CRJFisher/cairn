@@ -430,6 +430,10 @@ def derive(
     by_id = {step["id"]: step for step in graph["steps"]}
     levels = _levels(graph)
     provider = merge_provider(graph["plan"]["default_kind"])
+    # The resolver is the plan's default agent, so it takes the plan's own model rather than
+    # a constant of Cairn's: a plan whose sentence pins every session to a model pins the one
+    # that settles its conflicts too ([docs/merge-step.md]).
+    resolver_model = graph["plan"]["default_model"]
 
     waves: list[Wave] = []
     branches: list[Branch] = []
@@ -514,6 +518,7 @@ def derive(
                         "candidates": candidates,
                         "into": parent_branch,
                         "provider": provider,
+                        "model": resolver_model,
                     },
                 }
             )

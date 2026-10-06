@@ -9,6 +9,7 @@ from typing import Any
 from cairn.plan.ids import is_engine_id, is_plan_slug
 from cairn.plan.schema import (
     AGENT_FAMILY,
+    AGENT_MODEL,
     ANSWERED_ORIGIN,
     EDGE_KINDS,
     ENGINE_NAME_MAX_BYTES,
@@ -331,6 +332,35 @@ def validate(raw: Any, source_root: str | None = None) -> Result:
 
     corpus = _read_sources(graph, source_root, errors) if source_root else None
 
+    model_evidence = (plan["model_evidence"] or "").strip()
+    if not plan["default_model"].strip():
+        errors.append(
+            Finding(
+                "plan_model",
+                "the plan names no default model, so nothing says which model its sessions "
+                "and its merge resolver open on",
+            )
+        )
+    elif plan["default_model"] != AGENT_MODEL and not model_evidence:
+        # The one bound that carries its own quotation: a model is a translation of the
+        # person's words into a value the provider is invoked with, and a translation
+        # nothing quotes is the derivation's choice presented as theirs ([30 B]).
+        errors.append(
+            Finding(
+                "unquoted_model",
+                f"the plan pins every session to {plan['default_model']!r} and quotes no "
+                "sentence for it; a model the plan states rests on the words that state it",
+            )
+        )
+    if model_evidence and corpus is not None and _flatten(model_evidence) not in corpus:
+        errors.append(
+            Finding(
+                "evidence_not_in_source",
+                f"the plan's model quotes {_flatten(model_evidence)!r}, which no source "
+                "document contains",
+            )
+        )
+
     steps = graph["steps"]
     if not steps:
         errors.append(Finding("empty_graph", "the graph contains no steps"))
@@ -505,10 +535,21 @@ def validate(raw: Any, source_root: str | None = None) -> Result:
                     step_id,
                 )
             )
+        # An edge carries the words that justify it and the validator checks the quote; a
+        # step's bound carries nothing, so one that departs from the plan's own is the
+        # derivation's reading and the person confirming the parse is told so. The plan-wide
+        # model is the exception, and it is quoted and rechecked above.
+        if step["model"] is not None and step["model"] != plan["default_model"]:
+            warnings.append(
+                Finding(
+                    "derived_model",
+                    f"step {step_id!r} opens on {step['model']!r} rather than the plan's "
+                    f"{plan['default_model']!r}; the derivation read that from the step's "
+                    "own document and nothing quotes it",
+                    step_id,
+                )
+            )
         if step["verify_timeout"] != VERIFY_TIMEOUT:
-            # An edge carries the words that justify it and the validator checks the
-            # quote; a bound carries nothing, so a non-default one is the derivation's
-            # own reading and the person confirming the parse is told so.
             warnings.append(
                 Finding(
                     "derived_timeout",

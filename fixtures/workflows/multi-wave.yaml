@@ -11,7 +11,7 @@
     "cairn_plan": "multi-wave",
     "cairn_generator": "11",
     "cairn_engine": "2.11.0",
-    "cairn_graph_sha256": "394628293238a9a912dde424166fae5bb0d972645eca78db65dd817904538090",
+    "cairn_graph_sha256": "e75938fe147b295c9d610cbda3ef67671c40b96cd8408b42507f054071f91a87",
     "cairn_body_sha256": "53d2ffffb504396e99a2e35ddb3b5b05d9eb23ee8d7c7782307547c79a731b69"
   },
   "params": [

@@ -1,0 +1,7 @@
+{
+  "key": "once",
+  "run_id": "20261006T222222Z-9621939f",
+  "scope": "once",
+  "step_id": "implement_30",
+  "summary": "Plan 30's three sections (A, B, C) are built and every acceptance criterion that can hold in the repository now holds. Full suite green (1435 tests), pyright strict clean. The tree was clean on entry\u2026"
+}

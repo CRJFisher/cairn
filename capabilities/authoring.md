@@ -1,20 +1,56 @@
 # Authoring a workflow, and changing one
 
-| Contract       | Value                                                                                                 |
-| -------------- | ----------------------------------------------------------------------------------------------------- |
-| Capability     | `author`, `edit`                                                                                      |
-| Entered when   | the dispatch table selected **author** or **edit**                                                    |
-| Preconditions  | a plan document, folder or graph exists on disk; the target repository came from the request          |
-| Bound on entry | `capability` · `repository` · `plan_document` · `plan_graph` · `workflow`                             |
-| Owns           | the derivation, the assertion conversation, generation, and what a re-authoring replaces              |
-| Defers to      | [../docs/plan-derivation.md](../docs/plan-derivation.md) · [../docs/workflow.md](../docs/workflow.md) |
-| Triggers       | a written definition in the repository's own admin directory                                          |
+| Contract       | Value                                                                                                                               |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Capability     | `author`, `edit`                                                                                                                    |
+| Entered when   | the dispatch table selected **author** or **edit**                                                                                  |
+| Preconditions  | a plan document, folder or graph exists on disk, or the request states the plan itself; the target repository came from the request |
+| Bound on entry | `capability` · `repository` · `plan_document` · `plan_graph` · `workflow` · `model`                                                 |
+| Owns           | the derivation, the assertion conversation, generation, and what a re-authoring replaces                                            |
+| Defers to      | [../docs/plan-derivation.md](../docs/plan-derivation.md) · [../docs/workflow.md](../docs/workflow.md)                               |
+| Triggers       | a written definition in the repository's own admin directory                                                                        |
 
 **Edit is authoring.** There is no in-place edit of a generated definition. The plan document
 is the source of truth (I1), so changing what a workflow does means changing the plan and
 authoring again; the generator states what it is replacing and never merges. Editing the
 `.yaml` by hand is a divergence its editor owns, and Cairn's job is to make that visible
 rather than to prevent it.
+
+## Step zero — a plan the request states is written down first
+
+A request that names work and the order it runs in is a plan document that does not exist
+yet, and the derivation reads documents rather than conversations. So the request becomes one
+before anything else happens.
+
+`python3 -m cairn plan home <plan-slug> --repository <path> --document` prints where it goes:
+`<git-common-dir>/cairn/plans/<plan>.md`, beside the graph and outside the working tree, for
+the reason the graph is there — a run's first act refuses over a dirty tree, so a plan
+document written into the tree would stop the very run it was written for. Derive the slug
+from that path's own name, as `python3 -m cairn plan slug` does for any other plan.
+
+What the document holds:
+
+- **The request's own words, verbatim.** Quote the whole request. Nothing is paraphrased,
+  tidied, summarised or reordered — the words are what every edge, command and bound is
+  later quoted from, and `--source-root` rechecks each quotation against this file.
+- **A link to each task document the request names**, by its path relative to the
+  repository. The derivation reads those documents too and pins each one in `plan.sources`,
+  so a step's verify command is quoted from the document that states it. The source root for
+  this shape is the repository, which holds both this document and the ones it links to.
+- **Nothing of your own.** No invented step, no dependency the words do not state, no
+  acceptance criterion the request did not ask for.
+
+Then derive from it as from any other plan document. The dependencies come from the
+request's own sentences — "By then TASK-376.21 has landed" is an edge with those words as its
+evidence — and are never defaulted to sequential. The person's confirmation of the parse
+report is what makes the transcription theirs, and this shape gets no shortcut past it.
+
+**A model the request states is a sentence in this document**, and the derivation sets
+`plan.default_model` from it, quoting that sentence in `plan.model_evidence`. Every agent
+session the plan opens takes it, the merge resolver included, and the parse report shows the
+value beside the sentence so the person confirms the translation rather than discovering it.
+Where the request makes a model the condition of going ahead and it cannot be honoured
+exactly, say so and stop — before the document is written, and before anything else here.
 
 ## The procedure
 

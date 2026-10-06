@@ -91,6 +91,33 @@ def render(raw: Any, result: Result | None = None) -> str:
         )
     lines.append("")
 
+    lines.append("## Models")
+    lines.append("")
+    evidence = plan["model_evidence"]
+    default = f"- every session: `{_escape(plan['default_model'])}`"
+    lines.append(
+        f"{default} — on the words: {_escape(evidence)}"
+        if evidence
+        else f"{default} — the default; no sentence of the plan's states one"
+    )
+    lines.append(
+        f"- the merge resolver: `{_escape(plan['default_model'])}` — it is the plan's own "
+        "default agent"
+    )
+    departing = [
+        step
+        for step in steps
+        if step["model"] is not None and step["model"] != plan["default_model"]
+    ]
+    for step in departing:
+        lines.append(
+            f"- **`{step['id']}`** instead opens on `{_escape(step['model'] or '')}`, which "
+            "the derivation read from its own document"
+        )
+    if not departing:
+        lines.append("- no step departs from it.")
+    lines.append("")
+
     lines.append("## What each step is asked to do")
     lines.append("")
     for step in steps:

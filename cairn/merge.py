@@ -37,7 +37,6 @@ from cairn.gitio import (
 )
 from cairn.headroom import Instruments, session_within_allowance
 from cairn.locks import git_write_mutex, refuse_unresolved_merge, unresolved_merge
-from cairn.plan.schema import MERGE_MODEL
 from cairn.providers import run_provider
 from cairn.verify import EXCLUSION_CAUSES, GATE_INDETERMINATE, NOT_REACHED, mark_name
 
@@ -539,12 +538,16 @@ def run_merge(
     candidates: Sequence[str],
     provider: str,
     context: RuntimeContext,
-    model: str | None = MERGE_MODEL,
+    model: str,
     run_agent: ProviderCall = run_provider,
     instruments: Instruments | None = None,
 ) -> CommandResult:
-    """Land one of this wave's branches, or report honestly why none was landed."""
-    model = model or MERGE_MODEL
+    """Land one of this wave's branches, or report honestly why none was landed.
+
+    `model` is the plan's own, carried from the definition the emitter wrote. There is no
+    default here: a resolution opened on a model nobody named leaves a record that cannot say
+    which model settled the conflict.
+    """
     if not model.strip():
         raise CairnError(
             "invalid_arguments",

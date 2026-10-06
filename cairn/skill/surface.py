@@ -45,7 +45,13 @@ DESCRIPTION_CHARACTER_LIMIT = 600
 # exactly, and a table nobody can scan is worse than a longer file. It moves down when the
 # file does, and up only for a sentence a sweep over real sessions showed was missing rather
 # than implied.
-ON_TRIGGER_CHARACTER_LIMIT = 11_200
+#
+# It moved up once, by the four paragraphs a measured session needed and did not have: a plan
+# stated in the request, the model qualifier, the stop condition a near miss must not be read
+# as meeting, and the reading the first reply states. That session read the file, found no row
+# of the table that held its request, and went looking through Cairn's own source for the word
+# "model" ([30]).
+ON_TRIGGER_CHARACTER_LIMIT = 12_600
 
 
 class Size(NamedTuple):

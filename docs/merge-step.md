@@ -87,10 +87,13 @@ hang guard alone the mutex wait and the merge in front of it would come out of t
 own deadline. Its proof is bounded as the support step it always is, because it runs git
 reads and never a session.
 
-**The resolver is the plan's own default agent.** Its model is written into every
-slot, and it runs under the hang guard like every other session. A plan whose steps are all
-commands still gets one, because a conflict is a question about intent whatever produced it.
-A stopped resolution records its model and its session identity.
+**The resolver is the plan's own default agent.** Its model is the plan's `default_model`,
+written into every slot, and it runs under the hang guard like every other session. A plan
+whose sentence pins every session to a model pins the one that settles its conflicts too, and
+the parse report shows the resolver's model beside the steps' so the person confirming the
+parse sees it. A plan whose steps are all commands still gets a resolver, because a conflict
+is a question about intent whatever produced it. A stopped resolution records its model and
+its session identity.
 
 **The slot takes the git write mutex around its own `git merge` and releases it before the
 agent runs.** The mutex's wait is five minutes and a session runs to an hour, so holding it

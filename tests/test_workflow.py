@@ -30,7 +30,8 @@ from cairn.core import CairnError, RuntimeContext
 from cairn.gitio import state_directory
 from cairn.parameters import parameter
 from cairn.plan.cli import main as plan_main
-from cairn.plan.home import SHARED_GRAPH, graph_path
+from cairn.plan.home import SHARED_GRAPH, graph_path, plan_document_path
+from cairn.plan.ids import derive_plan_slug
 from cairn.plan.schema import ENGINE_NAME_MAX_BYTES, normalise
 from cairn.plan.validate import validate
 from cairn.topology import ROLES, parse_node_name, worktrees_root_for
@@ -1049,6 +1050,28 @@ class EachPlanKeepsItsOwnGraph(unittest.TestCase):
                     "--source-root", str(PLANS / plan),
                 ]
             )
+
+    def test_a_plan_stated_in_a_request_is_written_outside_the_working_tree(self) -> None:
+        """[30 A]: a run's first act refuses over a dirty tree, so the document a request
+        becomes lands beside the graph rather than in the tree the run is for."""
+        printed = io.StringIO()
+        with redirect_stdout(printed), redirect_stderr(io.StringIO()):
+            self.assertEqual(
+                plan_main(
+                    [
+                        "home", "stated-in-the-request",
+                        "--repository", str(self.repository), "--document",
+                    ]
+                ),
+                0,
+            )
+        document = Path(printed.getvalue().strip())
+        self.assertEqual(document, plan_document_path(self.repository, "stated-in-the-request"))
+        self.assertIn(".git", document.parts)
+        self.assertEqual(document.suffix, ".md")
+        self.assertEqual(
+            derive_plan_slug(str(document)), "stated-in-the-request", "the file names the plan"
+        )
 
     def test_two_plans_are_addressed_by_their_own_slugs(self) -> None:
         first, second = self.home("linear-chain"), self.home("fan-out")

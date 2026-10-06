@@ -82,6 +82,7 @@ class GoldenGraphs(unittest.TestCase):
                 "non-convergent",
                 "worktree-hydration",
                 "pattern-lifecycle",
+                "stated-in-the-request",
             },
         )
 
@@ -181,6 +182,25 @@ class SourceRecheck(unittest.TestCase):
         graph["plan"]["sources"].append({"path": "06-invented.md", "sha256": "0" * 64})
         result = validate(graph, source_root=root)
         self.assertIn("missing_source", [f.code for f in result.errors])
+
+    def test_a_model_quoting_words_no_document_contains_is_rejected(self) -> None:
+        """A model is the one bound that carries its own quotation, so it is rechecked like
+        an edge's: the person's words are what the value rests on ([30 B])."""
+        graph = load("stated-in-the-request", "graph.json")
+        root = os.path.join(FIXTURES, "stated-in-the-request")
+        graph["plan"]["model_evidence"] = "use sonnet 5.5, obviously"
+        result = validate(graph, source_root=root)
+        self.assertIn("evidence_not_in_source", [f.code for f in result.errors])
+
+    def test_a_model_the_plan_states_and_quotes_nothing_for_is_rejected(self) -> None:
+        graph = load("stated-in-the-request", "graph.json")
+        graph["plan"]["model_evidence"] = None
+        self.assertIn("unquoted_model", [f.code for f in validate(graph).errors])
+
+    def test_a_plan_naming_no_model_is_rejected(self) -> None:
+        graph = load("stated-in-the-request", "graph.json")
+        graph["plan"]["default_model"] = "  "
+        self.assertIn("plan_model", [f.code for f in validate(graph).errors])
 
     def test_an_edge_quoting_words_no_document_contains_is_rejected(self) -> None:
         graph, root = self._wh()
@@ -946,6 +966,41 @@ class ParseReport(unittest.TestCase):
     def test_a_multi_document_plan_says_how_many_it_read(self) -> None:
         text = render(load("worktree-hydration", "graph.json"), None)
         self.assertIn("Derived from 6 documents.", text)
+
+    def test_every_report_names_the_model_each_session_opens_on(self) -> None:
+        for name in NAMES:
+            with self.subTest(name):
+                graph = load(name, "graph.json")
+                text = render(graph, None)
+                self.assertIn(f"every session: `{graph['plan']['default_model']}`", text)
+                self.assertIn(f"the merge resolver: `{graph['plan']['default_model']}`", text)
+
+    def test_a_step_departing_from_the_plans_model_is_named_as_departing(self) -> None:
+        text = render(load("mixed-kinds", "graph.json"), None)
+        self.assertIn("instead opens on `opus`", text)
+
+    def test_a_plan_stated_in_a_request_reports_its_waves_its_edge_and_its_models(self) -> None:
+        """[30]: the report is the whole of what the person confirms — the waves their
+        sentences described, the edge in their own words, and every session on the model
+        they asked for, the resolver included."""
+        graph = load("stated-in-the-request", "graph.json")
+        text = render(graph, validate(graph))
+        self.assertIn("7 step(s) in 3 wave(s); widest wave 4.", text)
+        self.assertIn(
+            "on the words: By then TASK-376.21 has landed, and these two touch different "
+            "files.",
+            text,
+        )
+        self.assertIn(
+            "every session: `claude-sonnet-5-5` — on the words: All steps should use "
+            "sonnet 5.5.",
+            text,
+        )
+        self.assertIn("the merge resolver: `claude-sonnet-5-5`", text)
+        self.assertIn("no step departs from it.", text)
+        self.assertEqual(
+            {step["model"] for step in graph["steps"]}, {"claude-sonnet-5-5"}
+        )
 
 
 if __name__ == "__main__":

@@ -194,8 +194,10 @@ AGENT_TIMEOUT = HANG_GUARD + QUOTA_WAIT + AGENT_REPORT_GRACE
 
 # A merge resolver is an agent role like any other, so it names its model and runs under the
 # same hang guard and the same hold at the allowance. Its engine step also leaves the same
-# report grace as an ordinary agent session after the internal deadline.
-MERGE_MODEL = AGENT_MODEL
+# report grace as an ordinary agent session after the internal deadline. The model it names
+# is the plan's own default — the resolver is the plan's default agent
+# ([docs/merge-step.md]), so a plan whose sentence pins every session to a model pins this
+# one too rather than leaving the engine to choose.
 MERGE_TIMEOUT = MUTEX_WAIT + GIT_TIMEOUT + HANG_GUARD + QUOTA_WAIT + AGENT_REPORT_GRACE
 MERGE_RETRIES = 0
 
@@ -259,8 +261,9 @@ def default_retries(kind: str) -> int:
     return AGENT_RETRIES if kind.startswith(AGENT_FAMILY) else COMMAND_RETRIES
 
 
-def default_model(kind: str) -> str | None:
-    return AGENT_MODEL if kind.startswith(AGENT_FAMILY) else None
+def step_model(kind: str, plan_model: str) -> str | None:
+    """The model a step opens its session on, or None where it opens none."""
+    return plan_model if kind.startswith(AGENT_FAMILY) else None
 
 
 def has_assertion(step: "Step") -> bool:
@@ -337,6 +340,8 @@ class Plan(TypedDict):
     source: str
     sources: list[Source]
     default_kind: str
+    default_model: str
+    model_evidence: str | None
     id_collisions: list[Collision]
 
 
@@ -417,7 +422,7 @@ STEP_FIELDS: Spec = {
     },
     # Null on a command step, which opens no session; always resolved on an agent step,
     # whose record could not otherwise say which model did the work.
-    "model": {"type": str, "default_from": "kind", "nullable": True},
+    "model": {"type": str, "default_from": "kind and plan.default_model", "nullable": True},
     # One session, after an assertion that ran and exited nonzero, resuming the step's
     # own session to fix what it found; then the same assertion again. Never after an
     # assertion a signal ended, which decided nothing a session could fix.
@@ -459,6 +464,12 @@ PLAN_FIELDS: Spec = {
     "source": {"type": str, "required": True},
     "sources": {"type": list, "default": []},
     "default_kind": {"type": str, "check": is_plan_kind, "default": DEFAULT_KIND},
+    # Every agent session the plan opens, the merge resolver included, unless a step states
+    # its own. A model is a translation of the person's words into a value the provider
+    # serves, so the sentence it was read from is quoted beside it and rechecked like an
+    # edge's — the one bound that carries its own evidence.
+    "default_model": {"type": str, "default": AGENT_MODEL},
+    "model_evidence": {"type": str, "default": None, "nullable": True},
     "id_collisions": {"type": list, "default": []},
 }
 
@@ -803,7 +814,7 @@ def normalise(raw: Any) -> Graph:
         if step.get("retries") is None:
             step["retries"] = default_retries(step["kind"])
         if step.get("model") is None:
-            step["model"] = default_model(step["kind"])
+            step["model"] = step_model(step["kind"], plan["default_model"])
         deps: list[Dep] = []
         for raw_dep in cast(list[Any], step["deps"]):
             dep = _copy(cast(dict[str, Any], raw_dep))

@@ -13,7 +13,7 @@ from typing import Any, cast
 from cairn.core import CairnError, read_standard_json, write_json
 from cairn.plan.assertions import AnswerError, answer, propose
 from cairn.plan.assertions import render as render_proposals
-from cairn.plan.home import graph_path, refuse_shared_graph
+from cairn.plan.home import graph_path, plan_document_path, refuse_shared_graph
 from cairn.plan.ids import assign_ids, derive_plan_slug, plan_slug_collisions
 from cairn.plan.questions import ResolutionError, resolve
 from cairn.plan.questions import render as render_questions
@@ -176,7 +176,11 @@ def _cmd_answer(args: argparse.Namespace) -> int:
 def _cmd_home(args: argparse.Namespace) -> int:
     repository = Path(args.repository).resolve()
     try:
-        home = graph_path(repository, args.slug)
+        home = (
+            plan_document_path(repository, args.slug)
+            if args.document
+            else graph_path(repository, args.slug)
+        )
         refuse_shared_graph(repository)
     except CairnError as exc:
         raise UsageError(str(exc)) from exc
@@ -238,6 +242,9 @@ def main(argv: list[str] | None = None) -> int:
     child = sub.add_parser("home")
     child.add_argument("slug")
     child.add_argument("--repository", required=True)
+    # A plan the request states has no document until authoring writes one, and it belongs
+    # where the graph does rather than in the working tree a run refuses to start over.
+    child.add_argument("--document", action="store_true")
     child.set_defaults(handler=_cmd_home)
 
     child = sub.add_parser("normalise")

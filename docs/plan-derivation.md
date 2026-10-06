@@ -7,7 +7,11 @@ half takes over.
 A step's `kind`, and what each kind becomes in the engine, is [step-kinds.md](step-kinds.md).
 
 Input: a path to a plan document, or to a folder of numbered task documents whose index is
-`README.md`, `WORKLIST.md`, `PLAN.md`, or `index.md`.
+`README.md`, `WORKLIST.md`, `PLAN.md`, or `index.md`. A plan the request states rather than
+points at is written down first, verbatim, at `<git-common-dir>/cairn/plans/<plan>.md`
+([../capabilities/authoring.md](../capabilities/authoring.md)); from here it is a plan
+document like any other, and the documents it links to are read and pinned with it, under
+the repository that holds them all as the source root.
 Output: one graph at the plan's own home — `python3 -m cairn plan home <plan-slug>
 --repository <path>` prints `<git-common-dir>/cairn/graphs/<plan>.json` — a parse report, and a
 list of questions for the author.
@@ -61,19 +65,37 @@ For each unit of work the plan names:
 - **`verify_timeout`** and **`model`** are the step's bounds, and the document is their only
   lever: set each exactly where the document states it — "the suite takes twenty minutes"
   is a `verify_timeout` of 1200, "pin it to the opus model" is a model of `opus` — and leave
-  it out everywhere else, so the default applies. Raising a workflow's assertion timeouts or
-  models is therefore an edit to the plan document followed by re-authoring, not an edit to
-  the generated file. A `verify_timeout` that differs from the default is a warning on the
-  parse report, naming the step and the bound: unlike an edge, a bound carries no quotation
-  of the words that justify it, so the report says the derivation supplied it and the person
-  confirming the parse checks the document holds the sentence. A limit on money or on how
-  long a session may run sets no field: the sentence stays in the step's task and nothing is
-  derived from it.
+  it out everywhere else, so the plan's default applies. Raising a workflow's assertion
+  timeouts or models is therefore an edit to the plan document followed by re-authoring, not
+  an edit to the generated file. A bound that differs from the default is a warning on the
+  parse report, naming the step and the bound: unlike an edge, a step's bound carries no
+  quotation of the words that justify it, so the report says the derivation supplied it and
+  the person confirming the parse checks the document holds the sentence. A limit on money or
+  on how long a session may run sets no field: the sentence stays in the step's task and
+  nothing is derived from it.
 
 - **`remediate`** is `true` only where the document asks for a failing check to be fixed
   rather than stopped on ("if its tests fail, have it fix them"), and only on an agent step
   with an assertion. It adds one more session per step, so a document that says nothing
   leaves it out.
+
+### The model the plan's sessions open on
+
+A model the document states for the whole plan — "all steps should use sonnet 5.5", "run this
+on opus" — is `plan.default_model`, and the sentence it was read from is quoted verbatim in
+`plan.model_evidence`. Every agent step takes that value unless its own document states
+otherwise, and so does the merge resolver, which is the plan's default agent
+([merge-step.md](merge-step.md)). A plan that states nothing gets Cairn's own default, and
+quotes nothing.
+
+The value written is the one the provider is invoked with, so the reading from the person's
+words to that value is yours to declare and theirs to confirm: "sonnet 5.5" becomes a model
+alias or a dated identifier, never both, and the parse report shows the value beside the
+sentence so the person sees which it became. **A name the provider does not serve is a
+question, never a guess** — and where the request made the model a condition of going ahead,
+it is a stop rather than a question, before a graph exists at all
+([../capabilities/authoring.md](../capabilities/authoring.md)). `--source-root` rechecks the
+quotation like an edge's: a model resting on words no document holds is refused.
 
 ### State every task as an end state
 

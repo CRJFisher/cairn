@@ -87,10 +87,13 @@ SUBJECT_SHAPES: tuple[str, ...] = (
 
 SHAPE_REPOSITORY = "repository"  # an explicit repository path
 SHAPE_CADENCE = "cadence"  # "every night", a cron expression, a webhook
+SHAPE_MODEL = "model"  # "all steps on sonnet 5.5", "pin it to the opus model"
 
 # A qualifier modifies how a capability proceeds and can never be what a request is about.
-# Keeping the two axes apart is what lets the table stay 48 cells instead of 192.
-QUALIFIER_SHAPES: tuple[str, ...] = (SHAPE_REPOSITORY, SHAPE_CADENCE)
+# Keeping the two axes apart is what lets the table stay 48 cells instead of 384: a request
+# names any combination of the three, and folding them into the subject axis would key the
+# table on every one of those combinations.
+QUALIFIER_SHAPES: tuple[str, ...] = (SHAPE_REPOSITORY, SHAPE_CADENCE, SHAPE_MODEL)
 
 ARGUMENT_SHAPES: tuple[str, ...] = SUBJECT_SHAPES + QUALIFIER_SHAPES
 
@@ -178,6 +181,7 @@ BINDING_RUN = "run"
 BINDING_STEP = "step"
 BINDING_VERDICT_WORD = "verdict_word"
 BINDING_CADENCE = "cadence"
+BINDING_MODEL = "model"
 BINDING_OCCASION_READING = "occasion_reading"
 
 # What a capability document may read and may not re-decide. A document that re-decides one
@@ -193,6 +197,7 @@ BINDINGS: tuple[str, ...] = (
     BINDING_STEP,
     BINDING_VERDICT_WORD,
     BINDING_CADENCE,
+    BINDING_MODEL,
     BINDING_OCCASION_READING,
 )
 
@@ -220,6 +225,7 @@ __all__ = [
     "QUALIFIER_SHAPES",
     "READING_BY_TRIGGER",
     "SHAPE_CADENCE",
+    "SHAPE_MODEL",
     "SHAPE_PLAN_DOCUMENT",
     "SHAPE_PLAN_GRAPH",
     "SHAPE_REPOSITORY",

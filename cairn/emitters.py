@@ -26,7 +26,6 @@ from cairn.plan.schema import (
     AGENT_TIMEOUT,
     HANG_GUARD,
     INPUTS_SCOPE,
-    MERGE_MODEL,
     MERGE_RETRIES,
     MERGE_TIMEOUT,
     RETRY_INTERVAL,
@@ -495,6 +494,10 @@ def emit_merge(node: Node) -> EngineStep:
     committed tips. It carries no `continue_on` in either spelling: a merge that halts must
     stop the slots behind it and the prune after them, and a flag here would let the next
     slot write over a conflicted index.
+
+    The model is the plan's, written here like an agent step's and for the same reason: the
+    resolver is the plan's default agent, and a record that could not say which model settled
+    a conflict is the same gap as one that could not say which model did the work.
     """
     detail = node["detail"]
     arguments = [
@@ -505,7 +508,7 @@ def emit_merge(node: Node) -> EngineStep:
         "--provider",
         str(detail["provider"]),
         "--model",
-        MERGE_MODEL,
+        str(detail["model"]),
     ]
     for branch in list(detail["candidates"]):
         arguments.extend(("--branch", str(branch)))

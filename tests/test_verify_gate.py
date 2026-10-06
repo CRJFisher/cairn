@@ -1500,7 +1500,7 @@ class WhatTheCorpusStates(unittest.TestCase):
 
     def test_the_corpus_is_the_one_the_documents_describe(self) -> None:
         steps, unasserted, real = self.counts()
-        self.assertEqual((steps, unasserted, real), (41, 10, 8))
+        self.assertEqual((steps, unasserted, real), (48, 10, 8))
 
     def test_the_document_quotes_the_corpus_it_ships(self) -> None:
         steps, unasserted, real = self.counts()

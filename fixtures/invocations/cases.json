@@ -108,6 +108,22 @@
       "why": "running a plan that has no workflow yet is Run; authoring is a step inside it, not a different request"
     },
     {
+      "id": "run-a-plan-stated-in-the-request",
+      "family": "canonical",
+      "utterance": "Run TASK-376.24, TASK-376.21, TASK-376.22 and TASK-398 together. Then run TASK-376.27 and TASK-397 together. By then TASK-376.21 has landed, and these two touch different files. Finally, do the TASK-376 close-out measurement and tick the remaining criteria. All steps should use sonnet 5.5. If the model type isn't configurable, stop and tell me. Do it in /Users/me/src/ariadne",
+      "reading": {"verbs": ["executing"], "subjects": ["plan_document"], "qualifiers": ["repository", "model"]},
+      "expect": {"capability": "run", "ask": null, "readings": []},
+      "why": "a request that names the work and the order it runs in is a plan document, whatever words it uses: Run, which authors first because no definition exists — the shape a plan most often arrives in, and the one a session once found no row of the table for"
+    },
+    {
+      "id": "author-with-a-model-stated",
+      "family": "canonical",
+      "utterance": "turn .planning/offline-export/WORKLIST.md into a workflow for /Users/me/src/product, and pin every step to opus",
+      "reading": {"verbs": ["authoring"], "subjects": ["plan_document"], "qualifiers": ["repository", "model"]},
+      "expect": {"capability": "author", "ask": null, "readings": []},
+      "why": "a model is a qualifier like a repository: it modifies how Author proceeds and is never a second subject, so it adds no reading and raises no question"
+    },
+    {
       "id": "recover-a-named-run",
       "family": "canonical",
       "utterance": "recover run 20260810T031500Z-a1b2c3d4",

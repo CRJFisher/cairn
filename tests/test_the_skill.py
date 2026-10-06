@@ -317,6 +317,13 @@ class TheDocumentAndTheTableAreOneRuleSet(unittest.TestCase):
     def test_the_documents_table_is_the_rules_exactly(self) -> None:
         self.assertEqual(self._table(), DISPATCH_RULES)
 
+    def test_every_qualifier_is_stated_in_the_document(self) -> None:
+        """A qualifier the file never names is one an agent goes looking for in Cairn's
+        source — which is what a measured session did for the model ([30 B])."""
+        for shape in QUALIFIER_SHAPES:
+            with self.subTest(shape=shape):
+                self.assertIn(f"`{shape}`", self.text)
+
     def test_every_reason_in_the_ask_list_is_stated_in_the_document(self) -> None:
         for reason in ASK_REASONS:
             with self.subTest(reason=reason):
@@ -734,6 +741,68 @@ class TheCorpusIsWhatItClaimsToBe(unittest.TestCase):
             with self.subTest(case=case["id"]):
                 self.assertTrue(case["why"].strip())
                 self.assertIn("family", case)
+
+
+class APlanStatedInTheRequestReachesACapability(unittest.TestCase):
+    """Doc 30. The shape a plan usually arrives in: a few sentences that sequence task
+    documents a repository already has. No row of the table held it, so a session that
+    loaded the skill had nowhere to go and went reading Cairn's source instead.
+    """
+
+    def setUp(self) -> None:
+        self.skill = SKILL.read_text(encoding="utf-8")
+        self.authoring = (CAPABILITIES / "authoring.md").read_text(encoding="utf-8")
+
+    def _case(self, identifier: str) -> dict[str, Any]:
+        return next(case for case in CASES if case["id"] == identifier)
+
+    def test_the_request_that_had_nowhere_to_go_is_a_plan_document_and_reaches_run(
+        self,
+    ) -> None:
+        case = self._case("run-a-plan-stated-in-the-request")
+        self.assertEqual(
+            dispatch(reading_of(case)),
+            Selected(CAPABILITY_RUN, "table:executing/plan_document"),
+        )
+
+    def test_a_model_qualifies_a_capability_and_is_never_a_second_subject(self) -> None:
+        """A model stated in a request adds no reading and raises no question: it is a
+        qualifier, which is what keeps the table 48 cells."""
+        case = self._case("author-with-a-model-stated")
+        self.assertIn("model", case["reading"]["qualifiers"])
+        self.assertEqual(case["reading"]["subjects"], ["plan_document"])
+        decision = dispatch(reading_of(case))
+        self.assertIsInstance(decision, Selected)
+
+    def test_the_skill_names_the_shape_rather_than_leaving_it_to_be_inferred(self) -> None:
+        self.assertIn("request itself where it names work and the order that work runs in", self.skill)
+
+    def test_the_first_reply_states_the_reading_it_took(self) -> None:
+        """A person can see the skill was followed, and see when it was not."""
+        self.assertIn("Say the reading before acting on it", self.skill)
+
+    def test_a_condition_on_going_ahead_is_never_read_as_met_by_a_near_miss(self) -> None:
+        """The session that met "stop if the model isn't configurable" by deciding an alias
+        was close enough is the fault this sentence exists for ([30 C])."""
+        self.assertIn("theirs to waive", self.skill)
+        self.assertIn("say so and stop before authoring", self.skill)
+
+    def test_authoring_writes_the_request_down_before_deriving_anything_from_it(
+        self,
+    ) -> None:
+        self.assertIn("--document", self.authoring)
+        self.assertIn("verbatim", self.authoring)
+        self.assertIn("cairn/plans/<plan>.md", self.authoring)
+
+    def test_authoring_admits_the_shape_as_a_precondition(self) -> None:
+        """A capability document may not re-decide a binding, so a shape the table sends it
+        is a shape its preconditions admit."""
+        preconditions = next(
+            line
+            for line in self.authoring.splitlines()
+            if line.startswith("| Preconditions")
+        )
+        self.assertIn("the request states the plan itself", preconditions)
 
 
 class ANewOccasionAndARecoveryAreDecidedAtTheTrigger(unittest.TestCase):

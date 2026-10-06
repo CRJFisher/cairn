@@ -34,6 +34,9 @@ starts no execution.
 
 ## Reading a request
 
+**Say the reading before acting on it.** The first reply after `/cairn` names the capability
+entered and what the subject was read as, so a person can see the skill was followed.
+
 Read the request into **one verb class** and **one subject shape**, then take the cell. Where
 you cannot land on exactly one of each, ask — the shapes that leave you unable are listed
 below, and each is a question rather than a best guess. Two narrow exceptions: where two
@@ -59,15 +62,32 @@ them names — tidy up, see to, deal with — is no verb Cairn holds, and the re
 - `interrogating` — ask about state or meaning, changing nothing, including in the past
   tense: what would this do, what does this word mean, why was this excluded, check it.
 
-**Subject shapes.** `plan_document` a markdown plan or folder of task documents; `plan_graph`
-a derived graph.json; `workflow` a plan slug or generated definition; `run` a run id or a
-reference to a past execution; `step` a step id or the plan's own name for one;
-`verdict_word` a request _about a word as a word_, never a word that merely occurs in a
-sentence about something else.
+**Subject shapes.** `plan_document` a markdown plan, a folder of task documents, **or the
+request itself where it names work and the order that work runs in**; `plan_graph` a derived
+graph.json; `workflow` a plan slug or generated definition; `run` a run id or a reference to
+a past execution; `step` a step id or the plan's own name for one; `verdict_word` a request
+_about a word as a word_, never a word that merely occurs in a sentence about something else.
+
+**A plan stated in the request is a `plan_document`**, whatever words it uses — "run these
+four together, then these two, then the close-out" names the work, the waves and the order,
+and that is a plan. It is how a plan usually arrives; a document on disk is the special case.
+Authoring writes the request's own words down as the plan document first, unparaphrased, and
+nothing skips the parse report.
 
 **Qualifiers** modify how a capability proceeds and are never what a request is about: a
-`repository` path, and a `cadence`. Two objects of one shape are one subject — two runs of
-one plan is Run, twice.
+`repository` path, a `cadence`, and a `model`. Two objects of one shape are one subject — two
+runs of one plan is Run, twice.
+
+**The `model` qualifier.** A model stated in the request is a sentence in the plan document,
+and the derivation sets each agent session's model from it — a plan-wide sentence the merge
+resolver's too. The parse report shows every session's model beside the words it came from,
+which answers "can I choose the model?" without leaving this file. A model the provider does
+not serve is a question, never a guess.
+
+**A condition the person put on going ahead is theirs to waive.** "All steps on sonnet 5.5.
+If the model type isn't configurable, stop and tell me" is one: where it cannot be honoured
+exactly, say so and stop before authoring. A near miss is never decided to meet it on their
+behalf.
 
 | verb class \ subject | `plan_document`                | `plan_graph`                   | `workflow`                     | `run`                  | `step`                    | `verdict_word`              |
 | -------------------- | ------------------------------ | ------------------------------ | ------------------------------ | ---------------------- | ------------------------- | --------------------------- |

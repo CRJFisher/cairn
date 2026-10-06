@@ -11,7 +11,7 @@
     "cairn_plan": "linear-chain",
     "cairn_generator": "11",
     "cairn_engine": "2.11.0",
-    "cairn_graph_sha256": "9a97b72f89684e8771c92e6c57859849a1228f0b49a4a211c83b703e91b4cb55",
+    "cairn_graph_sha256": "31546d11a303d0aa633dd487c4c10bd37dfc34c9845fccda9e3e28a72e8a81dd",
     "cairn_body_sha256": "be82ec9862a382497f910b2f6e1a0ed4525ed992767dda0dc32065aee4e6dfea"
   },
   "params": [
