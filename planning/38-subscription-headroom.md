@@ -9,7 +9,7 @@ pause in the run, never the end of it.
 instruments in `cairn/providers.py`), merge resolutions are held the same way, and the
 contract is [supervision.md § Working within the subscription](../docs/supervision.md). The
 probe's command line was measured on Claude Code 2.1.220 (one settings-free haiku turn,
-`$0.014`, its `rate_limit_event` arriving before the reply). Spikes 1, 2, 3 and 5 still need
+its `rate_limit_event` arriving before the reply). Spikes 1, 2, 3 and 5 still need
 a real limit hit or the owner's say-so on the credential, and the scheduler's own resume at
 the reported moment is not built: a `quota_held` run carries `await_allowance` and the
 recovery command, and a person or a schedule runs it.

@@ -790,10 +790,10 @@ class EndpointRefused(Unmeasured):
 
 
 def probe_command() -> list[str]:
-    """One turn on the cheapest model, with nothing loaded that the turn would pay for.
+    """One turn on the smallest model, with no settings, tools or context loaded.
 
     Measured on Claude Code 2.1.220: this answers with the `rate_limit_event` before the
-    model replies, and costs about a cent and a half of notional spend. `--bare` is not used
+    model replies, so one turn is enough to read the allowance. `--bare` is not used
     because it never reads the subscription's own credential.
     """
     return [
