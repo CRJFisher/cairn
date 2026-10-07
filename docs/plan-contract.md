@@ -47,7 +47,10 @@ rejected rather than ignored.
 - `command` is executable text quoted from the source document, never the prose `task`.
   `command_type` is `exec` or `wait_until`; the latter polls `command` until it succeeds.
 - `verify` is nullable because absence is a recorded fact: the verify gate owns what
-  happens then, and a command is never invented.
+  happens then, and a command is never invented. It is never the step's own `command`:
+  a `command` step that ran is not a `command` step that worked, and a `wait_until` poll
+  that already succeeded succeeds again over a tree nothing looked at
+  (`self_asserting_step`).
 - `assertion` is the human's answer to a proposed verify command — `accepted`, `edited`,
   `authored` for one written where nothing was offered, or `declined` — with the proposal it
   answered and, on a decline, the reason. Its absence means
@@ -304,6 +307,7 @@ traceback — because a caller cannot tell a crash from a rejection.
 | `unanswered_edge`       | an `answered` edge no accepted question gives                                                                                                                    |
 | `unquoted_reading`      | a declared reading that quotes no words                                                                                                                          |
 | `unassertable_proposal` | a proposed command that cannot fail, so asserts nothing                                                                                                          |
+| `self_asserting_step`   | a step's own command as its assertion, or as the command proposed for it                                                                                         |
 
 With `--source-root`, six more:
 
@@ -364,9 +368,12 @@ question, resting on the sentence the question quotes. The authoring conversatio
 that offer to the author ([verify-gate.md](verify-gate.md)); nothing writes it into
 `verify` but an answer.
 
-Both declarations are held to their quotes: one quoting nothing is `unquoted_reading`, one
-quoting words no document contains is `evidence_not_in_source` under `--source-root`, and a
-proposed command that cannot fail is `unassertable_proposal`.
+Both declarations are held to their quotes: one quoting nothing is `unquoted_reading`, and
+one quoting words no document contains is `evidence_not_in_source` under `--source-root`. An
+offer that asserts nothing is refused at the offer rather than when it is answered, because
+an author shown it has already been asked to adopt it: a proposed command that cannot fail
+is `unassertable_proposal`, and the step's own command proposed as its assertion is
+`self_asserting_step`.
 
 ## The parse report
 

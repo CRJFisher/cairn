@@ -16,4 +16,4 @@ One agent step and two plain commands.
 
 3. **Wait for the index to settle** — depends on the rebuild. Poll until
    `bin/index-status --quiet` succeeds, at most fifteen minutes. Once per run occasion.
-   Verify: `bin/index-status --quiet`
+   Verify: `test -f var/index/.settled`

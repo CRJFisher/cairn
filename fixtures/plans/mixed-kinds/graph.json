@@ -7,7 +7,7 @@
     "sources": [
       {
         "path": "README.md",
-        "sha256": "aa5f15571b69ff99427ae282a2e58c2178b69e004a3c4b064e62d7162e8debbc"
+        "sha256": "dc47c5e117d0ab7b09f417bed7df998bc8b76feddedf740dfac9c825c96afd33"
       }
     ],
     "default_kind": "agent.claude",
@@ -76,7 +76,7 @@
           "evidence": "depends on the rebuild"
         }
       ],
-      "verify": "bin/index-status --quiet",
+      "verify": "test -f var/index/.settled",
       "assertion": null,
       "kind": "command",
       "scope": "run",

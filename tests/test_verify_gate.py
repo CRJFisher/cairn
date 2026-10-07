@@ -48,7 +48,14 @@ from cairn.emitters import (
 )
 from cairn.layout import assertion_lock_path, assertion_result_path, reports_directory
 from cairn.locks import exclusive_lock
-from cairn.plan.assertions import AnswerError, answer, propose, render, tally
+from cairn.plan.assertions import (
+    END_STATE_SHAPES,
+    AnswerError,
+    answer,
+    propose,
+    render,
+    tally,
+)
 from cairn.plan.cli import main as plan_main
 from cairn.plan.report import render as render_report
 from cairn.plan.schema import (
@@ -246,6 +253,21 @@ class TheAssertionRunsBare(unittest.TestCase):
         for command in ("true", ":", "exit 0", "  "):
             with self.subTest(command=command), self.assertRaises(ValueError):
                 emit_step(one_step(verify=command), "/repo")
+
+    def test_a_steps_own_command_is_never_its_assertion(self) -> None:
+        """A `command` step that ran is not a `command` step that worked, and a `wait_until`
+        poll that already succeeded succeeds again over a tree nothing looked at."""
+        own = "printf built > built.txt"
+        for kind in ("command", "wait_until"):
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                emit_step(one_step(kind=kind, command=own, verify=f" {own} "), "/repo")
+
+    def test_an_assertion_over_what_the_command_leaves_is_emitted(self) -> None:
+        """What must not change: a command step asserts, and the rule above is about one
+        command rather than about command steps."""
+        own = "printf built > built.txt"
+        emitted = emit_verify(one_step(command=own, verify="test -f built.txt"), "/repo")
+        self.assertEqual(emitted["run"], "test -f built.txt")
 
 
 class TheGateIsEmittedWithTheStepItGates(unittest.TestCase):
@@ -1299,6 +1321,15 @@ class TheMissingVerifyConversation(unittest.TestCase):
         self.assertIn("The derivation proposed nothing", text)
         self.assertIn("--decline", text)
 
+    def test_a_step_with_nothing_proposed_names_the_shapes_an_end_state_takes(self) -> None:
+        """Where nothing was drawn the conversation is the whole of the feature, so it says
+        what would fit rather than leaving a person to guess what will be accepted."""
+        text = render(propose(fixture("no-verify")))
+        for shape in END_STATE_SHAPES:
+            self.assertIn(shape, text)
+        offered = next(p for p in propose(fixture("worktree-hydration")) if p["proposed"])
+        self.assertNotIn(END_STATE_SHAPES[0], render([offered]))
+
     def test_accepting_editing_and_declining_are_counted_apart(self) -> None:
         graph = fixture("worktree-hydration")
         proposed = {p["step"]: p["proposed"] for p in propose(graph)}
@@ -1344,6 +1375,16 @@ class TheMissingVerifyConversation(unittest.TestCase):
         for command in ("true", " ", "exit 0"):
             with self.subTest(command=command), self.assertRaises(AnswerError):
                 answer(graph, step_id, command=command, reason=None)
+
+    def test_an_answer_that_is_the_steps_own_command_is_refused_the_same_way(self) -> None:
+        """The author is told while they are still here, rather than at emission, because
+        this is where the end state the command leaves can still be asked for."""
+        own = "printf built > built.txt"
+        graph = normalise(plan_graph(verify=None, command=own))
+        with self.assertRaises(AnswerError):
+            answer(graph, "a", command=own, reason=None)
+        answer(graph, "a", command="test -f built.txt", reason=None)
+        self.assertEqual(graph["steps"][0]["verify"], "test -f built.txt")
 
     def test_the_worksheet_prints_an_invocation_that_records_the_answer(self) -> None:
         """A worksheet whose instruction has to be corrected before it works records nothing.

@@ -887,6 +887,35 @@ class DeclaredReadings(unittest.TestCase):
         graph["questions"][0]["evidence"] = "Rewrite the getting-started guide"
         self.assertIn("unassertable_proposal", [f.code for f in validate(graph).errors])
 
+    def test_a_proposal_that_is_the_steps_own_command_is_refused(self) -> None:
+        """An offer that asserts nothing is refused at the offer: an author shown it has
+        already been asked to adopt it."""
+        graph = load("mixed-kinds", "graph.json")
+        step = next(s for s in graph["steps"] if s["id"] == "wait_for_the_index_to_settle")
+        step["verify"] = None
+        graph["questions"].append(
+            {
+                "kind": "missing_verify",
+                "step": step["id"],
+                "dep": None,
+                "question": "What asserts this step's end state?",
+                "evidence": "Wait for the index to settle",
+                "proposed": step["command"],
+                "resolution": None,
+            }
+        )
+        self.assertIn("self_asserting_step", [f.code for f in validate(graph).errors])
+
+    def test_a_step_asserting_itself_with_its_own_command_is_refused(self) -> None:
+        """A `command` step that ran is not a `command` step that worked, and the corpus's
+        own poll is the case that produced the rule: a `wait_until` that already succeeded
+        succeeds again over a tree nothing looked at."""
+        graph = load("mixed-kinds", "graph.json")
+        step = next(s for s in graph["steps"] if s["id"] == "wait_for_the_index_to_settle")
+        step["verify"] = step["command"]
+        found = [f for f in validate(graph).errors if f.code == "self_asserting_step"]
+        self.assertEqual([f.step for f in found], [step["id"]])
+
     def test_a_proposal_on_any_other_question_kind_is_refused(self) -> None:
         graph = load("dangling-dependency", "graph.json")
         graph["questions"][0]["proposed"] = "test -e renderer.md"

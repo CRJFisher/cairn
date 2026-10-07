@@ -26,6 +26,7 @@ from cairn.plan.schema import (
     Step,
     cannot_fail,
     has_assertion,
+    is_own_command,
     is_unasserted,
     is_unverified,
     normalise,
@@ -599,14 +600,25 @@ def validate(raw: Any, source_root: str | None = None) -> Result:
                     step_id,
                 )
             )
-        elif (
+        verify = step["verify"]
+        if verify is not None and is_own_command(step, verify):
+            errors.append(
+                Finding(
+                    "self_asserting_step",
+                    f"step {step_id!r} asserts itself with its own command {verify!r}, so it "
+                    "would only say the command ran. Assert what the step leaves behind, or "
+                    "decline the assertion and record why",
+                    step_id,
+                )
+            )
+        if (
             # A command a human authored at the authoring conversation is by definition
             # absent from the documents. `invented_verify` exists to stop a derivation
             # fabricating one, and an answer on the record is what tells the two apart.
-            assertion is None
+            verify is not None
+            and assertion is None
             and corpus is not None
-            and step["verify"] is not None
-            and _flatten(step["verify"]) not in corpus
+            and _flatten(verify) not in corpus
         ):
             errors.append(
                 Finding(
@@ -700,19 +712,29 @@ def validate(raw: Any, source_root: str | None = None) -> Result:
                 )
             )
         proposed = question["proposed"]
-        if (
-            question["kind"] == MISSING_VERIFY
-            and proposed is not None
-            and cannot_fail(proposed)
-        ):
-            errors.append(
-                Finding(
-                    "unassertable_proposal",
-                    f"the proposal {proposed!r} cannot fail, so it asserts nothing — "
-                    "propose the end state, or propose nothing",
-                    question["step"],
+        if question["kind"] == MISSING_VERIFY and proposed is not None:
+            # An offer that asserts nothing is refused at the offer rather than when it is
+            # answered: an author shown it has already been asked to adopt it, and a
+            # proposal is the one thing here nobody chose.
+            if cannot_fail(proposed):
+                errors.append(
+                    Finding(
+                        "unassertable_proposal",
+                        f"the proposal {proposed!r} cannot fail, so it asserts nothing — "
+                        "propose the end state, or propose nothing",
+                        question["step"],
+                    )
                 )
-            )
+            elif asked_of is not None and is_own_command(asked_of, proposed):
+                errors.append(
+                    Finding(
+                        "self_asserting_step",
+                        f"the proposal {proposed!r} is step {asked_of['id']!r}'s own command, "
+                        "so it would only say the command ran — propose what the step leaves "
+                        "behind, or propose nothing",
+                        question["step"],
+                    )
+                )
     _check_answers(graph, by_id, errors)
     unresolved = open_questions(graph)
     if unresolved:

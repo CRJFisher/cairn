@@ -35,6 +35,7 @@ from cairn.plan.schema import (
     Step,
     cannot_fail,
     has_assertion,
+    is_own_command,
     is_unasserted,
 )
 from cairn.topology import ROLES, Node
@@ -254,11 +255,11 @@ def _refuse_unasserted(step: Step) -> None:
 
 
 def _refuse_unassertable(step: Step) -> None:
-    """Refuse an assertion that cannot fail.
+    """Refuse an assertion that asserts nothing.
 
-    A command that always exits zero reads as verified in the report while asserting
-    nothing, which is worse than the declared absence the author could have chosen
-    instead.
+    A command that always exits zero, or that is no more than the step's own command run
+    again, reads as verified in the report while asserting nothing — which is worse than
+    the declared absence the author could have chosen instead.
     """
     command = step["verify"]
     if command is None:
@@ -267,6 +268,12 @@ def _refuse_unassertable(step: Step) -> None:
         raise ValueError(
             f"step {step['id']!r} has the verify command {command!r}, which cannot fail. "
             "Assert the step's end state, or decline the assertion and record why."
+        )
+    if is_own_command(step, command):
+        raise ValueError(
+            f"step {step['id']!r} asserts itself with its own command {command!r}, so it "
+            "would only say the command ran. Assert what the step leaves behind, or decline "
+            "the assertion and record why."
         )
 
 

@@ -288,6 +288,18 @@ def is_unasserted(step: "Step") -> bool:
     return step["verify"] is None and step["assertion"] is None
 
 
+def is_own_command(step: "Step", command: str) -> bool:
+    """Whether a command asserts no more than that the step's own command ran again.
+
+    A `command` step that ran is not a `command` step that worked. Re-running the step's
+    own text redoes the work instead of checking what it left, and a `wait_until` poll that
+    has already succeeded succeeds again over a tree nothing looked at — which reads as
+    verified in the report while asserting nothing.
+    """
+    own = step.get("command")
+    return own is not None and command.strip() == own.strip()
+
+
 class Source(TypedDict):
     path: str
     sha256: str

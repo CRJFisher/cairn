@@ -11,8 +11,8 @@
     "cairn_plan": "mixed-kinds",
     "cairn_generator": "11",
     "cairn_engine": "2.11.0",
-    "cairn_graph_sha256": "93f02ef8ac979e730df935265a2421b6ae42ad830dc740de83e47432ae58b2c0",
-    "cairn_body_sha256": "3aed72071d6553c78a74f231ef077169fa8117dbb1493781b230b193fc80c63a"
+    "cairn_graph_sha256": "f161f6e08241c6e5e01d10fe9d662fe73a96923d936098f028cf7211302ee61b",
+    "cairn_body_sha256": "b36f2d2fd426242e6b95910ced5122722398adaac7a08b8e9859db21bcfa8d7b"
   },
   "params": [
     {
@@ -233,7 +233,7 @@
     {
       "name": "verify_wait_for_the_index_to_settle",
       "id": "verify_wait_for_the_index_to_settle",
-      "run": "bin/index-status --quiet",
+      "run": "test -f var/index/.settled",
       "working_dir": "${CAIRN_REPOSITORY}",
       "timeout_sec": 600,
       "retry_policy": {
@@ -242,7 +242,7 @@
       },
       "preconditions": [
         {
-          "condition": "python3 -m cairn verify needed --step wait_for_the_index_to_settle --command-digest a1d256f2db4a930e25548d72890ba5b63d85e288b5cc0c1a40747f4310ce3927 --bound 600"
+          "condition": "python3 -m cairn verify needed --step wait_for_the_index_to_settle --command-digest fb95dde58578f818aaa2e080c16fb9dcd7b78ca001a49ebcf872115efa46e954 --bound 600"
         }
       ],
       "continue_on": {

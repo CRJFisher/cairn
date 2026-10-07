@@ -101,6 +101,12 @@ exactly, say so and stop — before the document is written, and before anything
    that the listing was made; `--json` carries `complete`, which says whether anything is
    left to ask.
 
+   **This is a turn in the conversation, not a worksheet the person may skip.** A step the
+   derivation proposed nothing for is printed with the shapes an end state takes beside it,
+   and it is put to the person like every other — generation refuses while any step is
+   unanswered, so a step printed and passed over costs a whole round trip rather than going
+   unverified.
+
 5. **Generate.** `python3 -m cairn workflow author <graph> --repository <path> --source-root
 <plan-dir> [--parent-branch <name>] [--schedule '<cron>']`. It re-reads every document the
    graph pins beneath the plan's directory, rechecks every digest and quotation, and refuses

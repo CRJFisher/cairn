@@ -6,7 +6,9 @@ happens then is a designed conversation: for each step nobody has been asked abo
 the step's own words back, show the assertion the derivation proposed for them — declared on
 the `missing_verify` question, resting on the sentence it quotes — and record accept, edit,
 or decline. Nothing here composes a proposal: the agent that read the plan is the only
-thing that proposes, and this module only carries its proposal to the person.
+thing that proposes, and this module only carries its proposal to the person. Where it
+proposed nothing, the shapes an assertable end state takes are named instead, so the step
+is asked about rather than printed and skipped past.
 
 Nothing here writes a command into a graph. A proposal is a reading; only an answer is a
 decision, and only `answer` writes.
@@ -23,7 +25,9 @@ from cairn.plan.schema import (
     Assertion,
     Graph,
     Question,
+    Step,
     cannot_fail,
+    is_own_command,
     is_unasserted,
 )
 
@@ -54,16 +58,34 @@ class Tally(TypedDict):
     documented: int
 
 
+# What an assertable end state looks like, for the step nothing was proposed for. Every one
+# of them is a fact about the tree after the step, which is what separates them from the
+# step's own command: a step that ran is not a step that worked.
+END_STATE_SHAPES: tuple[str, ...] = (
+    "a file or directory the step leaves behind: `test -e <path>`",
+    "a line or a symbol a named file holds: `grep -q '<text>' <path>`",
+    "a test, build or lint invocation this repository already has",
+    "the absence of a thing the step exists to remove: `! test -e <path>`",
+)
+
+
 class AnswerError(Exception):
     """An answer that cannot be applied — a step that is not there, or a shape that lies."""
 
 
-def _refuse_unassertable(step_id: str, command: str) -> None:
-    """Refuse an assertion that cannot fail, while the human who wrote it is still here."""
+def _refuse_unassertable(step: Step, command: str) -> None:
+    """Refuse an assertion that asserts nothing, while the human who wrote it is still here."""
+    step_id = step["id"]
     if cannot_fail(command):
         raise AnswerError(
             f"step {step_id!r}: {command!r} cannot fail, so it asserts nothing. Assert the "
             "step's end state, or decline and say why it has none."
+        )
+    if is_own_command(step, command):
+        raise AnswerError(
+            f"step {step_id!r}: {command!r} is the step's own command, so it would only say "
+            "the command ran. Assert what the step leaves behind, or decline and say why it "
+            "has no end state."
         )
 
 
@@ -123,9 +145,18 @@ def render(proposals: list[Proposal], graph_path: str = "<graph>") -> str:
         lines.append("")
         proposed = proposal["proposed"]
         if proposed is None:
-            lines.append(
-                "The derivation proposed nothing for this step. Write a command, or "
-                "declare the step unverified and say why."
+            # A step nothing was offered for is where the conversation is load-bearing, so
+            # it names the shapes an end state takes rather than leaving a person to guess
+            # what would be accepted.
+            lines.extend(
+                [
+                    "The derivation proposed nothing for this step. An assertable end state "
+                    "takes one of these shapes:",
+                    "",
+                    *(f"  - {shape}" for shape in END_STATE_SHAPES),
+                    "",
+                    "Write a command, or declare the step unverified and say why.",
+                ]
             )
         else:
             lines.append(f"Proposed: `{proposed}`")
@@ -139,7 +170,7 @@ def render(proposals: list[Proposal], graph_path: str = "<graph>") -> str:
             f"python3 -m cairn plan answer {where} --kind {MISSING_VERIFY} "
             f"--step {proposal['step']}"
         )
-        lines.append("Accept or edit it with:")
+        lines.append("Accept or edit it with:" if proposed else "Assert it with:")
         lines.append(
             f"    {invocation} --command {shlex.quote(proposed or '<the command>')}"
             f" --out {where}"
@@ -187,7 +218,7 @@ def answer(
         else:
             outcome = "accepted" if command == proposed else "edited"
         if command is not None:
-            _refuse_unassertable(step_id, command)
+            _refuse_unassertable(step, command)
         step["verify"] = command
         step["assertion"] = Assertion(outcome=outcome, proposed=proposed, reason=reason)
         # The derivation raised this question to be answered, and it now is. Leaving it
@@ -221,6 +252,7 @@ def tally(graph: Graph) -> Tally:
 
 
 __all__ = [
+    "END_STATE_SHAPES",
     "AnswerError",
     "Proposal",
     "Tally",

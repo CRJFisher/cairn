@@ -1102,6 +1102,75 @@ class EachPlanKeepsItsOwnGraph(unittest.TestCase):
         self.assertFalse(graph_path(self.repository, "fan-out").exists())
 
 
+class APlanThatNamedNoAssertionStillReachesAWorkflow(unittest.TestCase):
+    """[18 B]: both real plans arrived with every step unasserted, which is the normal case
+    for documents people have already written. The whole of what stands between such a plan
+    and a runnable workflow is the authoring conversation, so the file is generated here
+    from the answers themselves rather than from a graph that was never asked.
+    """
+
+    REAL: ClassVar[tuple[str, ...]] = ("worktree-hydration", "pattern-lifecycle")
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.repository = Path(self.temporary.name).resolve() / "repo"
+        self.repository.mkdir()
+        for command in (
+            ("init", "--initial-branch=main", "--quiet", "."),
+            ("config", "user.email", "cairn@test"),
+            ("config", "user.name", "Cairn Test"),
+        ):
+            subprocess.run(("git", *command), cwd=self.repository, check=True)
+        subprocess.run(
+            ("git", "commit", "--quiet", "--allow-empty", "-m", "init"),
+            cwd=self.repository,
+            check=True,
+        )
+
+    def author(self, plan: str, graph: str) -> tuple[int, str]:
+        home = graph_path(self.repository, plan)
+        home.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(PLANS / plan / graph, home)
+        refused = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(refused):
+            code = workflow_main(
+                [
+                    "author", str(home), "--repository", str(self.repository),
+                    "--source-root", str(PLANS / plan),
+                ]
+            )
+        return code, refused.getvalue()
+
+    def test_every_answer_the_conversation_took_becomes_a_workflow(self) -> None:
+        for plan in self.REAL:
+            with self.subTest(plan=plan):
+                code, refused = self.author(plan, "answered.json")
+                self.assertEqual(code, 0, refused)
+                built = read(workflow_path(self.repository, plan))
+                graph = normalise(
+                    json.loads((PLANS / plan / "answered.json").read_text(encoding="utf-8"))
+                )
+                named = {step["name"] for step in built["steps"]}
+                for step in graph["steps"]:
+                    self.assertEqual(
+                        f"verify_{step['id']}" in named,
+                        step["verify"] is not None,
+                        step["id"],
+                    )
+                    self.assertIn(f"mark_{step['id']}", named)
+
+    def test_the_same_plan_before_its_answers_is_refused(self) -> None:
+        """What must not change: the conversation is the thing that makes the graph the
+        plan's, so the unanswered graph of the same plan reaches no engine."""
+        for plan in self.REAL:
+            with self.subTest(plan=plan):
+                code, refused = self.author(plan, "graph.json")
+                self.assertEqual(code, 1)
+                self.assertIn("unresolved_question", refused)
+                self.assertFalse(workflow_path(self.repository, plan).exists())
+
+
 class TheEngineIsWhatDecidesTheShape(unittest.TestCase):
     """The pairing: what Cairn refuses, and what the engine says about the same bytes."""
 

@@ -29,6 +29,18 @@ carries over there.
 
 ## B — Every step arrives unasserted, and generation is a wall
 
+**Built, with the extraction rule replaced by something wider than a ranked list of its
+guesses.** The candidate surface widened past any rule code could hold: the agent that reads
+the plan declares the command it would offer on the step's own `missing_verify` question,
+resting on a sentence quoted verbatim from the document, and code checks the quote and never
+the reading ([../docs/plan-contract.md](../docs/plan-contract.md)). Two mechanisms below are
+therefore void rather than built — there is no `candidate()` to rank, and no candidate rule
+to name on an answer. What stands in for the second is what the answer already carries: the
+offer itself, and an outcome `answer` derives against it rather than being told, so the
+accepted / edited / authored / declined tally cannot be miscounted by whoever ran the
+conversation. Every other decision here landed as written, and the tally this section owes is
+in [../docs/verify-gate.md](../docs/verify-gate.md).
+
 **Today, exactly.** The derivation sets `verify` to `null` wherever the document gives no command
 and raises a `missing_verify` question — by rule, and the rule says _never synthesise a command_.
 `cairn plan propose` then offers a candidate under **one** extraction rule: a backticked
@@ -90,7 +102,7 @@ Small first-contact defects, appended as they surface, with how they were found.
 | #   | Symptom                                                              | Where it lives                                        | State |
 | --- | -------------------------------------------------------------------- | ----------------------------------------------------- | ----- |
 | A   | The repository is asked for from inside the repository               | [31](31-the-repository-the-session-is-in.md)          | moved |
-| B   | Every step is `verify: null`, so generation refuses and nothing runs | `cairn/plan/assertions.py`, `docs/plan-derivation.md` | open  |
+| B   | Every step is `verify: null`, so generation refuses and nothing runs | `cairn/plan/assertions.py`, `docs/plan-derivation.md` | done  |
 
 The walls a person hits _after_ a workflow exists — a slug the engine's name limit refuses, a
 `run start` that blocks for the whole run, a socket a sandboxed shell cannot bind — are

@@ -40,15 +40,19 @@ For each unit of work the plan names:
 - **`verify`** is the command the document gives for asserting the step's end state. If it
   gives none, the value is `null` and a `missing_verify` question is raised, which the
   authoring conversation later answers into the step's `assertion`. **Never
-  synthesise a command into `verify`.** A synthesised check passes trivially and destroys
-  the one guarantee the run makes. What you do instead is **propose**: where the document
-  states the end state in prose, read it and declare the command you would offer as the
-  question's `proposed`, with the sentence it rests on quoted verbatim as the question's
-  `evidence` — the validator rechecks the quote, and a proposal quoting nothing or resting
-  on words no document holds is refused. Read the end state the words actually state: a
+  synthesise a command into `verify`, and never adopt one without showing it.** A
+  synthesised check passes trivially and destroys the one guarantee the run makes. A
+  document whose only candidate is the step's own `command` gives no assertion either — a
+  step that ran is not a step that worked — so that step's `verify` is `null` like any
+  other's, and the end state its words state is what you propose. What you do instead of
+  synthesising is **propose**: where the document states the end state in prose, read it and
+  declare the command you would offer as the question's `proposed`, with the sentence it
+  rests on quoted verbatim as the question's `evidence` — the validator rechecks the quote,
+  and a proposal quoting nothing, resting on words no document holds, that cannot fail, or
+  that is the step's own command is refused. Read the end state the words actually state: a
   document saying a file _holds_ a word asks for its content, not its existence. Where the
   words state nothing a command can assert, propose nothing — a declared absence is the
-  honest offer, and the author writes or declines unaided.
+  honest offer, and the author is asked about that step all the same.
 - **`kind`** is `command` when the document gives a command to run and nothing to decide —
   including a step whose whole content is waiting for something else to finish — and
   `agent.<provider>` otherwise.

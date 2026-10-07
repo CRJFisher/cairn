@@ -315,9 +315,12 @@ python3 -m cairn plan answer  <graph> --kind missing_verify --step <id> --declin
 ```
 
 `propose` shows, for each unanswered step, the step's own words, the document's words the
-derivation read, and the command the derivation proposed — or the plain statement that it
-offered nothing. It **writes nothing**: a proposal is an offer, and only an answer is a
-decision.
+derivation read, and the command the derivation proposed. Where it proposed nothing it says
+so and names the shapes an assertable end state takes — a file or directory the step leaves
+behind, a line or symbol a named file holds, a test or build the repository already has, the
+absence of a thing the step exists to remove — so the step is asked about rather than
+printed and skipped past. It **writes nothing**: a proposal is an offer, and only an answer
+is a decision.
 
 A proposal is **the derivation's own reading, declared on the graph**. The agent deriving
 the graph is the only thing in the system that has read the plan, so it is the only thing
@@ -334,6 +337,12 @@ assertion runs under the operator's own `$SHELL` with `pipefail` off, so the las
 a pipeline is the assertion, and an assertion that already holds before the step runs is not
 an assertion.
 
+**A step's own command is never its assertion.** A `command` step that ran is not a
+`command` step that worked: its own text run again redoes the work instead of checking what
+it left, and a `wait_until` poll that already succeeded succeeds again over a tree nothing
+looked at. It is refused wherever it can be put forward — as a proposal, as an answer, and
+at emission ([plan-contract.md](plan-contract.md)).
+
 `answer` derives the outcome rather than being told it, against the offer the graph itself
 carries: a command equal to the proposal is **accepted**, a different one is **edited**, one
 written where nothing was offered is **authored**, and a decline records the proposal that
@@ -342,11 +351,13 @@ answered, a decline included, because `answer` records it from the question it c
 invocation can drop or misquote it.
 
 The corpus records the conversation against both real plans — eight steps, none of which
-named a command: **6 proposals offered: accepted 6, edited 0; authored 0, declined 2**. The
-two declines are the steps whose end states no command in the plan's own tree can assert —
-behavioural parity inside another repository, and a unit whose very name the document leaves
-undecided. Whether live authors accept what a live derivation proposes is not something this
-corpus can show.
+named a command: **6 proposals offered: accepted 6, edited 0; authored 0, declined 2**. Two
+of the eight drew no proposal at all, and they are the two declines: the steps whose end
+states no command in the plan's own tree can assert — behavioural parity inside another
+repository, and a unit whose very name the document leaves undecided. So every step that
+drew an offer carries it, and every step that drew none is on the record as a step a person
+refused rather than one nobody reached. Whether live authors accept what a live derivation
+proposes is not something this corpus can show.
 
 ## What this hands forward
 
