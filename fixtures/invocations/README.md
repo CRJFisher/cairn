@@ -11,7 +11,7 @@ whole of it; the suite reads it and `tests/test_the_skill.py` is where the asser
 | `ask`         | one case per reason in the ask list, so no reason is unreachable and none is only theoretical |
 | `adversarial` | the three shapes doc 15 names by hand, and the traps around a request that says too much      |
 | `occasion`    | which reading a trigger takes, whether it is disclosed, and what each direction means         |
-| `repository`  | the target resolved from the request, and every refusal                                       |
+| `repository`  | which candidate the target came from, every question the candidates owe, and every refusal    |
 
 ## What a case carries
 
@@ -33,6 +33,15 @@ whole of it; the suite reads it and `tests/test_the_skill.py` is where the asser
 `utterance` is the human phrasing. `reading` is the structure a reader of `SKILL.md` would
 extract from it — **the corpus declares it rather than deriving it**, and that is the honest
 boundary of what this suite proves.
+
+A `repository` case carries the three candidates instead of a `reading`: `stated` for a
+repository named in the request, `subjects` for what the request is about, and `session` for
+the directory the conversation is in. Each value is a placeholder the suite maps to a real
+path — `repository`, `elsewhere` and `trailing_separator` for a named one, `in_repository`,
+`in_elsewhere` and `in_no_repository` for a subject, and `repository`, `elsewhere`, `cairn`
+and `outside_any_repository` for a session. `expect.outcome` is `resolved`, `refused`, or the
+name of the question that is owed, and a resolved case also declares the `provenance` the
+answer must carry.
 
 ## What this corpus does and does not prove
 

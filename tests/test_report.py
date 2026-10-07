@@ -28,6 +28,7 @@ from unittest.mock import patch
 from xml.etree import ElementTree
 
 from cairn.__main__ import main as cairn_main
+from cairn.gitio import runs_root
 from cairn.record.extract import extract
 from cairn.record.facts import ABSENT, NONE, as_mapping, canonical_facts
 from cairn.record.model import RunRecord
@@ -1108,6 +1109,37 @@ class TheCommandRendersAndExitsOnTheRunsVerdict(unittest.TestCase):
         self.assertEqual(completed.returncode, EXIT_NO_RECORD)
         self.assertIn("Which repository", completed.stderr)
         self.assertNotIn("neither Cairn nor the engine holds a record", completed.stderr)
+
+    def test_a_report_asked_for_from_inside_a_repository_finds_that_repositorys_runs(
+        self,
+    ) -> None:
+        """Plan 31's third acceptance. A report reads and changes nothing, so the repository
+        the conversation is in answers, and the line saying so is what a person checks an
+        empty listing against."""
+        directory = PACKAGE_ROOT / "fixtures" / "runs" / "green"
+        run_id = str(json.loads((directory / "recording.json").read_text("utf-8"))["run_id"])
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        repository = Path(temporary.name) / "product"
+        repository.mkdir()
+        subprocess.run(("git", "init", "-q"), cwd=repository, check=True)
+        shutil.copytree(directory / "reports", runs_root(repository) / run_id / "reports")
+        completed = subprocess.run(
+            [
+                sys.executable, "-m", "cairn", "report",
+                "--run", run_id,
+                "--session", str(repository),
+                "--engine-records", str(directory),
+            ],
+            cwd=PACKAGE_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertIn("== DID IT WORK ==", completed.stdout)
+        first = completed.stderr.splitlines()[0]
+        self.assertIn(str(repository), first)
+        self.assertIn("session", first)
 
     def test_a_recorded_corpus_is_read_without_naming_any_repository(self) -> None:
         # `--reports` names the runs root outright, so there is nothing to derive and

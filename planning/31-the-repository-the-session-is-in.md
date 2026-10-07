@@ -23,8 +23,8 @@ The session's reply, quoted:
 
 The agent was following the rule exactly. `SKILL.md` says the repository "comes from the
 request, for every capability, always … never defaulted to the directory this conversation is
-in". The fixture `repository-absent` pins that behaviour "even where only one repository is in
-play". The question was not the agent's mistake. The rule produced it.
+in". The fixture `repository-absent` pinned that behaviour "even where only one repository is
+in play". The question was not the agent's mistake. The rule produced it.
 
 ## Why the rule is too wide, and what it still protects
 
@@ -94,3 +94,26 @@ provenance `session`, and one new case for each ask above), `tests/test_the_skil
   without a question.
 - No document, comment, fixture or test still states that the session's directory is never a
   default.
+
+## Close-out
+
+Done. Every criterion above holds, and the section 18 A left open is closed here.
+
+A person working inside a repository runs, authors, reports on or schedules its plans without
+typing its path. The repository is resolved from three candidates, strongest first — one named
+in the request (`stated`), the git root holding the request's subjects (`subjects`), the git
+root of the session's directory (`session`) — and the candidate that answered is named beside
+the path in the first line of every reply that acts on one. The session's directory arrives as
+`--session`, never as the process's own: the capability documents run `python3 -m cairn` from
+the skill's directory, so reading it would answer "Cairn's checkout" to every question.
+
+A question is owed only where the candidates that were found disagree or where none was found:
+subjects spread across repositories or in none, subjects in one repository with the session in
+another, a session in no repository and nothing else to go on, Cairn's own checkout as the only
+candidate when Cairn's plans are not the subject, and a definition that encodes a different
+repository. Each of those five is a fixture in the `repository` family of
+`fixtures/invocations/cases.json` that asks, each of the three provenances is a fixture there
+that resolves without asking, and the suite holds the family to covering every question the
+resolution can owe and every candidate it can take. A repository named in the request still
+beats every inference except the request's own subjects, and the absolute-path and
+worktrees-spelling refusals still run before anything starts.

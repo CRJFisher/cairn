@@ -65,6 +65,10 @@ from cairn.skill.trigger import EngineUnavailable
 from cairn.skill.vocabulary import (
     ASK_FAMILIES,
     BINDINGS,
+    CANDIDATE_SESSION,
+    CANDIDATE_STATED,
+    CANDIDATE_SUBJECTS,
+    CANDIDATES,
     CAPABILITY_EXPLAIN,
     CAPABILITY_ORDER,
     CAPABILITY_RUN,
@@ -733,6 +737,14 @@ class TheCorpusIsWhatItClaimsToBe(unittest.TestCase):
                     self.assertTrue(set(read["qualifiers"]) <= set(QUALIFIER_SHAPES))
                 if "signal" in case:
                     self.assertIn(case["signal"]["trigger"], TRIGGER_SHAPES)
+                if case["family"] == "repository":
+                    expected = cast(dict[str, Any], case["expect"])
+                    self.assertIn(
+                        expected["outcome"],
+                        {"resolved", "refused", *resolve.REPOSITORY_QUESTIONS},
+                    )
+                    if expected["outcome"] == "resolved":
+                        self.assertIn(expected["provenance"], CANDIDATES)
 
     def test_every_case_is_distinct_and_says_what_it_is_for(self) -> None:
         identifiers = [case["id"] for case in CASES]
@@ -880,6 +892,16 @@ class TheTargetRepositoryComesFromTheRequest(unittest.TestCase):
         self.repository = self.root / "product"
         self.repository.mkdir()
         subprocess.run(("git", "init", "-q"), cwd=self.repository, check=True)
+        self.other = self.root / "other"
+        self.other.mkdir()
+        subprocess.run(("git", "init", "-q"), cwd=self.other, check=True)
+        # A directory no repository holds, for the subject and the session that give nothing.
+        self.loose = self.root / "loose"
+        self.loose.mkdir()
+        self.backlog = self.repository / "WORKLIST.md"
+        self.backlog.write_text("# the plan\n", encoding="utf-8")
+        (self.other / "WORKLIST.md").write_text("# another plan\n", encoding="utf-8")
+        (self.loose / "worklist.md").write_text("# a download\n", encoding="utf-8")
         self.workflow = self.root / "offline-export.yaml"
         document = cast(dict[str, Any], json.loads(GOLDEN_WORKFLOW.read_text("utf-8")))
         document["params"] = [
@@ -888,6 +910,12 @@ class TheTargetRepositoryComesFromTheRequest(unittest.TestCase):
             {"CAIRN_OCCASION": ""},
         ]
         self.workflow.write_text(json.dumps(document), encoding="utf-8")
+
+    def _cairn_checkout(self) -> Path:
+        own = resolve.cairn_checkout()
+        if own is None:
+            self.skipTest("Cairn's own source is not in a checkout here")
+        return own
 
     def test_nothing_in_the_skill_reads_the_session_directory(self) -> None:
         """The mechanical form of 'the session's directory is passed in, never read from the
@@ -915,14 +943,11 @@ class TheTargetRepositoryComesFromTheRequest(unittest.TestCase):
         self.assertEqual(cast(Resolved, resolution).repository, self.repository.resolve())
 
     def test_a_mismatch_names_both_and_reconciles_neither(self) -> None:
-        other = self.root / "other"
-        other.mkdir()
-        subprocess.run(("git", "init", "-q"), cwd=other, check=True)
-        resolution = resolve.resolve_repository(str(other), self.workflow)
+        resolution = resolve.resolve_repository(str(self.other), self.workflow)
         self.assertIsInstance(resolution, Unresolved)
         unresolved = cast(Unresolved, resolution)
         self.assertEqual(unresolved.outcome, "mismatch")
-        self.assertIn(str(other), unresolved.question)
+        self.assertIn(str(self.other), unresolved.question)
         self.assertIn(str(self.repository), unresolved.question)
         self.assertIn("re-authored", unresolved.question)
 
@@ -954,31 +979,187 @@ class TheTargetRepositoryComesFromTheRequest(unittest.TestCase):
         with self.assertRaises(CairnError):
             resolve.encoded_repository(self.workflow)
 
-    def test_every_corpus_repository_case_resolves_the_way_it_says(self) -> None:
-        other = self.root / "other"
-        other.mkdir()
-        subprocess.run(("git", "init", "-q"), cwd=other, check=True)
+    def test_the_subjects_repository_answers_where_nothing_was_named(self) -> None:
+        """The ariadne request: task documents out of one backlog, and a conversation sitting
+        in the repository that holds them."""
+        resolution = resolve.resolve_repository(
+            None,
+            self.workflow,
+            subjects=[self.backlog],
+            session=self.repository,
+        )
+        self.assertIsInstance(resolution, Resolved)
+        resolved = cast(Resolved, resolution)
+        self.assertEqual(resolved.repository, self.repository.resolve())
+        self.assertEqual(resolved.provenance, CANDIDATE_SUBJECTS)
+
+    def test_a_subject_outside_the_session_repository_asks_and_names_both(self) -> None:
+        """The same request made from another checkout. The repository the work was found in
+        is named first, because that is the evidence the person cannot see being weighed."""
+        resolution = resolve.resolve_repository(
+            None,
+            self.workflow,
+            subjects=[self.backlog],
+            session=self._cairn_checkout(),
+        )
+        self.assertIsInstance(resolution, Unresolved)
+        unresolved = cast(Unresolved, resolution)
+        self.assertEqual(unresolved.outcome, "subjects_disagree")
+        self.assertLess(
+            unresolved.question.index(str(self.repository)),
+            unresolved.question.index(str(self._cairn_checkout())),
+        )
+
+    def test_the_session_repository_answers_where_the_request_has_no_subject_on_disk(
+        self,
+    ) -> None:
+        resolution = resolve.resolve_repository(
+            None, self.workflow, session=self.repository
+        )
+        self.assertIsInstance(resolution, Resolved)
+        resolved = cast(Resolved, resolution)
+        self.assertEqual(resolved.repository, self.repository.resolve())
+        self.assertEqual(resolved.provenance, CANDIDATE_SESSION)
+
+    def test_a_repository_named_in_the_request_beats_the_session(self) -> None:
+        resolution = resolve.resolve_repository(
+            str(self.repository), self.workflow, session=self.other
+        )
+        self.assertIsInstance(resolution, Resolved)
+        self.assertEqual(cast(Resolved, resolution).provenance, CANDIDATE_STATED)
+
+    def test_a_named_repository_the_subjects_do_not_live_in_asks(self) -> None:
+        """The one inference a named repository does not beat: the request's own subjects."""
+        resolution = resolve.resolve_repository(
+            str(self.other), self.workflow, subjects=[self.backlog]
+        )
+        self.assertIsInstance(resolution, Unresolved)
+        self.assertEqual(cast(Unresolved, resolution).outcome, "subjects_disagree")
+
+    def test_cairns_own_checkout_as_the_only_candidate_asks(self) -> None:
+        """Every capability document runs `python3 -m cairn` from here, so taking it would
+        branch, commit and land in Cairn itself."""
+        resolution = resolve.resolve_repository(
+            None, self.workflow, session=self._cairn_checkout()
+        )
+        self.assertIsInstance(resolution, Unresolved)
+        unresolved = cast(Unresolved, resolution)
+        self.assertEqual(unresolved.outcome, "cairn_itself")
+        self.assertIn("Cairn's own checkout", unresolved.question)
+
+    def test_a_subject_inside_a_worktree_resolves_to_the_repository_it_was_added_from(
+        self,
+    ) -> None:
+        """A worktree taken as the target nests `<repo>-worktrees` inside a tree Cairn
+        created and keys the run lock on a directory the other steps never see."""
+        subprocess.run(
+            (
+                "git",
+                "-c",
+                "user.name=cairn",
+                "-c",
+                "user.email=cairn@example.invalid",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "root",
+            ),
+            cwd=self.repository,
+            check=True,
+        )
+        linked = self.root / "product-worktrees" / "wave"
+        subprocess.run(
+            ("git", "worktree", "add", "-q", "-b", "wave", str(linked)),
+            cwd=self.repository,
+            check=True,
+        )
+        resolution = resolve.resolve_repository(
+            None, self.workflow, subjects=[linked / "WORKLIST.md"]
+        )
+        self.assertIsInstance(resolution, Resolved)
+        self.assertEqual(cast(Resolved, resolution).repository, self.repository.resolve())
+
+    def test_every_resolution_says_which_candidate_answered_in_words(self) -> None:
+        self.assertEqual(set(resolve.SENTENCE_BY_PROVENANCE), set(CANDIDATES))
+        resolution = resolve.resolve_repository(
+            None, self.workflow, session=self.repository
+        )
+        line = resolve.repository_line(cast(Resolved, resolution))
+        self.assertIn(str(self.repository), line)
+        self.assertIn(CANDIDATE_SESSION, line)
+        self.assertIn(resolve.SENTENCE_BY_PROVENANCE[CANDIDATE_SESSION], line)
+
+    def _candidates(self, case: dict[str, Any]) -> tuple[str | None, list[Path], Path | None]:
         stated = {
             "repository": str(self.repository),
-            "elsewhere": str(other),
+            "elsewhere": str(self.other),
             "trailing_separator": f"{self.repository}/",
             None: None,
         }
+        subjects = {
+            "in_repository": self.backlog,
+            "in_elsewhere": self.other / "WORKLIST.md",
+            "in_no_repository": self.loose / "worklist.md",
+        }
+        sessions = {
+            "repository": self.repository,
+            "elsewhere": self.other,
+            "cairn": resolve.cairn_checkout(),
+            "outside_any_repository": self.loose,
+            None: None,
+        }
+        session = sessions[case["session"]]
+        if case["session"] == "cairn" and session is None:
+            self.skipTest("Cairn's own source is not in a checkout here")
+        return (
+            stated[case["stated"]],
+            [subjects[name] for name in case["subjects"]],
+            session,
+        )
+
+    def test_every_corpus_repository_case_resolves_the_way_it_says(self) -> None:
         for case in family("repository"):
-            value = stated[case["stated"]]
             with self.subTest(case=case["id"]):
-                if case["expect"]["outcome"] == "refused":
+                stated, subjects, session = self._candidates(case)
+                expected = cast(dict[str, Any], case["expect"])
+                if expected["outcome"] == "refused":
                     with self.assertRaises(CairnError):
-                        resolve.resolve_repository(value, self.workflow)
+                        resolve.resolve_repository(
+                            stated, self.workflow, subjects=subjects, session=session
+                        )
                     continue
-                resolution = resolve.resolve_repository(value, self.workflow)
-                if case["expect"]["outcome"] == "resolved":
+                resolution = resolve.resolve_repository(
+                    stated, self.workflow, subjects=subjects, session=session
+                )
+                if expected["outcome"] == "resolved":
                     self.assertIsInstance(resolution, Resolved)
+                    self.assertEqual(
+                        cast(Resolved, resolution).provenance, expected["provenance"]
+                    )
                 else:
                     self.assertIsInstance(resolution, Unresolved)
                     self.assertEqual(
-                        cast(Unresolved, resolution).outcome, case["expect"]["outcome"]
+                        cast(Unresolved, resolution).outcome, expected["outcome"]
                     )
+
+    def test_every_question_the_candidates_can_owe_is_in_the_corpus(self) -> None:
+        """A question nobody can reach is a rule that does not exist; a doubt with no case is
+        a wrong repository nobody was asked about."""
+        asked = {
+            case["expect"]["outcome"]
+            for case in family("repository")
+            if case["expect"]["outcome"] not in ("resolved", "refused")
+        }
+        self.assertEqual(asked, set(resolve.REPOSITORY_QUESTIONS))
+
+    def test_every_provenance_is_reached_by_a_corpus_case_without_a_question(self) -> None:
+        answered = {
+            case["expect"]["provenance"]
+            for case in family("repository")
+            if case["expect"]["outcome"] == "resolved"
+        }
+        self.assertEqual(answered, set(CANDIDATES))
 
 
 class ARetargetedRunWouldFileItsRecordSomewhereElse(unittest.TestCase):
@@ -1300,13 +1481,16 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
         ]
 
     def _start(self, *extra: str) -> tuple[int, str]:
+        return self._start_argv(self._argv(*extra))
+
+    def _start_argv(self, argv: list[str]) -> tuple[int, str]:
         with (
             patch("cairn.skill.trigger.assert_pinned"),
             patch("cairn.skill.trigger.rehearse_start"),
             patch("cairn.skill.trigger.launch_detached", side_effect=self._record),
             patch("cairn.skill.trigger.engine_holds", return_value=True),
         ):
-            return self._said(self._argv(*extra))
+            return self._said(argv)
 
     def _record(self, command: Sequence[str], *_rest: Any) -> FakeEngine:
         self.launched.append(command)
@@ -1332,6 +1516,79 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
         # answered by the run itself, so nothing is set aside here for an answer to return
         # to, and the run id and the watch link are in hand in the same turn.
         self.assertEqual({path.split("/")[0] for path in self._written()}, {"admitted"})
+
+    def _plan_document(self) -> Path:
+        """The request's subject, where authoring writes it: inside the admin directory, so a
+        plan Cairn wrote down is not an edit the run's own dirty-tree refusal trips over."""
+        document = self.repository / ".git" / "cairn" / "plans" / "offline-export.md"
+        document.parent.mkdir(parents=True, exist_ok=True)
+        document.write_text("# offline export\n", encoding="utf-8")
+        return document
+
+    def test_a_start_takes_the_repository_the_requests_subjects_live_in(self) -> None:
+        """Plan 31's first acceptance. The request names documents and the conversation sits
+        in the repository holding them, so the run starts with no question put."""
+        code, said = self._start_argv(
+            [
+                "start",
+                "--plan",
+                "offline-export",
+                "--subject",
+                str(self._plan_document()),
+                "--session",
+                str(self.repository),
+                "--trigger",
+                "fresh",
+            ]
+        )
+        self.assertEqual(code, 0, said)
+        self.assertEqual(len(self.launched), 1)
+        self.assertNotIn("Which repository", said)
+        first, _, rest = said.partition("\n")
+        self.assertIn(str(self.repository), first)
+        self.assertIn("subjects", first)
+        self.assertIn("started", rest)
+
+    def test_explain_repository_answers_from_the_subjects_before_any_authoring(self) -> None:
+        """Authoring's step zero: the answer, and which candidate gave it, without writing
+        anything — the repository has to be settled before the plan is written into it."""
+        spoken = io.StringIO()
+        with redirect_stdout(spoken):
+            code = explain_main(
+                [
+                    "repository",
+                    "--subject",
+                    str(self._plan_document()),
+                    "--session",
+                    str(self.repository),
+                ]
+            )
+        self.assertEqual(code, 0)
+        self.assertIn(str(self.repository), spoken.getvalue())
+        self.assertIn("subjects", spoken.getvalue())
+
+    def test_a_start_from_another_checkout_asks_and_names_where_the_work_is(self) -> None:
+        """Plan 31's second acceptance: the same request made from Cairn's own checkout."""
+        own = resolve.cairn_checkout()
+        if own is None:
+            self.skipTest("Cairn's own source is not in a checkout here")
+        code, said = self._start_argv(
+            [
+                "start",
+                "--plan",
+                "offline-export",
+                "--subject",
+                str(self._plan_document()),
+                "--session",
+                str(own),
+                "--trigger",
+                "fresh",
+            ]
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(self.launched, [])
+        self.assertIn(str(self.repository), said)
+        self.assertIn("Which did you mean", said)
 
     def test_a_hand_edit_that_breaks_the_complete_gate_is_refused_and_starts_nothing(
         self,

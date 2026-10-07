@@ -584,22 +584,118 @@
       "family": "repository",
       "utterance": "run offline-export against /Users/me/src/product",
       "stated": "repository",
-      "expect": {"outcome": "resolved"},
+      "subjects": [],
+      "session": null,
+      "expect": {"outcome": "resolved", "provenance": "stated"},
       "why": "the ordinary case: it came from the request"
+    },
+    {
+      "id": "repository-named-over-the-session",
+      "family": "repository",
+      "utterance": "run offline-export against /Users/me/src/product",
+      "stated": "repository",
+      "subjects": [],
+      "session": "elsewhere",
+      "expect": {"outcome": "resolved", "provenance": "stated"},
+      "why": "a repository named in the request beats every inference, so a conversation sitting somewhere else is not a disagreement worth a question"
+    },
+    {
+      "id": "repository-from-the-subjects",
+      "family": "repository",
+      "utterance": "run TASK-376.21 and TASK-376.22, the second after the first",
+      "stated": null,
+      "subjects": ["in_repository"],
+      "session": "repository",
+      "expect": {"outcome": "resolved", "provenance": "subjects"},
+      "why": "task documents out of one backlog name their repository more reliably than a person retyping a path, and the conversation agrees: the ariadne request, which asked a question nobody needed to answer"
+    },
+    {
+      "id": "repository-from-the-session",
+      "family": "repository",
+      "utterance": "run offline-export",
+      "stated": null,
+      "subjects": [],
+      "session": "repository",
+      "expect": {"outcome": "resolved", "provenance": "session"},
+      "why": "a plan named by slug carries no subject on disk, so the repository the conversation is in is the only candidate and is taken"
+    },
+    {
+      "id": "repository-subjects-lost",
+      "family": "repository",
+      "utterance": "run the plan in ~/Downloads/worklist.md",
+      "stated": null,
+      "subjects": ["in_no_repository"],
+      "session": "repository",
+      "expect": {"outcome": "subjects_lost"},
+      "why": "a subject no repository holds is evidence of nothing, and taking the conversation's repository would branch and land around a document that is not in it"
+    },
+    {
+      "id": "repository-subjects-split",
+      "family": "repository",
+      "utterance": "run the plan in product/WORKLIST.md and other/WORKLIST.md",
+      "stated": null,
+      "subjects": ["in_repository", "in_elsewhere"],
+      "session": "repository",
+      "expect": {"outcome": "subjects_split"},
+      "why": "one run targets one repository: a branch is landed in it and every isolated step is a worktree of it, so two is a question rather than a choice"
+    },
+    {
+      "id": "repository-subjects-disagree-with-the-session",
+      "family": "repository",
+      "utterance": "run TASK-376.21 and TASK-376.22, the second after the first",
+      "stated": null,
+      "subjects": ["in_repository"],
+      "session": "cairn",
+      "expect": {"outcome": "subjects_disagree"},
+      "why": "the same request made from another checkout: the work lives in one repository and the conversation is in another, which is the one case where a person knows something the candidates cannot settle"
+    },
+    {
+      "id": "repository-named-against-the-subjects",
+      "family": "repository",
+      "utterance": "run the plan in product/WORKLIST.md against /Users/me/src/other",
+      "stated": "elsewhere",
+      "subjects": ["in_repository"],
+      "session": null,
+      "expect": {"outcome": "subjects_disagree"},
+      "why": "a repository named in the request wins every inference except this one: naming a repository the request's own subjects do not live in is the disagreement that is itself a question"
+    },
+    {
+      "id": "repository-cairn-itself",
+      "family": "repository",
+      "utterance": "run offline-export",
+      "stated": null,
+      "subjects": [],
+      "session": "cairn",
+      "expect": {"outcome": "cairn_itself"},
+      "why": "the trap: every capability document runs `python3 -m cairn` from Cairn's own directory, so Cairn's checkout as the only candidate would branch, commit and land in Cairn itself"
+    },
+    {
+      "id": "repository-session-outside-any-repository",
+      "family": "repository",
+      "utterance": "run offline-export",
+      "stated": null,
+      "subjects": [],
+      "session": "outside_any_repository",
+      "expect": {"outcome": "nowhere"},
+      "why": "a conversation in a directory no repository holds gives nothing to infer from, and nothing else gave one"
     },
     {
       "id": "repository-nowhere",
       "family": "repository",
       "utterance": "run offline-export",
       "stated": null,
+      "subjects": [],
+      "session": null,
       "expect": {"outcome": "nowhere"},
-      "why": "nothing named a repository, the request's subjects name none, and the conversation is in none: the one case left with no candidate to take"
+      "why": "nothing named a repository, the request's subjects name none, and no conversation directory was passed in: the one case left with no candidate to take"
     },
     {
       "id": "repository-mismatch",
       "family": "repository",
       "utterance": "run offline-export against /Users/me/src/other",
       "stated": "elsewhere",
+      "subjects": [],
+      "session": null,
       "expect": {"outcome": "mismatch"},
       "why": "a definition is bound to the repository it was authored for; the two answers are to run against the encoded one or to re-author, and never to reconcile"
     },
@@ -608,6 +704,8 @@
       "family": "repository",
       "utterance": "run offline-export against /Users/me/src/product/",
       "stated": "trailing_separator",
+      "subjects": [],
+      "session": null,
       "expect": {"outcome": "refused"},
       "why": "the measured spelling that puts every worktree inside the working tree and lands nothing while reporting success"
     },

@@ -28,8 +28,8 @@ document the request names>` answers it and says which candidate did — a repos
 the request, the one holding those documents, or the session's own — and asks instead where
 they leave real doubt ([../SKILL.md](../SKILL.md)). Six task IDs out of one backlog name their
 repository more reliably than a person retyping a path, which is why this is not a question.
-The parse report the person confirms carries that repository and that provenance, so what
-they are agreeing to includes where it lands.
+Repeat that line above the parse report in step 3, so what the person confirms includes where
+the work lands.
 
 `python3 -m cairn plan home <plan-slug> --repository <path> --document` prints where it goes:
 `<git-common-dir>/cairn/plans/<plan>.md`, beside the graph and outside the working tree, for

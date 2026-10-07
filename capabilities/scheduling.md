@@ -28,9 +28,10 @@ needs no scheduler. Someone who says "I want to see the graph" is asking for
    own clock; Cairn parses none of it.
 
 2. **Install it.** `python3 -m cairn schedule install --plan <slug> --repository <path>
---session <path>`. Its first line is the repository it resolved and where that came from —
-   a repository named in the request, the one holding the request's subjects, or the session's
-   own — and that line is the first line of your reply too, because a schedule armed against
+--session <path>`. Its first line is the repository it resolved and where that came from — a
+   repository named in the request or the one this conversation is in, a cadence over a plan
+   slug naming no document to find one from — and that line is the first line of your reply
+   too, because a schedule armed against
    the wrong repository fires on time for years. Where the candidates leave real doubt it asks
    rather than installing ([../SKILL.md](../SKILL.md)).
    It links an immutable admitted snapshot into the directory the scheduler watches, which
