@@ -264,10 +264,17 @@ keeps its run history — happens before anything starts. `start` exits `1` on a
 nor exited within its bound, because in that case the run may still begin — whether a run
 worked is the record's answer and not this command's ([run-model.md](run-model.md)).
 
-`cairn explain workflow|word|exclusion` answers what a definition would do, what one of
-Cairn's frozen words means, and why a step contributed no verified work. It starts nothing,
-takes no lock and writes nothing, and it exits on its own health rather than on any run's
-verdict: it is answering a question, not reporting an outcome.
+`cairn explain repository|workflow|word|exclusion` answers which repository a request is
+about, what a definition would do, what one of Cairn's frozen words means, and why a step
+contributed no verified work. It starts nothing, takes no lock and writes nothing, and it
+exits on its own health rather than on any run's verdict: it is answering a question, not
+reporting an outcome.
+
+Every command that acts on a repository takes `--repository`, `--subject` and `--session`, and
+answers with the one it resolved and which of the three said so. `--session` is passed in
+rather than read from the process, because these commands are run from the skill's own
+directory and so the process's own directory names Cairn's checkout whatever repository the
+person is in.
 
 `cairn record` reads a run and `cairn report` renders one. Both exit with the **run's**
 verdict rather than their own health, on the codes [run-model.md](run-model.md) freezes, so a

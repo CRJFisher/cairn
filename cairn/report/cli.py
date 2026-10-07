@@ -37,6 +37,7 @@ from cairn.report.spine import (
     SINKS,
     Document,
 )
+from cairn.skill.resolve import Resolved, repository_line, resolve_repository
 
 Renderer = Callable[[Document, Mapping[str, str]], Rendering]
 
@@ -48,24 +49,27 @@ RENDERERS: dict[str, Renderer] = {
 
 
 def _runs_root(args: argparse.Namespace) -> Path:
-    """Where this run's reports are, from the request rather than from where it was typed.
+    """Where this run's reports are, and the repository they were read out of, said back.
 
-    A repository is never defaulted to the directory the caller happens to be in
-    ([SKILL.md]): a report found that way is a report about whatever tree the terminal was
-    sitting in, and reading one run's receipts out of another repository is a wrong answer
-    delivered confidently. `--reports` names a runs root outright and needs no repository to
-    derive one from, which is the one caller reading a recorded corpus rather than a tree.
+    The repository is resolved the way every capability resolves it — named in the request,
+    or the one the session is in ([cairn/skill/resolve.py]) — and which candidate answered is
+    stated, because a report read out of the wrong repository is an empty listing that looks
+    like a repository with no runs. The line goes to stderr: stdout is the document, whose
+    first line the spine fixed as the verdict, and a caller piping markdown into a pull
+    request is not asking for a preamble.
+
+    `--reports` names a runs root outright and needs no repository to derive one from, which
+    is the one caller reading a recorded corpus rather than a tree.
     """
     if args.reports:
         return Path(args.reports)
-    if args.repository is None:
-        raise CairnError(
-            "invalid_arguments",
-            "--repository names the repository whose run this is, and it has no default: "
-            "the directory this was typed in is not the repository the run happened in "
-            "unless someone says so. Name it, or name a runs root with --reports",
-        )
-    return runs_root(Path(args.repository).resolve())
+    resolution = resolve_repository(
+        args.repository, session=Path(args.session) if args.session else None
+    )
+    if not isinstance(resolution, Resolved):
+        raise CairnError("invalid_arguments", resolution.question)
+    print(repository_line(resolution), file=sys.stderr)
+    return runs_root(resolution.repository)
 
 
 def _render(args: argparse.Namespace) -> int:
@@ -103,6 +107,10 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cairn report", description=__doc__)
     parser.add_argument("--run", required=True)
     parser.add_argument("--repository")
+    # The directory the conversation is in, passed in rather than read: this is run from the
+    # skill's own directory, so the process's own would name Cairn's checkout every time
+    # ([cairn/skill/resolve.py]).
+    parser.add_argument("--session")
     parser.add_argument("--format", choices=SINKS, default=SINK_TERMINAL)
     parser.add_argument("--out")
     parser.add_argument("--engine-records")

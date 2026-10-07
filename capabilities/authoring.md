@@ -1,14 +1,14 @@
 # Authoring a workflow, and changing one
 
-| Contract       | Value                                                                                                                               |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Capability     | `author`, `edit`                                                                                                                    |
-| Entered when   | the dispatch table selected **author** or **edit**                                                                                  |
-| Preconditions  | a plan document, folder or graph exists on disk, or the request states the plan itself; the target repository came from the request |
-| Bound on entry | `capability` · `repository` · `plan_document` · `plan_graph` · `workflow` · `model`                                                 |
-| Owns           | the derivation, the assertion conversation, generation, and what a re-authoring replaces                                            |
-| Defers to      | [../docs/plan-derivation.md](../docs/plan-derivation.md) · [../docs/workflow.md](../docs/workflow.md)                               |
-| Triggers       | a written definition in the repository's own admin directory                                                                        |
+| Contract       | Value                                                                                                                                           |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Capability     | `author`, `edit`                                                                                                                                |
+| Entered when   | the dispatch table selected **author** or **edit**                                                                                              |
+| Preconditions  | a plan document, folder or graph exists on disk, or the request states the plan itself; the target repository resolved and its provenance known |
+| Bound on entry | `capability` · `repository` · `plan_document` · `plan_graph` · `workflow` · `model`                                                             |
+| Owns           | the derivation, the assertion conversation, generation, and what a re-authoring replaces                                                        |
+| Defers to      | [../docs/plan-derivation.md](../docs/plan-derivation.md) · [../docs/workflow.md](../docs/workflow.md)                                           |
+| Triggers       | a written definition in the repository's own admin directory                                                                                    |
 
 **Edit is authoring.** There is no in-place edit of a generated definition. The plan document
 is the source of truth (I1), so changing what a workflow does means changing the plan and
@@ -21,6 +21,15 @@ rather than to prevent it.
 A request that names work and the order it runs in is a plan document that does not exist
 yet, and the derivation reads documents rather than conversations. So the request becomes one
 before anything else happens.
+
+**The repository first, because everything below is written inside it.** `python3 -m cairn
+explain repository --session <the directory this conversation is in> --subject <each task
+document the request names>` answers it and says which candidate did — a repository named in
+the request, the one holding those documents, or the session's own — and asks instead where
+they leave real doubt ([../SKILL.md](../SKILL.md)). Six task IDs out of one backlog name their
+repository more reliably than a person retyping a path, which is why this is not a question.
+The parse report the person confirms carries that repository and that provenance, so what
+they are agreeing to includes where it lands.
 
 `python3 -m cairn plan home <plan-slug> --repository <path> --document` prints where it goes:
 `<git-common-dir>/cairn/plans/<plan>.md`, beside the graph and outside the working tree, for

@@ -19,9 +19,13 @@ its own. Their entry preconditions do differ, and the row above says how.
 1. **Find the run if it was not named.** `ls <repository>/.git/cairn/runs` lists every run
    that repository has had. Every run leaves a record whether anyone was watching or not.
 
-2. **Render it.** `python3 -m cairn report --run <id> --repository <path> [--format
-terminal|markdown|html]`. Terminal is the default; markdown is the durable artifact for a
-   repository or a pull request; HTML is self-contained and draws the graph.
+2. **Render it.** `python3 -m cairn report --run <id> --repository <path> --session <path>
+[--format terminal|markdown|html]`. Terminal is the default; markdown is the durable artifact
+   for a repository or a pull request; HTML is self-contained and draws the graph. The
+   repository it read and where that came from are stated beside the rendering rather than in
+   it, because the rendering's own first line is the verdict — name that repository in the
+   first line of your reply, so a run nobody finds reads as the wrong repository rather than
+   as a repository with no runs.
 
 3. **Answer in the order it answers.** Did it work, what to do next, what needs attention,
    what each step did, what shape the run was, what the receipts are. The order is the design
@@ -45,8 +49,14 @@ If the honest answer is "this needs to be run", say so and stop. Running is
 
 ## Explaining
 
-Three questions, three sources, and the source is what makes each answer trustworthy.
+Four questions, four sources, and the source is what makes each answer trustworthy.
 
+- **Which repository is this about?** `python3 -m cairn explain repository --session <the
+directory this conversation is in> [--subject <path>]…` — a repository named in the request,
+  the one holding the request's subjects, or the session's own, whichever answers first. It
+  prints the one it took and where that came from, and asks instead where the candidates
+  leave real doubt ([../SKILL.md](../SKILL.md)). Every other capability's first command needs
+  this answer, and so does the first line of your reply.
 - **What would this workflow do?** `python3 -m cairn explain workflow --plan <slug>
 --repository <path>` — read off the generated definition without running it, including
   whether the file is still the one Cairn wrote. It prints an account, not the definition: a

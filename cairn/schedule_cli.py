@@ -32,6 +32,7 @@ from cairn.schedule import (
     scheduler_command,
     start,
 )
+from cairn.skill.resolve import Resolved, repository_line, resolve_repository
 from cairn.workflow.gate import admit
 from cairn.workflow.stamp import stamp_path, workflow_path
 
@@ -64,7 +65,13 @@ def _dags(args: argparse.Namespace) -> Path:
 
 
 def _cmd_install(args: argparse.Namespace) -> int:
-    repository = Path(args.repository).resolve()
+    resolution = resolve_repository(
+        args.repository, session=Path(args.session) if args.session else None
+    )
+    if not isinstance(resolution, Resolved):
+        raise CairnError("invalid_arguments", resolution.question)
+    print(repository_line(resolution))
+    repository = resolution.repository
     dags = _dags(args)
     source = workflow_path(repository, args.plan)
     admission, faults = admit(source, expected_plan=args.plan)
@@ -194,7 +201,11 @@ def main(argv: list[str] | None = None) -> int:
 
     child = sub.add_parser("install")
     child.add_argument("--plan", required=True)
-    child.add_argument("--repository", default=".")
+    child.add_argument("--repository")
+    # The conversation's directory, passed in rather than read: `python3 -m cairn` is run
+    # from the skill's own directory, so the process's own names Cairn's checkout whatever
+    # repository the person is in ([cairn/skill/resolve.py]).
+    child.add_argument("--session")
     child.add_argument("--dags")
     child.add_argument(
         "--webhook-token-sink",

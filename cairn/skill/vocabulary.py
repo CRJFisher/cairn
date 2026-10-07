@@ -115,6 +115,23 @@ ASK_FAMILIES: tuple[str, ...] = (
 )
 
 
+PROVENANCE_STATED = "stated"  # a repository named in the request
+PROVENANCE_SUBJECTS = "subjects"  # the repository holding the request's subjects
+PROVENANCE_SESSION = "session"  # the repository this conversation is in
+
+# Ordered strongest first, and the order a resolution walks: a repository named in the
+# request beats the one its subjects live in, which beats the one the session sits in. The
+# order is load-bearing here, unlike `CAPABILITY_ORDER` — these three candidates are
+# evidence of different quality about one fact, where an ambiguous request is two different
+# pieces of work. Which one answered is stated back every time, because the three derivations
+# that hang off the path all fail quietly when it is wrong ([resolve.py]).
+PROVENANCES: tuple[str, ...] = (
+    PROVENANCE_STATED,
+    PROVENANCE_SUBJECTS,
+    PROVENANCE_SESSION,
+)
+
+
 OCCASION_NEW = "new_occasion"
 OCCASION_CONTINUE = "continue_occasion"
 OCCASION_READINGS: tuple[str, ...] = (OCCASION_NEW, OCCASION_CONTINUE)
@@ -222,6 +239,10 @@ __all__ = [
     "OCCASION_CONTINUE",
     "OCCASION_NEW",
     "OCCASION_READINGS",
+    "PROVENANCES",
+    "PROVENANCE_SESSION",
+    "PROVENANCE_STATED",
+    "PROVENANCE_SUBJECTS",
     "QUALIFIER_SHAPES",
     "READING_BY_TRIGGER",
     "SHAPE_CADENCE",

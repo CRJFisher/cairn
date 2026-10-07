@@ -1,14 +1,14 @@
 # Putting a plan on a schedule or an external trigger
 
-| Contract       | Value                                                                                   |
-| -------------- | --------------------------------------------------------------------------------------- |
-| Capability     | `schedule`                                                                              |
-| Entered when   | the dispatch table selected **schedule**                                                |
-| Preconditions  | a plan or workflow named; the repository came from the request; a cadence was asked for |
-| Bound on entry | `capability` · `repository` · `workflow` · `cadence`                                    |
-| Owns           | the cron expression's place, the scheduler daemon, and the honest answer about queues   |
-| Defers to      | [../docs/triggers.md](../docs/triggers.md) · [authoring.md](authoring.md)               |
-| Triggers       | a scheduler daemon, once the plan is installed and `start` is run                       |
+| Contract       | Value                                                                                               |
+| -------------- | --------------------------------------------------------------------------------------------------- |
+| Capability     | `schedule`                                                                                          |
+| Entered when   | the dispatch table selected **schedule**                                                            |
+| Preconditions  | a plan or workflow named; the repository resolved and its provenance known; a cadence was asked for |
+| Bound on entry | `capability` · `repository` · `workflow` · `cadence`                                                |
+| Owns           | the cron expression's place, the scheduler daemon, and the honest answer about queues               |
+| Defers to      | [../docs/triggers.md](../docs/triggers.md) · [authoring.md](authoring.md)                           |
+| Triggers       | a scheduler daemon, once the plan is installed and `start` is run                                   |
 
 **A schedule needs a scheduler process.** A cron firing and an external webhook run on the
 same thing: a scheduler, whose retry scanner re-executes every failed run recorded on this
@@ -27,7 +27,12 @@ needs no scheduler. Someone who says "I want to see the graph" is asking for
    ([authoring.md](authoring.md)). The engine validates the expression against the machine's
    own clock; Cairn parses none of it.
 
-2. **Install it.** `python3 -m cairn schedule install --plan <slug> --repository <path>`.
+2. **Install it.** `python3 -m cairn schedule install --plan <slug> --repository <path>
+--session <path>`. Its first line is the repository it resolved and where that came from —
+   a repository named in the request, the one holding the request's subjects, or the session's
+   own — and that line is the first line of your reply too, because a schedule armed against
+   the wrong repository fires on time for years. Where the candidates leave real doubt it asks
+   rather than installing ([../SKILL.md](../SKILL.md)).
    It links an immutable admitted snapshot into the directory the scheduler watches, which
    is not where Cairn writes it — a file carrying a schedule that was never installed fires
    never and says nothing. A name already taken by another plan is refused rather than

@@ -51,7 +51,12 @@ DESCRIPTION_CHARACTER_LIMIT = 600
 # as meeting, and the reading the first reply states. That session read the file, found no row
 # of the table that held its request, and went looking through Cairn's own source for the word
 # "model" ([30]).
-ON_TRIGGER_CHARACTER_LIMIT = 12_600
+#
+# It moved up a second time, for the repository resolution order and the four doubts that are
+# still worth a question ([31]). The rule it replaced was one sentence long and cost a person
+# a turn of the conversation every time they ran a plan from inside the repository it belongs
+# to — a shorter file that asks a question nobody needed to answer is not a cheaper file.
+ON_TRIGGER_CHARACTER_LIMIT = 13_300
 
 
 class Size(NamedTuple):

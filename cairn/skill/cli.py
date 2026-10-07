@@ -6,8 +6,13 @@ are an implementation surface for the skill, not a user interface — a person a
 they want and never learns one of these lines.
 
 `run` has one verb, `start`: a request to run is the go-ahead, so it gates the definition,
-begins the run and hands back the run's id and where it can be watched. `explain` has three
+begins the run and hands back the run's id and where it can be watched. `explain` has four
 verbs, one per question it answers, and none of them starts, locks or writes anything.
+
+**Every one of them says which repository it took and where that came from**, in its first
+line, before whatever else it prints. A repository is resolved from what was named, from
+where the request's subjects live, or from the session's own directory ([resolve.py]) — so
+the line that says which candidate answered is what a person checks the answer against.
 """
 
 from __future__ import annotations
@@ -33,6 +38,7 @@ from cairn.skill.resolve import (
     decide_occasion,
     refuse_foreign_recovery,
     refuse_missing_definition,
+    repository_line,
     resolve_repository,
 )
 from cairn.skill.trigger import (
@@ -67,6 +73,35 @@ def _repository(stated: str | None, workflow: Path | None) -> Path:
     if isinstance(resolution, Resolved):
         return resolution.repository
     raise CairnError("invalid_arguments", resolution.question)
+
+
+def _resolved(args: argparse.Namespace) -> Resolved:
+    """The repository this invocation is about, said back on the way through.
+
+    The one place these commands settle it, and the line is printed here rather than by each
+    caller so that no surface can resolve a repository without saying which one it took.
+    """
+    resolution = resolve_repository(
+        args.repository,
+        subjects=[Path(subject) for subject in (args.subject or ())],
+        session=Path(args.session) if args.session else None,
+    )
+    if not isinstance(resolution, Resolved):
+        raise CairnError("invalid_arguments", resolution.question)
+    print(repository_line(resolution))
+    return resolution
+
+
+def _repository_arguments(child: argparse.ArgumentParser) -> None:
+    """The three candidates a repository is resolved from, and no default among them.
+
+    `--session` rather than the process's own directory: these commands are run from the
+    skill's directory, so `os.getcwd()` answers "Cairn's checkout" to every question and a
+    default of `.` would be a wrong answer that always looks plausible ([resolve.py]).
+    """
+    child.add_argument("--repository")
+    child.add_argument("--subject", action="append")
+    child.add_argument("--session")
 
 
 def _has_run_before(repository: Path, plan: str) -> bool:
@@ -177,9 +212,9 @@ def _cmd_start(args: argparse.Namespace) -> int:
     Everything that can refuse is asked before anything is written or launched, so a refusal
     here leaves the repository as it was.
     """
-    repository = Path(str(args.repository)).resolve()
     run_id = mint_run_id() if args.run_id is None else str(args.run_id)
     try:
+        repository = _resolved(args).repository
         check_run_id(run_id)
         refuse_unusable_engine()
         # The working tree, read in the same breath as the engine: the run's first act
@@ -245,8 +280,19 @@ def _cmd_start(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_explain_repository(args: argparse.Namespace) -> int:
+    """Which repository this request is about, asked on its own.
+
+    The question every capability settles before it does anything, answerable without doing
+    any of it: authoring writes into the repository's admin directory and scheduling installs
+    against it, so both need the answer — and the provenance — before their first command.
+    """
+    _resolved(args)
+    return 0
+
+
 def _cmd_explain_workflow(args: argparse.Namespace) -> int:
-    repository = Path(str(args.repository)).resolve()
+    repository = _resolved(args).repository
     workflow = workflow_path(repository, str(args.plan))
     refuse_missing_definition(workflow, str(args.plan), str(repository))
     account = would_do(workflow, str(args.plan))
@@ -272,7 +318,7 @@ def _cmd_explain_word(args: argparse.Namespace) -> int:
 
 
 def _cmd_explain_exclusion(args: argparse.Namespace) -> int:
-    repository = Path(str(args.repository)).resolve()
+    repository = _resolved(args).repository
     record = build_run_record(runs_root(repository), run_records_path(), str(args.run))
     if record is None:
         raise CairnError(
@@ -294,9 +340,7 @@ def _run_parser() -> argparse.ArgumentParser:
 
     child = verbs.add_parser("start")
     child.add_argument("--plan", required=True)
-    # No default. The repository comes from what was asked for, never from the directory
-    # this process happens to be in and never from the workflow ([resolve.py]).
-    child.add_argument("--repository", required=True)
+    _repository_arguments(child)
     # Optional, because the definition already declares one. Given, it is the branch the
     # run will use.
     child.add_argument("--parent-branch")
@@ -317,9 +361,12 @@ def _explain_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cairn explain", description=__doc__)
     verbs = parser.add_subparsers(dest="verb", required=True)
 
+    child = verbs.add_parser("repository")
+    _repository_arguments(child)
+
     child = verbs.add_parser("workflow")
     child.add_argument("--plan", required=True)
-    child.add_argument("--repository", required=True)
+    _repository_arguments(child)
 
     child = verbs.add_parser("word")
     # argparse itself refuses a word no vocabulary holds, so there is no second list of
@@ -329,7 +376,7 @@ def _explain_parser() -> argparse.ArgumentParser:
     child = verbs.add_parser("exclusion")
     child.add_argument("--run", required=True)
     child.add_argument("--step", required=True)
-    child.add_argument("--repository", required=True)
+    _repository_arguments(child)
     return parser
 
 
@@ -345,6 +392,7 @@ def run_main(argv: list[str]) -> int:
 def explain_main(argv: list[str]) -> int:
     args = _explain_parser().parse_args(argv)
     handlers = {
+        "repository": _cmd_explain_repository,
         "workflow": _cmd_explain_workflow,
         "word": _cmd_explain_word,
         "exclusion": _cmd_explain_exclusion,

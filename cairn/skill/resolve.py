@@ -5,10 +5,20 @@ that goes quietly unnoticed. They live together because they are the two questio
 [trigger.py] must have settled before it can compose an engine invocation, and because
 neither may be defaulted.
 
-**The repository is never inferred.** There is no parameter here for the session's working
-directory — not as a rule but as an absence, so a caller cannot supply one. A definition
-encodes the repository it was authored for, and a mismatch is a question rather than an
-override ([docs/triggers.md]).
+**The repository is resolved from three candidates and the answer says which one it was.**
+A repository named in the request, the one holding the request's subjects, the one the
+session is in — strongest first. Three things hang off the path and all three fail quietly
+when it is wrong: the run lock, the `<repo>-worktrees` parent, and the definition's encoded
+repository. What protects them is getting the path right, which agreeing candidates do more
+reliably than a person retyping it, so a question is owed only where the candidates that
+were found disagree or where none was found at all. The repository is never inferred from
+the workflow: a definition encodes the one it was authored for, and a mismatch is a question
+rather than an override ([docs/triggers.md]).
+
+The session's directory arrives as a parameter and is never read from the process. The
+capability documents run `python3 -m cairn` from the skill's own directory, so the process
+working directory is Cairn's checkout rather than the person's repository — evidence of
+nothing, and the trap that makes `os.getcwd()` worse than silence.
 
 **The occasion defaults to a new one.** Continuing an old one is the direction that can act
 on stale work, so it requires a positive signal: a recovery of a named run, or an occasion
@@ -18,17 +28,27 @@ supplied verbatim.
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
+from functools import cache
 from pathlib import Path
 from typing import Literal, NamedTuple
 
 from cairn.core import CairnError
-from cairn.gitio import common_directory, refuse_unusable_repository
+from cairn.gitio import (
+    common_directory,
+    main_working_tree,
+    refuse_unusable_repository,
+    same_repository,
+)
 from cairn.marker import occasion_moment
 from cairn.record.model import RunRecord
 from cairn.skill.vocabulary import (
     CONSEQUENCE_BY_READING,
     OCCASION_CONTINUE,
     OCCASION_NEW,
+    PROVENANCE_SESSION,
+    PROVENANCE_STATED,
+    PROVENANCE_SUBJECTS,
     READING_BY_TRIGGER,
     TRIGGER_PINNED,
     TRIGGER_RECOVERY,
@@ -37,13 +57,30 @@ from cairn.skill.vocabulary import (
 from cairn.topology import WORKTREES_SUFFIX, worktrees_parent
 from cairn.workflow.schema import REPOSITORY_PARAM, declared_parameter, read
 
-REPOSITORY_ABSENT = "absent"
+REPOSITORY_SUBJECTS_LOST = "subjects_lost"
+REPOSITORY_SUBJECTS_SPLIT = "subjects_split"
+REPOSITORY_SUBJECTS_DISAGREE = "subjects_disagree"
+REPOSITORY_NOWHERE = "nowhere"
+REPOSITORY_CAIRN_ITSELF = "cairn_itself"
 REPOSITORY_MISMATCH = "mismatch"
+
+# Every doubt worth a turn of the conversation, and nothing else is one. Enumerated so the
+# corpus can be held to covering each: a question nobody can reach is a rule that does not
+# exist, and a doubt with no question is a wrong repository nobody was asked about.
+REPOSITORY_QUESTIONS: tuple[str, ...] = (
+    REPOSITORY_SUBJECTS_LOST,
+    REPOSITORY_SUBJECTS_SPLIT,
+    REPOSITORY_SUBJECTS_DISAGREE,
+    REPOSITORY_NOWHERE,
+    REPOSITORY_CAIRN_ITSELF,
+    REPOSITORY_MISMATCH,
+)
 
 
 class Resolved(NamedTuple):
     kind: Literal["resolved"]
     repository: Path
+    provenance: str
     encoded: Path | None
 
 
@@ -95,18 +132,8 @@ def encoded_repository(workflow: Path) -> Path | None:
     return Path(declared) if declared else None
 
 
-def resolve_repository(stated: str | None, workflow: Path | None = None) -> Resolution:
-    """The repository this run targets, from what was asked and nothing else."""
-    if stated is None:
-        return Unresolved(
-            kind="unresolved",
-            outcome=REPOSITORY_ABSENT,
-            question=(
-                "Which repository should this run against? Cairn takes the repository from "
-                "what you ask for, never from the directory this conversation happens to "
-                "be in, and never from the workflow."
-            ),
-        )
+def refuse_unstartable_spelling(stated: str) -> Path:
+    """The repository a person typed, refused where the spelling itself lands nothing."""
     if not os.path.isabs(stated):
         raise CairnError(
             "invalid_arguments",
@@ -127,17 +154,146 @@ def resolve_repository(stated: str | None, workflow: Path | None = None) -> Reso
             "failing, so the branch would carry no work and the wave would land nothing "
             f"while reporting success. Pass {str(Path(stated))!r}",
         )
-    target = Path(stated).resolve()
-    refuse_unusable_repository(target)
+    return Path(stated).resolve()
 
+
+def holding_repository(path: Path) -> Path | None:
+    """The repository `path` belongs to, or nothing where none can be found.
+
+    The main working tree rather than the enclosing one, because a path inside a worktree
+    belongs to the repository that worktree was added from — taking the worktree itself
+    would nest `<repo>-worktrees` inside a tree Cairn created and key the lock on a
+    directory the repository's other steps never see.
+    """
+    directory = path if path.is_dir() else path.parent
+    try:
+        return main_working_tree(directory)
+    except CairnError:
+        return None
+
+
+def subject_repositories(
+    subjects: Sequence[Path],
+) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+    """The repositories the request's subjects live in, and the subjects living in none."""
+    held: list[Path] = []
+    lost: list[Path] = []
+    for subject in subjects:
+        holder = holding_repository(subject)
+        if holder is None:
+            lost.append(subject)
+        elif not any(same_repository(holder, seen) for seen in held):
+            held.append(holder)
+    return tuple(held), tuple(lost)
+
+
+@cache
+def cairn_checkout() -> Path | None:
+    """The repository Cairn's own source is checked out in, where it is a checkout at all.
+
+    Cached because it cannot change under a process, and asked at all because a session
+    sitting here is the one candidate that is never evidence: every capability document runs
+    `python3 -m cairn` from this directory.
+    """
+    return holding_repository(Path(__file__).resolve().parent)
+
+
+def resolve_repository(
+    stated: str | None,
+    workflow: Path | None = None,
+    *,
+    subjects: Sequence[Path] = (),
+    session: Path | None = None,
+) -> Resolution:
+    """Which repository this request is about, and which candidate answered.
+
+    Strongest candidate first, and a question only where the ones that were found disagree
+    or where none was found. Retyping a path the request and the session already agree on
+    protects nothing; the disagreements below are where a person knows something Cairn
+    cannot derive.
+    """
+    target = refuse_unstartable_spelling(stated) if stated is not None else None
+    held, lost = subject_repositories(subjects)
+    if lost:
+        named = ", ".join(str(subject) for subject in lost)
+        return Unresolved(
+            kind="unresolved",
+            outcome=REPOSITORY_SUBJECTS_LOST,
+            question=(
+                f"No git repository holds {named}, so what this request is about cannot say "
+                "which repository it is about. Which repository should this run against?"
+            ),
+        )
+    if len(held) > 1:
+        named = ", ".join(str(holder) for holder in held)
+        return Unresolved(
+            kind="unresolved",
+            outcome=REPOSITORY_SUBJECTS_SPLIT,
+            question=(
+                f"What this request is about is spread across {len(held)} repositories: "
+                f"{named}. One run targets one repository — a branch is landed in it and "
+                "every isolated step is a worktree of it. Which of them did you mean?"
+            ),
+        )
+    subjects_root = held[0] if held else None
+
+    if target is not None:
+        if subjects_root is not None and not same_repository(subjects_root, target):
+            return _disagreement(subjects_root, target, PROVENANCE_STATED)
+        provenance = PROVENANCE_STATED
+    elif subjects_root is not None:
+        session_root = holding_repository(session) if session is not None else None
+        if session_root is not None and not same_repository(session_root, subjects_root):
+            return _disagreement(subjects_root, session_root, PROVENANCE_SESSION)
+        target = subjects_root
+        provenance = PROVENANCE_SUBJECTS
+    else:
+        session_root = holding_repository(session) if session is not None else None
+        if session_root is None:
+            return Unresolved(
+                kind="unresolved",
+                outcome=REPOSITORY_NOWHERE,
+                question=(
+                    "Nothing says which repository this is about: none was named, what it "
+                    "is about names none, and "
+                    + (
+                        f"{session} is not inside a git repository"
+                        if session is not None
+                        else "this conversation is not in one either"
+                    )
+                    + ". Which repository should this run against?"
+                ),
+            )
+        own = cairn_checkout()
+        if own is not None and same_repository(own, session_root):
+            return Unresolved(
+                kind="unresolved",
+                outcome=REPOSITORY_CAIRN_ITSELF,
+                question=(
+                    f"The only repository on offer is {session_root}, which is Cairn's own "
+                    "checkout, and what you have asked about is not one of Cairn's plans. "
+                    "Running here would branch, commit and land in Cairn itself. Which "
+                    "repository should this run against?"
+                ),
+            )
+        target = session_root
+        provenance = PROVENANCE_SESSION
+
+    refuse_unusable_repository(target)
     if workflow is None:
-        return Resolved(kind="resolved", repository=target, encoded=None)
+        return Resolved(
+            kind="resolved", repository=target, provenance=provenance, encoded=None
+        )
 
     encoded = encoded_repository(workflow)
     if encoded is None:
-        return Resolved(kind="resolved", repository=target, encoded=None)
+        return Resolved(
+            kind="resolved", repository=target, provenance=provenance, encoded=None
+        )
     if _same_repository(encoded, target):
-        return Resolved(kind="resolved", repository=target, encoded=encoded)
+        return Resolved(
+            kind="resolved", repository=target, provenance=provenance, encoded=encoded
+        )
 
     return Unresolved(
         kind="unresolved",
@@ -149,6 +305,46 @@ def resolve_repository(stated: str | None, workflow: Path | None = None) -> Reso
             "so a retargeted run would do its work in one repository and file every record "
             f"in the other. Do you want this run against {encoded}, or the plan re-authored "
             f"for {target}?"
+        ),
+    )
+
+
+# What each candidate is, in words, for the line every surface opens with. Total over
+# PROVENANCES, asserted. One place phrases it so that five surfaces cannot describe one
+# resolution five ways.
+SENTENCE_BY_PROVENANCE: dict[str, str] = {
+    PROVENANCE_STATED: "named in the request",
+    PROVENANCE_SUBJECTS: "the repository holding what this is about",
+    PROVENANCE_SESSION: "the repository this conversation is in",
+}
+
+
+def repository_line(resolved: Resolved) -> str:
+    """The resolution, said back: which repository, and which candidate answered."""
+    return (
+        f"repository  {resolved.repository} — {resolved.provenance}, "
+        f"{SENTENCE_BY_PROVENANCE[resolved.provenance]}"
+    )
+
+
+def _disagreement(subjects_root: Path, other: Path, provenance: str) -> Unresolved:
+    """The question owed when the subjects' repository and another candidate differ.
+
+    The subjects' repository is named first and named as what holds the work, because that
+    is the evidence the person cannot see Cairn weighing.
+    """
+    whence = {
+        PROVENANCE_STATED: "you named",
+        PROVENANCE_SESSION: "this conversation is in",
+    }[provenance]
+    return Unresolved(
+        kind="unresolved",
+        outcome=REPOSITORY_SUBJECTS_DISAGREE,
+        question=(
+            f"What this request is about lives in {subjects_root}, and {other} is the "
+            f"repository {whence}. A run branches, commits and lands in one repository, and "
+            "its records are filed under the one it was started against. Which did you "
+            f"mean — {subjects_root}, or {other}?"
         ),
     )
 
@@ -303,15 +499,26 @@ def decide_occasion(
 
 
 __all__ = [
-    "REPOSITORY_ABSENT",
+    "REPOSITORY_CAIRN_ITSELF",
     "REPOSITORY_MISMATCH",
+    "REPOSITORY_NOWHERE",
+    "REPOSITORY_QUESTIONS",
+    "REPOSITORY_SUBJECTS_DISAGREE",
+    "REPOSITORY_SUBJECTS_LOST",
+    "REPOSITORY_SUBJECTS_SPLIT",
+    "SENTENCE_BY_PROVENANCE",
     "OccasionDecision",
     "OccasionSignal",
     "Resolution",
     "Resolved",
     "Unresolved",
+    "cairn_checkout",
     "decide_occasion",
     "encoded_repository",
+    "holding_repository",
     "refuse_foreign_recovery",
+    "refuse_unstartable_spelling",
+    "repository_line",
     "resolve_repository",
+    "subject_repositories",
 ]

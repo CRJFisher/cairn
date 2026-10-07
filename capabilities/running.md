@@ -4,7 +4,7 @@
 | -------------- | -------------------------------------------------------------------------------------------------- |
 | Capability     | `run`                                                                                              |
 | Entered when   | the dispatch table selected **run**                                                                |
-| Preconditions  | a generated definition exists for the plan; the repository came from the request                   |
+| Preconditions  | a generated definition exists for the plan; the repository resolved and its provenance known       |
 | Bound on entry | `capability` · `repository` · `workflow` · `plan_document` · `model` · `occasion_reading`          |
 | Owns           | the occasion reading, the engine trigger, and the address the run is watched at                    |
 | Defers to      | [../SKILL.md](../SKILL.md) · [../docs/triggers.md](../docs/triggers.md) · [reading.md](reading.md) |
@@ -17,10 +17,15 @@
    cross into another capability's document: follow [authoring.md](authoring.md), then come
    back and start at step 2. The start refuses in those words if you reach it first.
 
-2. **Settle the repository.** It came from the request. If the request named none, ask; if a
-   definition exists and disagrees with its own encoded repository, the start refuses and
-   names both — the two answers are to run against the encoded repository or to re-author
-   for the named one, and there is no third.
+2. **Settle the repository, and say which one it is.** Pass `--session <the directory this
+conversation is in>` and, where the request's subjects are documents, `--subject <path>`
+   for each; the start resolves a repository named in the request, the one holding those
+   subjects, or the session's own, and prints which it took and where that came from as its
+   first line. Repeat that line first in your reply. It asks instead of starting where the
+   candidates disagree — [../SKILL.md](../SKILL.md) lists the four doubts — and a definition
+   that disagrees with its own encoded repository refuses and names both, the two answers
+   being to run against the encoded repository or to re-author for the resolved one, with no
+   third.
 
 3. **Settle the occasion.** `--trigger fresh` for an ordinary run, `--trigger recovery
 --recovering <run-id>` to continue a run, `--trigger pinned --occasion <value>` to
@@ -36,7 +41,8 @@
    definition does and whether it is still the file Cairn wrote, and starts nothing.
 
 5. **Start it.** The request is the go-ahead; nothing is put to the person first.
-   `python3 -m cairn run start --plan <slug> --repository <path> --trigger <shape>`. The run
+   `python3 -m cairn run start --plan <slug> --repository <path> --session <path> --trigger
+<shape>`. The run
    id is minted for you; pass `--run-id` only to choose one. The branch comes from the
    definition, which already declares one; pass `--parent-branch <name>` only where the
    request asked for a different one. It refuses a definition that does not pass the
@@ -44,10 +50,10 @@
    a run from, and a working tree with uncommitted work or an unresolved merge in it — each
    before anything is written.
 
-6. **Hand over the address.** The command prints four lines — the run id, the branch, where
-   the run can be watched, and the command that reads its record — and it prints them
-   **before it invokes the engine**, so a start killed under a caller's own timeout has
-   still told you the name of the run. Where the plan has run here before it also states the
+6. **Hand over the address.** The command prints five lines — the repository and its
+   provenance, the run id, the branch, where the run can be watched, and the command that
+   reads its record — and it prints them **before it invokes the engine**, so a start killed
+   under a caller's own timeout has still told you the name of the run. Where the plan has run here before it also states the
    occasion reading it took and what the other reading would have meant; say that too. It
    then returns as soon as the engine has taken the run on, not when the run ends: a long
    plan is a blocked terminal otherwise, and an agent harness kills its own tool call long

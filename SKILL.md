@@ -134,16 +134,28 @@ moved. A plan's first run has no other reading available, so stating one there i
 
 ## The target repository
 
-It comes from the request, for every capability, always. It is never inferred from the
-workflow and never defaulted to the directory this conversation is in — Report needs one to
-find a run just as Run needs one to start one, and an unnamed repository is asked for rather
-than assumed.
+Three candidates, strongest first, resolved for every capability by `python3 -m cairn explain
+repository --session <this conversation's directory> [--subject <path>]…`:
+
+1. one **named** in the request — provenance `stated`;
+2. the git root holding the request's **subjects**, the plan document or the task documents a
+   plan stated in the request names — `subjects`;
+3. the git root of the **session's** directory — `session`.
+
+Name the repository taken and its provenance in the first line of every reply that acts on
+one. It is never inferred from the workflow.
+
+That command asks rather than answers where the candidates leave real doubt: subjects in more
+than one repository or in none, subjects in one with the session in another, a session in no
+repository and nothing else to go on, and Cairn's own checkout as the only candidate when
+Cairn's plans are not the subject. Outside those there is no question — retyping a path the
+request and the session agree on protects nothing.
 
 A generated definition is bound to the repository it was authored for. A plan with no
-definition anywhere is authored in the repository named. A definition that exists for the
+definition anywhere is authored in the repository resolved. A definition that exists for the
 named workflow makes a differing repository the encoded-or-re-author question: ask whether
-to run against the encoded one or re-author for the named one — authoring where none exists
-never answers it unasked. Never reconcile the two.
+to run against the encoded one or re-author for the resolved one — authoring where none
+exists never answers it unasked. Never reconcile the two.
 
 ## Where each procedure lives
 
