@@ -19,7 +19,7 @@ by filename without checking their internal `step_id`.
 - Validate status and required field types against the frozen vocabulary.
 - Do not silently discard malformed, truncated, wrong-run, or renamed reports. Preserve a
   bounded integrity diagnostic associated with the candidate node.
-- A rejected report contributes no cost, summary, session, freshness, or outcome fact.
+- A rejected report contributes no summary, session, freshness, or outcome fact.
 
 ## B — Reconcile contradictions without raising outcomes
 
