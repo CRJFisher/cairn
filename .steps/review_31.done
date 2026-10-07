@@ -1,0 +1,7 @@
+{
+  "key": "once",
+  "run_id": "20261007T084741Z-262464cc",
+  "scope": "once",
+  "step_id": "review_31",
+  "summary": "The review's two fixes were already present in the working tree exactly as reported: resolve.py's subject-based refusals now gate behind `target is None` (with the companion `subjects_root` fix for t\u2026"
+}

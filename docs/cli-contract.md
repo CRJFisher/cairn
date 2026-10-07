@@ -270,11 +270,13 @@ contributed no verified work. It starts nothing, takes no lock and writes nothin
 exits on its own health rather than on any run's verdict: it is answering a question, not
 reporting an outcome.
 
-Every command that acts on a repository takes `--repository`, `--subject` and `--session`, and
-answers with the one it resolved and which of the three said so. `--session` is passed in
-rather than read from the process, because these commands are run from the skill's own
-directory and so the process's own directory names Cairn's checkout whatever repository the
-person is in.
+Every command that acts on a repository takes `--repository` and `--session`, and answers with
+the one it resolved and which candidate said so. `cairn run start` and `cairn explain
+workflow|exclusion|repository` also take `--subject`, repeatable, for the documents the
+request is about; `cairn report` and `cairn schedule install` have no such subject and take
+only the other two. `--session` is passed in rather than read from the process, because these
+commands are run from the skill's own directory and so the process's own directory names
+Cairn's checkout whatever repository the person is in.
 
 `cairn record` reads a run and `cairn report` renders one. Both exit with the **run's**
 verdict rather than their own health, on the codes [run-model.md](run-model.md) freezes, so a

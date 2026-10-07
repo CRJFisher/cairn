@@ -214,7 +214,10 @@ def resolve_repository(
     """
     target = refuse_unstartable_spelling(stated) if stated is not None else None
     held, lost = subject_repositories(subjects)
-    if lost:
+    # A lost or split subject is only a question where nothing stronger already answered
+    # it: a repository named outright is not undone by a subject's own path being bad, since
+    # the stated candidate is the one the person is most sure about.
+    if target is None and lost:
         named = ", ".join(str(subject) for subject in lost)
         return Unresolved(
             kind="unresolved",
@@ -224,7 +227,7 @@ def resolve_repository(
                 "which repository it is about. Which repository should this run against?"
             ),
         )
-    if len(held) > 1:
+    if target is None and len(held) > 1:
         named = ", ".join(str(holder) for holder in held)
         return Unresolved(
             kind="unresolved",
@@ -235,7 +238,7 @@ def resolve_repository(
                 "every isolated step is a worktree of it. Which of them did you mean?"
             ),
         )
-    subjects_root = held[0] if held else None
+    subjects_root = held[0] if len(held) == 1 else None
 
     if target is not None:
         if subjects_root is not None and not same_repository(subjects_root, target):
