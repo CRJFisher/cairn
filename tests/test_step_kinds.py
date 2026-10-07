@@ -1171,6 +1171,23 @@ class ProviderBehavior(unittest.TestCase):
             self.assertEqual(result[5], expected)
             self.assertEqual(result[6]["session_id"], result[6]["generated_session_id"])
 
+    def test_a_429_api_error_is_the_limit_not_a_provider_failure(self) -> None:
+        class SpendLimit(FakeProcess):
+            def __init__(self, command: list[str], **kwargs: object) -> None:
+                super().__init__(command, **kwargs)
+                self.returncode: int | None = 1
+
+            def output(self) -> dict[str, Any]:
+                record = super().output()
+                record["terminal_reason"] = "api_error"
+                record["api_error_status"] = 429
+                del record["structured_output"]
+                return record
+
+        with redirect_stdout(io.StringIO()):
+            result = run_claude(StepPrompt(None, "x"), Path.cwd(), "auto", None, [], SpendLimit)
+        self.assertEqual(result[5], "rate_limited")
+
     def test_protocol_failure_preserves_available_provider_detail(self) -> None:
         class Mismatched(FakeProcess):
             def output(self) -> dict[str, Any]:

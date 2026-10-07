@@ -373,7 +373,7 @@ moment; the committed markers mean it skips every step that already landed.
 ### The backstop: a limit met mid-session
 
 Admission lowers the odds of meeting a limit; it cannot remove them, because one session
-spends an unknown share of a window. A session that ends on `blocking_limit` is held, then
+spends an unknown share of a window. A session that ends on `blocking_limit`, or on an `api_error` that is HTTP 429 (the monthly spend limit), is held, then
 **resumed by id** (`--resume`) once its window reopens, and asked to continue from where the
 tree now stands. The window it met is written into the shared reading at once, so every other
 step holds on it too. A resumed session may meet the limit again and is held and resumed

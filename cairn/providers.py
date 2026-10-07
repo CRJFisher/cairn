@@ -49,6 +49,7 @@ PROVIDER_EXIT_GRACE_SECONDS = 30.0
 # The cause a session that met the subscription's limit ends on. It is a fact about one
 # session; whether the step holds and resumes it is decided above the provider ([headroom.py]).
 RATE_LIMITED = "rate_limited"
+HTTP_RATE_LIMITED = 429
 
 # Handed each stream message that speaks about the account — a `rate_limit_event`, and the
 # `system` message naming how the session is funded — as it arrives, so a concurrent step
@@ -291,6 +292,11 @@ def _translate_result(
             if terminal_reason is not None
             else "provider_failed"
         )
+        # A limit the account met outside the window the stream meters — the monthly spend
+        # limit — ends the session as an `api_error` carrying HTTP 429, never as
+        # `blocking_limit`. Both are the account refusing work, and both are held and resumed.
+        if terminal_reason == "api_error" and result.get("api_error_status") == HTTP_RATE_LIMITED:
+            cause = RATE_LIMITED
         return CommandResult(
             EXIT_RATE_LIMITED if cause == RATE_LIMITED else EXIT_FAILED,
             "failed",
