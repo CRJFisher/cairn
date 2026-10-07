@@ -115,9 +115,9 @@ ASK_FAMILIES: tuple[str, ...] = (
 )
 
 
-PROVENANCE_STATED = "stated"  # a repository named in the request
-PROVENANCE_SUBJECTS = "subjects"  # the repository holding the request's subjects
-PROVENANCE_SESSION = "session"  # the repository this conversation is in
+CANDIDATE_STATED = "stated"  # a repository named in the request
+CANDIDATE_SUBJECTS = "subjects"  # the repository holding the request's subjects
+CANDIDATE_SESSION = "session"  # the repository this conversation is in
 
 # Ordered strongest first, and the order a resolution walks: a repository named in the
 # request beats the one its subjects live in, which beats the one the session sits in. The
@@ -125,10 +125,10 @@ PROVENANCE_SESSION = "session"  # the repository this conversation is in
 # evidence of different quality about one fact, where an ambiguous request is two different
 # pieces of work. Which one answered is stated back every time, because the three derivations
 # that hang off the path all fail quietly when it is wrong ([resolve.py]).
-PROVENANCES: tuple[str, ...] = (
-    PROVENANCE_STATED,
-    PROVENANCE_SUBJECTS,
-    PROVENANCE_SESSION,
+CANDIDATES: tuple[str, ...] = (
+    CANDIDATE_STATED,
+    CANDIDATE_SUBJECTS,
+    CANDIDATE_SESSION,
 )
 
 
@@ -223,6 +223,10 @@ __all__ = [
     "ARGUMENT_SHAPES",
     "ASK_FAMILIES",
     "BINDINGS",
+    "CANDIDATES",
+    "CANDIDATE_SESSION",
+    "CANDIDATE_STATED",
+    "CANDIDATE_SUBJECTS",
     "CAPABILITY_AUTHOR",
     "CAPABILITY_EDIT",
     "CAPABILITY_EXPLAIN",
@@ -239,10 +243,6 @@ __all__ = [
     "OCCASION_CONTINUE",
     "OCCASION_NEW",
     "OCCASION_READINGS",
-    "PROVENANCES",
-    "PROVENANCE_SESSION",
-    "PROVENANCE_STATED",
-    "PROVENANCE_SUBJECTS",
     "QUALIFIER_SHAPES",
     "READING_BY_TRIGGER",
     "SHAPE_CADENCE",

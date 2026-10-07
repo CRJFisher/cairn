@@ -18,7 +18,7 @@ rather than an override ([docs/triggers.md]).
 The session's directory arrives as a parameter and is never read from the process. The
 capability documents run `python3 -m cairn` from the skill's own directory, so the process
 working directory is Cairn's checkout rather than the person's repository — evidence of
-nothing, and the trap that makes `os.getcwd()` worse than silence.
+nothing, and the trap that makes reading it worse than silence.
 
 **The occasion defaults to a new one.** Continuing an old one is the direction that can act
 on stale work, so it requires a positive signal: a recovery of a named run, or an occasion
@@ -43,12 +43,12 @@ from cairn.gitio import (
 from cairn.marker import occasion_moment
 from cairn.record.model import RunRecord
 from cairn.skill.vocabulary import (
+    CANDIDATE_SESSION,
+    CANDIDATE_STATED,
+    CANDIDATE_SUBJECTS,
     CONSEQUENCE_BY_READING,
     OCCASION_CONTINUE,
     OCCASION_NEW,
-    PROVENANCE_SESSION,
-    PROVENANCE_STATED,
-    PROVENANCE_SUBJECTS,
     READING_BY_TRIGGER,
     TRIGGER_PINNED,
     TRIGGER_RECOVERY,
@@ -239,14 +239,14 @@ def resolve_repository(
 
     if target is not None:
         if subjects_root is not None and not same_repository(subjects_root, target):
-            return _disagreement(subjects_root, target, PROVENANCE_STATED)
-        provenance = PROVENANCE_STATED
+            return _disagreement(subjects_root, target, CANDIDATE_STATED)
+        provenance = CANDIDATE_STATED
     elif subjects_root is not None:
         session_root = holding_repository(session) if session is not None else None
         if session_root is not None and not same_repository(session_root, subjects_root):
-            return _disagreement(subjects_root, session_root, PROVENANCE_SESSION)
+            return _disagreement(subjects_root, session_root, CANDIDATE_SESSION)
         target = subjects_root
-        provenance = PROVENANCE_SUBJECTS
+        provenance = CANDIDATE_SUBJECTS
     else:
         session_root = holding_repository(session) if session is not None else None
         if session_root is None:
@@ -277,7 +277,7 @@ def resolve_repository(
                 ),
             )
         target = session_root
-        provenance = PROVENANCE_SESSION
+        provenance = CANDIDATE_SESSION
 
     refuse_unusable_repository(target)
     if workflow is None:
@@ -310,12 +310,12 @@ def resolve_repository(
 
 
 # What each candidate is, in words, for the line every surface opens with. Total over
-# PROVENANCES, asserted. One place phrases it so that five surfaces cannot describe one
+# CANDIDATES, asserted. One place phrases it so that five surfaces cannot describe one
 # resolution five ways.
 SENTENCE_BY_PROVENANCE: dict[str, str] = {
-    PROVENANCE_STATED: "named in the request",
-    PROVENANCE_SUBJECTS: "the repository holding what this is about",
-    PROVENANCE_SESSION: "the repository this conversation is in",
+    CANDIDATE_STATED: "named in the request",
+    CANDIDATE_SUBJECTS: "the repository holding what this is about",
+    CANDIDATE_SESSION: "the repository this conversation is in",
 }
 
 
@@ -334,8 +334,8 @@ def _disagreement(subjects_root: Path, other: Path, provenance: str) -> Unresolv
     is the evidence the person cannot see Cairn weighing.
     """
     whence = {
-        PROVENANCE_STATED: "you named",
-        PROVENANCE_SESSION: "this conversation is in",
+        CANDIDATE_STATED: "you named",
+        CANDIDATE_SESSION: "this conversation is in",
     }[provenance]
     return Unresolved(
         kind="unresolved",

@@ -162,11 +162,11 @@ identity in a way Cairn's own recovery already handles.
 
 Measured by `python3 -m scripts.measure_surface`. Tokens are an estimate at 4 characters each, not a tokenizer's count.
 
-| Read                          | What                                   | Characters | Lines | Tokens (est.) |
-| ----------------------------- | -------------------------------------- | ---------: | ----: | ------------: |
-| when Cairn is named           | the skill's description                |      `211` |   `1` |          `53` |
-| when Cairn is named           | `SKILL.md`                             |    `12489` | `179` |        `3123` |
-| when a capability is selected | `capabilities/running.md`, the largest |     `8996` | `137` |        `2249` |
+| Read                          | What                                     | Characters | Lines | Tokens (est.) |
+| ----------------------------- | ---------------------------------------- | ---------: | ----: | ------------: |
+| when Cairn is named           | the skill's description                  |      `211` |   `1` |          `53` |
+| when Cairn is named           | `SKILL.md`                               |    `13193` | `191` |        `3299` |
+| when a capability is selected | `capabilities/authoring.md`, the largest |     `9595` | `133` |        `2399` |
 
 **None of it is read unless asked for.** Cairn declares `disable-model-invocation: true`, so
 its description stays out of a session's context until someone types `/cairn` — a session

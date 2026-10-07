@@ -96,7 +96,7 @@ def _repository_arguments(child: argparse.ArgumentParser) -> None:
     """The three candidates a repository is resolved from, and no default among them.
 
     `--session` rather than the process's own directory: these commands are run from the
-    skill's directory, so `os.getcwd()` answers "Cairn's checkout" to every question and a
+    skill's directory, so the process's own directory answers "Cairn's checkout" to every question and a
     default of `.` would be a wrong answer that always looks plausible ([resolve.py]).
     """
     child.add_argument("--repository")

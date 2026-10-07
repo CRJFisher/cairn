@@ -872,7 +872,7 @@ class ANewOccasionAndARecoveryAreDecidedAtTheTrigger(unittest.TestCase):
 
 
 class TheTargetRepositoryComesFromTheRequest(unittest.TestCase):
-    """Task 8. Never inferred from the workflow, never defaulted to the session's directory."""
+    """Task 8 and plan 31. Never inferred from the workflow; the session's directory is a candidate only where it is passed in."""
 
     def setUp(self) -> None:
         self.root = Path(tempfile.mkdtemp())
@@ -890,8 +890,8 @@ class TheTargetRepositoryComesFromTheRequest(unittest.TestCase):
         self.workflow.write_text(json.dumps(document), encoding="utf-8")
 
     def test_nothing_in_the_skill_reads_the_session_directory(self) -> None:
-        """The mechanical form of 'never defaulted to the session's directory': the value is
-        not reachable rather than merely not used."""
+        """The mechanical form of 'the session's directory is passed in, never read from the
+        process': the process's directory is not reachable rather than merely not used."""
         for path in sorted((PACKAGE_ROOT / "cairn" / "skill").glob("*.py")):
             text = path.read_text(encoding="utf-8")
             with self.subTest(module=path.name):
@@ -901,7 +901,7 @@ class TheTargetRepositoryComesFromTheRequest(unittest.TestCase):
     def test_a_request_naming_no_repository_asks(self) -> None:
         resolution = resolve.resolve_repository(None, self.workflow)
         self.assertIsInstance(resolution, Unresolved)
-        self.assertEqual(cast(Unresolved, resolution).outcome, "absent")
+        self.assertEqual(cast(Unresolved, resolution).outcome, "nowhere")
 
     def test_the_repository_is_never_read_out_of_the_workflow(self) -> None:
         """It encodes one, and that is still not an answer to 'which repository'."""

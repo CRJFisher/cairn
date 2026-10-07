@@ -137,10 +137,10 @@ moved. A plan's first run has no other reading available, so stating one there i
 Three candidates, strongest first, resolved for every capability by `python3 -m cairn explain
 repository --session <this conversation's directory> [--subject <path>]…`:
 
-1. one **named** in the request — provenance `stated`;
-2. the git root holding the request's **subjects**, the plan document or the task documents a
+- one **named** in the request — provenance `stated`;
+- the git root holding the request's **subjects**, the plan document or the task documents a
    plan stated in the request names — `subjects`;
-3. the git root of the **session's** directory — `session`.
+- the git root of the **session's** directory — `session`.
 
 Name the repository taken and its provenance in the first line of every reply that acts on
 one. It is never inferred from the workflow.

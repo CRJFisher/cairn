@@ -1095,9 +1095,9 @@ class TheCommandRendersAndExitsOnTheRunsVerdict(unittest.TestCase):
     def test_a_report_asked_for_without_a_repository_is_refused_rather_than_guessed(
         self,
     ) -> None:
-        # The repository comes from the request for every capability, always: a report
-        # resolved from the working directory answers about whatever tree the terminal was
-        # sitting in, and says nothing to mark it as the wrong run's receipts.
+        # With no repository named and no session passed in there is no candidate, and the
+        # process's own directory is never one: a report resolved from it would answer about
+        # whatever tree the terminal was sitting in.
         completed = subprocess.run(
             [sys.executable, "-m", "cairn", "report", "--run", "nobody-ran-this"],
             cwd=PACKAGE_ROOT,
@@ -1106,7 +1106,7 @@ class TheCommandRendersAndExitsOnTheRunsVerdict(unittest.TestCase):
             check=False,
         )
         self.assertEqual(completed.returncode, EXIT_NO_RECORD)
-        self.assertIn("--repository", completed.stderr)
+        self.assertIn("Which repository", completed.stderr)
         self.assertNotIn("neither Cairn nor the engine holds a record", completed.stderr)
 
     def test_a_recorded_corpus_is_read_without_naming_any_repository(self) -> None:

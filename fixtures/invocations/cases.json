@@ -588,12 +588,12 @@
       "why": "the ordinary case: it came from the request"
     },
     {
-      "id": "repository-absent",
+      "id": "repository-nowhere",
       "family": "repository",
       "utterance": "run offline-export",
       "stated": null,
-      "expect": {"outcome": "absent"},
-      "why": "never defaulted to the directory the conversation is in, even where only one repository is in play"
+      "expect": {"outcome": "nowhere"},
+      "why": "nothing named a repository, the request's subjects name none, and the conversation is in none: the one case left with no candidate to take"
     },
     {
       "id": "repository-mismatch",
