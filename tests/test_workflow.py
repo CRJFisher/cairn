@@ -51,6 +51,7 @@ from cairn.workflow.gate import (
     gate,
     rehearse_start,
 )
+from cairn.workflow.pin import PINNED_DIRECTORY
 from cairn.workflow.preflight import RULES, Fault, check, gate_kind, rehearse_gate
 from cairn.workflow.schema import (
     ENGINE_VERSION,
@@ -858,21 +859,82 @@ class Authoring(unittest.TestCase):
         self,
     ) -> None:
         """Gated where it cannot be run from, and moved into place only once it passes."""
-        self.assertEqual(
-            workflow_main(
-                [
-                    "author",
-                    str(PLANS / "linear-chain" / "graph.json"),
-                    "--repository",
-                    str(self.repository),
-                    "--source-root",
-                    str(PLANS / "linear-chain"),
-                    "--python-path",
-                    "/nowhere/at/all",
-                ]
-            ),
-            1,
+        unlaunchable = self.root / "unlaunchable"
+        (unlaunchable / "cairn").mkdir(parents=True)
+        (unlaunchable / "cairn" / "__main__.py").write_text(
+            "raise SystemExit(3)\n", encoding="utf-8"
         )
+        self.assertEqual(self.author_from(unlaunchable), 1)
+        self.assertFalse(workflow_path(self.repository, "linear-chain").exists())
+
+    def author_from(self, package: Path) -> int:
+        return workflow_main(
+            [
+                "author",
+                str(PLANS / "linear-chain" / "graph.json"),
+                "--repository",
+                str(self.repository),
+                "--source-root",
+                str(PLANS / "linear-chain"),
+                "--package-root",
+                str(package),
+            ]
+        )
+
+    def declared_python_path(self) -> Path:
+        document = json.loads(
+            workflow_path(self.repository, "linear-chain").read_text(encoding="utf-8")
+        )
+        return Path(
+            next(entry["PYTHONPATH"] for entry in document["env"] if "PYTHONPATH" in entry)
+        )
+
+    def copy_of_cairn(self) -> Path:
+        package = self.root / "checkout"
+        shutil.copytree(
+            CAIRN_ROOT / "cairn",
+            package / "cairn",
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
+        return package
+
+    def test_a_workflow_runs_a_pinned_copy_of_cairn_rather_than_the_checkout(self) -> None:
+        """A run imports Cairn afresh in every node. Named by path, a checkout that changes
+        mid-run hands one run several Cairns, and a plan that edits Cairn rewrites the code
+        its own later nodes import — a work node then writes its snapshot in one shape and its
+        commit reads it in another."""
+        checkout = self.copy_of_cairn()
+        self.assertEqual(self.author_from(checkout), 0)
+        pinned = self.declared_python_path()
+        self.assertEqual(pinned.parent, state_directory(self.repository) / PINNED_DIRECTORY)
+        self.assertNotEqual(pinned, checkout)
+        source = checkout / "cairn" / "worktrees.py"
+        original = source.read_text(encoding="utf-8")
+        source.write_text(original + "\n# edited\n", encoding="utf-8")
+        copy = pinned / "cairn" / "worktrees.py"
+        self.assertEqual(copy.read_text(encoding="utf-8"), original)
+        self.assertFalse(os.access(copy, os.W_OK))
+
+    def test_the_pin_is_named_by_its_content(self) -> None:
+        """The same Cairn pins once; a changed Cairn pins beside it, leaving the earlier pin
+        intact for every workflow that still names it."""
+        checkout = self.copy_of_cairn()
+        self.assertEqual(self.author_from(checkout), 0)
+        first = self.declared_python_path()
+        self.assertEqual(self.author_from(checkout), 0)
+        self.assertEqual(self.declared_python_path(), first)
+        (checkout / "cairn" / "added.py").write_text("", encoding="utf-8")
+        self.assertEqual(self.author_from(checkout), 0)
+        second = self.declared_python_path()
+        self.assertNotEqual(second, first)
+        self.assertTrue((first / "cairn" / "__main__.py").is_file())
+        self.assertFalse((first / "cairn" / "added.py").exists())
+        self.assertEqual(
+            sorted(path.name for path in first.parent.iterdir()), sorted([first.name, second.name])
+        )
+
+    def test_a_package_root_holding_no_cairn_is_refused_before_anything_is_written(self) -> None:
+        self.assertEqual(self.author_from(self.root / "nowhere"), 1)
         self.assertFalse(workflow_path(self.repository, "linear-chain").exists())
 
     def test_re_authoring_replaces_a_hand_edited_workflow_rather_than_merging_it(

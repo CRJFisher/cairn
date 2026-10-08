@@ -32,6 +32,7 @@ from cairn.plan.validate import validate_for_publication
 from cairn.topology import TopologyError, derive
 from cairn.workflow.build import build, graph_digest
 from cairn.workflow.gate import EngineUnavailable, gate
+from cairn.workflow.pin import package_root, pin
 from cairn.workflow.preflight import preflight
 from cairn.workflow.schema import LABEL_PLAN, serialise
 from cairn.workflow.stamp import (
@@ -99,7 +100,12 @@ def _author(args: argparse.Namespace) -> int:
     # because it is the override a *trigger* supplies — which is the only place supplying one
     # means anything.
     occasion = ""
-    python_path = args.python_path or str(Path(__file__).resolve().parents[2])
+    # Never the checkout itself: a run imports Cairn afresh in every node, so a path that can
+    # change under it runs several Cairns in one run — and a plan that edits Cairn rewrites
+    # the code its own later nodes import ([pin.py]).
+    python_path = str(
+        pin(Path(args.package_root).resolve() if args.package_root else package_root(), repository)
+    )
 
     digest = graph_digest(graph)
     topology = derive(graph, repository_root=repository, parent_branch=parent)
@@ -237,7 +243,8 @@ def _parser() -> argparse.ArgumentParser:
     # document the graph pins, and a graph that cannot be rechecked is not published.
     child.add_argument("--source-root", required=True)
     child.add_argument("--parent-branch")
-    child.add_argument("--python-path")
+    # Where the Cairn this workflow will run is pinned from; by default, the one authoring it.
+    child.add_argument("--package-root")
     child.add_argument("--out")
     # A recurring plan is asked for, never inferred. The cron expression itself is the
     # engine's to judge — measured, its validator refuses a malformed one — and the daemon

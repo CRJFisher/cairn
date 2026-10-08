@@ -155,7 +155,7 @@ python3 -m cairn plan answer   <graph> --kind <kind> [--step <id>] [--dep <id>]
                                (--command <text> | --accept | --edit <text> | --decline)
                                [--reason <text>] [--out <path>]
 python3 -m cairn workflow author <graph> --repository <path> --source-root <plan-dir>
-                               [--parent-branch <name>] [--python-path <dir>] [--out <path>]
+                               [--parent-branch <name>] [--package-root <dir>] [--out <path>]
                                [--schedule <cron>]
 python3 -m cairn workflow check  <workflow.yaml>
 python3 -m cairn record build   --run <id> [--repository <path>] [--engine-records <path>]
@@ -232,7 +232,9 @@ stages the paths dirty now and not then, leaves the rest alone, and names them a
 own work nor prove it left it alone, and a marker over it would stand for work absent from
 `HEAD`. A work report that carries no snapshot at all — a marker no-op's — stages the marker
 alone; one whose snapshot is absent because git would not answer is a `git_failed` refusal,
-because a commit that cannot be scoped is the loss this scoping exists to prevent. Every
+and one that will not parse or whose snapshot is any shape but path to digest is an
+`invalid_report` refusal, because a commit that cannot be scoped is the loss this scoping
+exists to prevent. A present snapshot is never read as a missing one. Every
 refusal withdraws the step's fresh marker from the working tree, restoring whatever `HEAD`
 already held. Each holds the git write mutex inside itself.
 

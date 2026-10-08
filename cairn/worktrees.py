@@ -532,14 +532,18 @@ def _legacy_follow_up(legacy: LegacyVerdict | None) -> list[str]:
         return []
     if legacy.verdict == UNATTRIBUTABLE:
         return [
-            f"{legacy.ref} is a branch no worktree registration attributes to a plan, so "
-            "nothing adopted it; delete it or rename it onto the plan that owns it"
+            (
+                f"{legacy.ref} is a branch no worktree registration attributes to a plan, so "
+                "nothing adopted it; delete it or rename it onto the plan that owns it"
+            )
         ]
     if legacy.verdict == OWNED_ELSEWHERE:
         return [f"{legacy.ref} belongs to another plan and was left where it is"]
     return [
-        f"{legacy.ref} was left where it is: this step already has its own branch, which "
-        "nothing may rewrite"
+        (
+            f"{legacy.ref} was left where it is: this step already has its own branch, which "
+            "nothing may rewrite"
+        )
     ]
 
 
@@ -992,9 +996,10 @@ def commit_step(
     checkout — the ordinary way this tool is driven. So the commit stages the paths that
     are dirty now and were not dirty when the step's session started, plus the step's own
     marker by path; a path dirty both before and after is somebody else's in-flight work
-    and is left alone and named ([21]). A step whose work node left no snapshot — a marker
-    no-op, or a report this run cannot read — stages the marker alone, because the
-    alternative is sweeping the whole tree on every no-op of every recovery.
+    and is left alone and named ([21]). A step whose work node left no snapshot — no report,
+    as a step its marker gate skipped, or a report without the key, as a marker no-op —
+    stages the marker alone, because the alternative is sweeping the whole tree on every
+    no-op of every recovery. A snapshot that is present and unreadable is a refusal.
 
     **A marker is published only over state the commit carries.** Path membership alone
     cannot establish that: a path dirty before the step and changed by it is classified as
@@ -1161,27 +1166,32 @@ def _follow_up(left: list[str]) -> list[str]:
 def _dirty_before(context: RuntimeContext, step_id: str) -> dict[str, str] | None:
     """What the work step saw dirty before its session, or None where it recorded none.
 
-    None means no work node of this run left a snapshot at all — a step its marker gate
-    skipped, which has nothing of its own to stage. A snapshot the work node recorded as
-    absent is a different answer: git would not say what was dirty, so what this step may
-    take cannot be established, and that is a refusal rather than a commit of the marker
-    over work nobody can scope ([21]).
+    None is one answer only: the work node left no snapshot — no report of this run at all,
+    because its marker gate skipped it, or a report without the key, as a marker no-op or a
+    timed wait writes. Such a step dirtied nothing of its own, so the marker alone is its
+    whole commit.
 
-    A snapshot of some other shape is read as no snapshot at all. A report arrives through
-    JSON written by another process, and the one thing a half-understood payload must not
-    do is answer a question whose wrong answers are "stage someone else's work" and "prove
-    a path unchanged against a digest that is not one".
+    **Every other departure from a snapshot is a refusal**, never that answer. A report that
+    will not parse, a `detail` that is not a mapping, a snapshot recorded as absent because
+    git would not say, and a snapshot of any shape but path to digest all leave unknown what
+    this step may take — and reading any of them as "no snapshot" commits the marker over
+    whatever work the step did, which the next run then skips. That is the [21 B] outcome
+    this scoping exists to prevent, so a present key is never read as an absent one.
     """
     try:
         report = read_step_report(
             context.report_path.parent, node_name("work", step_id), context.run_id
         )
-    except CairnError:
-        return None
+    except CairnError as exc:
+        if exc.cause == "missing_report":
+            return None
+        raise
     detail = report.get("detail")
     if not isinstance(detail, dict):
-        return None
+        raise _unreadable_snapshot(step_id, "its report carries no detail mapping")
     found = cast(dict[str, Any], detail).get(DIRTY_BEFORE, _NO_SNAPSHOT)
+    if found is _NO_SNAPSHOT:
+        return None
     if found is None:
         raise CairnError(
             "git_failed",
@@ -1190,14 +1200,28 @@ def _dirty_before(context: RuntimeContext, step_id: str) -> dict[str, str] | Non
             detail={"step": step_id},
         )
     if not isinstance(found, dict):
-        return None
+        raise _unreadable_snapshot(
+            step_id, f"its snapshot is a {type(found).__name__}, not a mapping of path to digest"
+        )
     recorded = cast(dict[Any, Any], found)
     if not all(
         isinstance(path, str) and isinstance(digest, str)
         for path, digest in recorded.items()
     ):
-        return None
+        raise _unreadable_snapshot(
+            step_id, "its snapshot maps something other than path to digest"
+        )
     return cast(dict[str, str], recorded)
+
+
+def _unreadable_snapshot(step_id: str, why: str) -> CairnError:
+    return CairnError(
+        "invalid_report",
+        f"the work node of step {step_id!r} left a report this commit cannot read as a "
+        f"snapshot — {why} — so what this commit may take cannot be established. A report "
+        "written by a different Cairn than the one committing it reads this way",
+        detail={"step": step_id},
+    )
 
 
 # Distinguishes a report with no snapshot key from one whose snapshot is `null`.

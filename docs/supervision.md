@@ -151,7 +151,9 @@ working in the same checkout when a step starts keeps their edits. The snapshot 
 before the session, so this scopes what was already dirty and not what someone first touches
 while the step runs: that is indistinguishable from the step's own work and still lands. The
 commit names its paths, so nothing another session staged mid-step rides along either. A
-tree git will not answer about is a refusal rather than a commit of the marker alone.
+tree git will not answer about is a refusal rather than a commit of the marker alone, and so
+is a snapshot the commit cannot read — one in a shape the committing Cairn does not write.
+Only a work report that carries no snapshot at all stages the marker alone.
 
 **A marker is published only over state the commit carries, and path membership cannot
 establish that.** A path dirty before the step and changed by the step is classified as

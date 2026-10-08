@@ -668,12 +668,12 @@ class SubcommandsTakeTheMutex(RepositoryCase):
         )
         held = read_run_lock(self.repository)
         assert held is not None
-        update_ref(self.repository, f"delete {RUN_LOCK_REF} {held[1]}")
-        acquire_run_lock(
-            self.repository,
-            run_id="run_other",
-            plan="demo",
-            run_timeout_seconds=600.0,
+        # One compare-and-swap rather than a release and an acquire: between those two the
+        # lock is absent, and a predicate attempt landing in that gap halts the wait over a
+        # missing holder rather than the run it changed hands to.
+        other = hash_object(self.repository, json.dumps({**held[0], "run_id": "run_other"}))
+        self.assertTrue(
+            update_ref(self.repository, f"update {RUN_LOCK_REF} {other} {held[1]}")
         )
 
         self.assertNotEqual(child.wait(timeout=60), 0)
@@ -2347,6 +2347,60 @@ class TheCommitCarriesOnlyTheStepsOwnWork(RepositoryCase):
         with self.assertRaises(CairnError) as caught:
             commit_as_step(self.root, self.repository, "cairn(a): work", snapshot_failed=True)
         self.assertEqual(caught.exception.cause, "git_failed")
+        self.assertIn("own.txt", tree_state(self.repository) or ())
+
+    def test_a_snapshot_in_a_shape_this_cairn_does_not_write_refuses_to_commit_the_marker_alone(
+        self,
+    ) -> None:
+        """A present snapshot is never read as an absent one. A work node running an older
+        Cairn wrote a list of paths; read as "no snapshot", its commit staged the marker over
+        three hours of uncommitted work, and the next run would have skipped the step."""
+        for shape in ([], ["own.txt"], {"own.txt": 1}, "own.txt"):
+            with self.subTest(shape=shape):
+                (self.repository / "own.txt").write_text("the step's\n", encoding="utf-8")
+                marker = self.repository / ".steps" / "a.done"
+                marker.parent.mkdir(exist_ok=True)
+                marker.write_text("{}\n", encoding="utf-8")
+                report = write_work_report(
+                    self.root, self.repository, "a", run_id="run-1", dirty_before={}
+                )
+                written = json.loads(report.read_text(encoding="utf-8"))
+                written["detail"][DIRTY_BEFORE] = shape
+                report.write_text(json.dumps(written), encoding="utf-8")
+                context = RuntimeContext(
+                    run_id="run-1",
+                    step_id="commit_a",
+                    working_directory=self.repository,
+                    report_path=report.parent / "commit_a.json",
+                    runs_root=self.root / "runs",
+                )
+                head = git(self.repository, ("rev-parse", "HEAD")).stdout
+                with self.assertRaises(CairnError) as caught:
+                    commit_step(self.repository, "cairn(a): work", step_id="a", context=context)
+                self.assertEqual(caught.exception.cause, "invalid_report")
+                self.assertEqual(git(self.repository, ("rev-parse", "HEAD")).stdout, head)
+                self.assertIn("own.txt", tree_state(self.repository) or ())
+                self.assertFalse(marker.exists())
+
+    def test_a_work_report_that_will_not_parse_refuses_rather_than_committing_its_marker_alone(
+        self,
+    ) -> None:
+        """Only a report that is not there means the work node left no snapshot."""
+        (self.repository / "own.txt").write_text("the step's\n", encoding="utf-8")
+        report = write_work_report(
+            self.root, self.repository, "a", run_id="run-1", dirty_before={}
+        )
+        report.write_text("{not json", encoding="utf-8")
+        context = RuntimeContext(
+            run_id="run-1",
+            step_id="commit_a",
+            working_directory=self.repository,
+            report_path=report.parent / "commit_a.json",
+            runs_root=self.root / "runs",
+        )
+        with self.assertRaises(CairnError) as caught:
+            commit_step(self.repository, "cairn(a): work", step_id="a", context=context)
+        self.assertEqual(caught.exception.cause, "invalid_report")
         self.assertIn("own.txt", tree_state(self.repository) or ())
 
     def test_a_tree_git_will_not_answer_about_is_never_read_as_clean(self) -> None:

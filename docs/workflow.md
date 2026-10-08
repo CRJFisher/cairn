@@ -75,7 +75,7 @@ first invocation and every DAG on that machine inherits it.
 | `retry_policy`                       | `{limit: 0, interval_sec: 1}`                     | three replays of every agent session                                       |
 | `timeout_sec`                        | on every step                                     | there is no default; a step ran 35m uninterrupted                          |
 | `working_dir`                        | on every step                                     | the step runs in a generated scratch directory                             |
-| `env: PYTHONPATH`                    | the package root                                  | the gate cannot import Cairn and every step skips                          |
+| `env: PYTHONPATH`                    | the pinned copy of Cairn                          | the gate cannot import Cairn and every step skips                          |
 | `env: CAIRN_HEADROOM_USAGE_ENDPOINT` | `1`, only where the authoring environment sets it | no step can read the subscription's usage endpoint the owner opted into    |
 | `catchup_window`                     | the empty string                                  | every cron slot missed while the machine slept replays as an agent session |
 | `overlap_policy`                     | `skip`                                            | the machine decides what a firing arriving mid-run does                    |
@@ -359,7 +359,7 @@ write the one report a failed run always has to leave.
 
 ```text
 python3 -m cairn workflow author <graph.json> --repository <path> --source-root <plan-dir>
-                                 [--parent-branch <name>] [--python-path <dir>]
+                                 [--parent-branch <name>] [--package-root <dir>]
                                  [--out <path>] [--schedule '<cron>']
 python3 -m cairn workflow check  <workflow.yaml>
 ```
@@ -371,6 +371,16 @@ symlink — and recomputes every digest and every quotation. It also refuses any
 a recorded answer and any step nobody was asked to assert
 ([plan-contract.md](plan-contract.md)). Every one of those refusals happens before the existing
 definition or its stamp is touched.
+
+`author` also pins the Cairn the workflow runs. It copies the package under `--package-root`
+— by default, the Cairn doing the authoring — into `.git/cairn/source/<sha256>/` of the target
+repository, named by the digest of the copied bytes and made read-only, and the definition's
+`PYTHONPATH` names that copy. Every node imports Cairn afresh, so a `PYTHONPATH` naming a
+checkout would run whatever that checkout holds at the moment each node starts: one run would
+execute several Cairns, and a plan that edits Cairn would rewrite the code its own later nodes
+import. Pinned, every node of every run of a definition runs the bytes that generated it. A
+change to Cairn reaches a workflow by re-authoring it. Authoring the same Cairn again reuses its
+pin, and an earlier pin stays in place for every definition that still names it.
 
 `author` is the only thing in Cairn that writes an engine definition; `check` reads one and
 writes nothing. Both run at authoring time, take no runtime identity and leave no step
