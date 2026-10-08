@@ -1,0 +1,7 @@
+{
+  "key": "once",
+  "run_id": "20261008T114637Z-d4ac593c",
+  "scope": "once",
+  "step_id": "review_27",
+  "summary": "The target diff (3732b46..2ed6931) touches only `.steps/implement_27.done`, a generated step-completion marker with no code or logic. The prior `/code-review low --fix` run correctly found nothing to\u2026"
+}
