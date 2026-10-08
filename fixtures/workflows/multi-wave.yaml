@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "multi-wave",
-    "cairn_generator": "11",
+    "cairn_generator": "12",
     "cairn_engine": "2.11.0",
     "cairn_graph_sha256": "e75938fe147b295c9d610cbda3ef67671c40b96cd8408b42507f054071f91a87",
-    "cairn_body_sha256": "53d2ffffb504396e99a2e35ddb3b5b05d9eb23ee8d7c7782307547c79a731b69"
+    "cairn_body_sha256": "16ad39bc9e1c4a781c8e545992776d768d1917672d87f6e4ce4c3373fce7475b"
   },
   "params": [
     {
@@ -216,7 +216,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn worktree setup --plan multi-wave --step reader --branch step/reader",
+      "run": "python3 -m cairn worktree setup --plan multi-wave --step reader",
       "depends": [
         "commit_writer"
       ]
@@ -308,7 +308,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn worktree setup --plan multi-wave --step zip_packer --branch step/zip_packer",
+      "run": "python3 -m cairn worktree setup --plan multi-wave --step zip_packer",
       "depends": [
         "commit_writer"
       ]
@@ -400,7 +400,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn wave join --wave 3 --branch step/reader --branch step/zip_packer",
+      "run": "python3 -m cairn wave join --wave 3 --branch step/multi-wave/reader --branch step/multi-wave/zip_packer",
       "depends": [
         "commit_reader",
         "commit_zip_packer"
@@ -414,7 +414,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn merge land --slot 1 --provider claude --model sonnet --branch step/reader --branch step/zip_packer",
+      "run": "python3 -m cairn merge land --slot 1 --provider claude --model sonnet --branch step/multi-wave/reader --branch step/multi-wave/zip_packer",
       "depends": [
         "join_w3"
       ]
@@ -427,7 +427,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn merge verify --merge merge_w3_1 --branch step/reader --branch step/zip_packer",
+      "run": "python3 -m cairn merge verify --merge merge_w3_1 --branch step/multi-wave/reader --branch step/multi-wave/zip_packer",
       "depends": [
         "merge_w3_1"
       ]
@@ -440,7 +440,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn merge land --slot 2 --provider claude --model sonnet --branch step/reader --branch step/zip_packer",
+      "run": "python3 -m cairn merge land --slot 2 --provider claude --model sonnet --branch step/multi-wave/reader --branch step/multi-wave/zip_packer",
       "depends": [
         "verify_merge_w3_1"
       ]
@@ -453,7 +453,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn merge verify --merge merge_w3_2 --branch step/reader --branch step/zip_packer",
+      "run": "python3 -m cairn merge verify --merge merge_w3_2 --branch step/multi-wave/reader --branch step/multi-wave/zip_packer",
       "depends": [
         "merge_w3_2"
       ]

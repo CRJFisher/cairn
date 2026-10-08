@@ -31,7 +31,7 @@ from typing import Any
 from cairn.baseconfig import ensure_dag_retry_disabled
 from cairn.gitio import git
 from cairn.locks import git_write_mutex
-from cairn.topology import worktrees_root_for
+from cairn.topology import branch_name, worktrees_root_for
 
 # The plan slug every worktree path in this measurement is derived from.
 PLAN_SLUG = "measure"
@@ -54,7 +54,7 @@ def make_repository(root: Path, name: str) -> Path:
 def one_writer(repository: Path, trees: Path, index: int, *, guarded: bool) -> None:
     """One step's whole git footprint: a worktree, an edit, a commit on its own branch."""
     worktree = trees / f"step_{index}"
-    branch = f"step/measure_{index}"
+    branch = branch_name(PLAN_SLUG, f"measure_{index}")
 
     def guard() -> Any:
         return git_write_mutex(repository) if guarded else nullcontext()
@@ -116,7 +116,6 @@ def write_workflow(
                     [
                         sys.executable, "-m", "cairn", "worktree", "setup",
                         "--plan", PLAN_SLUG, "--step", f"s{index}",
-                        "--branch", f"step/s{index}",
                     ]
                 ),
                 "working_dir": str(repository),

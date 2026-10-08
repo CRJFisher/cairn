@@ -58,6 +58,7 @@ from cairn.plan.schema import (
 from cairn.topology import derive, merge_provider
 from cairn.verify import EXCLUSION_CAUSES, mark_name
 from cairn.workflow.build import envelope
+from tests.ownership import own_repository
 
 # The engine mints a run id when none is given, and a run's records are keyed by it.
 ENGINE_RUN_ID = "merge-engine-run"
@@ -168,8 +169,8 @@ class TheChainTheTopologyEmits(unittest.TestCase):
         graph = fixture("fan-out")
         body = emitted(topology("fan-out"), "merge_w2_1", graph)["run"]
         self.assertIn("merge land --slot 1", body)
-        self.assertIn("--branch step/keymap_reader", body)
-        self.assertIn("--branch step/theme_reader", body)
+        self.assertIn("--branch step/fan-out/keymap_reader", body)
+        self.assertIn("--branch step/fan-out/theme_reader", body)
         # The branch it lands into is a parameter, so it reaches the slot through the
         # environment rather than through a body that would name one repository.
         self.assertNotIn("--into", body)
@@ -1041,6 +1042,10 @@ class TheEngineStopsAChainThatHalts(RepositoryCase):
         self.engine_temporary = TemporaryDirectory()
         self.addCleanup(self.engine_temporary.cleanup)
         self.engine = Path(self.engine_temporary.name)
+        # The chain under test is the merge slots alone, with no `lock_acquire` ahead of
+        # them, so the ownership a real run's first act leaves behind is put there directly:
+        # `merge land` proves it before it writes ([27 C]).
+        own_repository(self.repository, ENGINE_RUN_ID)
 
     def run_dag(self, steps: list[Any]) -> "subprocess.CompletedProcess[str]":
         workflow = envelope(
@@ -1114,8 +1119,8 @@ class TheEngineStopsAChainThatHalts(RepositoryCase):
             body["working_dir"] = str(self.repository)
             body["run"] = (
                 str(body["run"])
-                .replace("step/keymap_reader", "step/a")
-                .replace("step/theme_reader", "step/b")
+                .replace("step/fan-out/keymap_reader", "step/a")
+                .replace("step/fan-out/theme_reader", "step/b")
                 .replace("--provider claude", f"--provider {provider}")
             )
             body.pop("depends", None)

@@ -92,6 +92,18 @@ in it, or a merge, rebase or cherry-pick left unresolved** — the refusal names
 a person settles them — and a definition that did not pass the execution gate. Clear the
 cause and start again.
 
+**Mid-run, over an edit that arrived after the start.** A step commits what its own session
+dirtied and leaves a path somebody else already had uncommitted. Where a step needed to
+change such a path, its commit refuses rather than publish a completion over work it cannot
+carry: it commits nothing, names the overlapping paths, and leaves the step unmarked so a
+later run redoes it once the person has settled their edit. The step's own output stays in
+the working tree for whoever settles it.
+
+**Mid-run, over a repository that changed hands.** A run that lost its lock — reclaimed
+while it queued, or taken by a later run — stops at the next step that would write, naming
+the run that holds the repository now. Nothing it had already committed is undone; recovery
+is an ordinary start carrying the occasion it continues.
+
 ### The shell has to be allowed to bind a unix socket
 
 Every run opens one — `/tmp/@dagu__<home>_<dag>_<hash>.sock` — before any step runs, so a

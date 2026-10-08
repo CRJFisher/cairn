@@ -275,9 +275,12 @@ left ([verify-gate.md](verify-gate.md)). A session its own wrapper stopped does 
 report, and carries the same two numbers in it.
 
 `left_uncommitted` names the paths the step's commit left alone because they were already
-dirty when its session started — somebody else's in-flight work in the same checkout — and
-together they raise one `follow_up` item naming them, so a commit can be read as scoped
-without diffing it against the step's transcript ([cli-contract.md](cli-contract.md)).
+dirty when its session started — somebody else's in-flight work in the same checkout, proved
+unchanged by the step — and together they raise one `follow_up` item naming them, so a
+commit can be read as scoped without diffing it against the step's transcript
+([cli-contract.md](cli-contract.md)). A step that changed such a path instead commits
+nothing and fails `excluded_path_changed`, naming the overlap
+([supervision.md](supervision.md)).
 
 `assertion_tail` is the end of what a failed assertion printed, read from the log the engine
 kept for that node — standard output first, standard error where that is empty — so the

@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "all-roots",
-    "cairn_generator": "11",
+    "cairn_generator": "12",
     "cairn_engine": "2.11.0",
     "cairn_graph_sha256": "b2c3096cc396886cc31b43f308ba4162bcd16236c7f0c8d3c7ae84f1dba94d8b",
-    "cairn_body_sha256": "045c727c9fb685cb0cecd9de6c174c2569b018882f44d14444512ad3d28ca7e8"
+    "cairn_body_sha256": "24dfc71eb37694a8d2fb4726d9ac84d2eefd9b7194d1e3111e02161f4481b855"
   },
   "params": [
     {
@@ -64,7 +64,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn worktree setup --plan all-roots --step drop_the_legacy_exporter --branch step/drop_the_legacy_exporter",
+      "run": "python3 -m cairn worktree setup --plan all-roots --step drop_the_legacy_exporter",
       "depends": [
         "lock_acquire"
       ]
@@ -156,7 +156,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn worktree setup --plan all-roots --step tighten_the_log_format --branch step/tighten_the_log_format",
+      "run": "python3 -m cairn worktree setup --plan all-roots --step tighten_the_log_format",
       "depends": [
         "lock_acquire"
       ]
@@ -248,7 +248,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn wave join --wave 1 --branch step/drop_the_legacy_exporter --branch step/tighten_the_log_format",
+      "run": "python3 -m cairn wave join --wave 1 --branch step/all-roots/drop_the_legacy_exporter --branch step/all-roots/tighten_the_log_format",
       "depends": [
         "commit_drop_the_legacy_exporter",
         "commit_tighten_the_log_format"
@@ -262,7 +262,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn merge land --slot 1 --provider claude --model sonnet --branch step/drop_the_legacy_exporter --branch step/tighten_the_log_format",
+      "run": "python3 -m cairn merge land --slot 1 --provider claude --model sonnet --branch step/all-roots/drop_the_legacy_exporter --branch step/all-roots/tighten_the_log_format",
       "depends": [
         "join_w1"
       ]
@@ -275,7 +275,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn merge verify --merge merge_w1_1 --branch step/drop_the_legacy_exporter --branch step/tighten_the_log_format",
+      "run": "python3 -m cairn merge verify --merge merge_w1_1 --branch step/all-roots/drop_the_legacy_exporter --branch step/all-roots/tighten_the_log_format",
       "depends": [
         "merge_w1_1"
       ]
@@ -288,7 +288,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn merge land --slot 2 --provider claude --model sonnet --branch step/drop_the_legacy_exporter --branch step/tighten_the_log_format",
+      "run": "python3 -m cairn merge land --slot 2 --provider claude --model sonnet --branch step/all-roots/drop_the_legacy_exporter --branch step/all-roots/tighten_the_log_format",
       "depends": [
         "verify_merge_w1_1"
       ]
@@ -301,7 +301,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn merge verify --merge merge_w1_2 --branch step/drop_the_legacy_exporter --branch step/tighten_the_log_format",
+      "run": "python3 -m cairn merge verify --merge merge_w1_2 --branch step/all-roots/drop_the_legacy_exporter --branch step/all-roots/tighten_the_log_format",
       "depends": [
         "merge_w1_2"
       ]

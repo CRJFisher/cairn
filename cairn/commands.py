@@ -128,10 +128,20 @@ def run_wait_until(
     timeout_seconds: float,
     interval_seconds: float,
     *,
+    guard: Callable[[], None] = lambda: None,
     popen_factory: PopenFactory = subprocess.Popen,
     monotonic: Callable[[], float] = time.monotonic,
     sleeper: Callable[[float], None] = time.sleep,
 ) -> CommandResult:
+    """Run a predicate until it succeeds or the bound passes, guarded at every attempt.
+
+    `guard` is called before each launch and raises to stop the wait. A wait is the one step
+    that executes arbitrary shell over and over, for as long as the plan's bound allows,
+    while holding the repository's run lock the whole time — so ownership is proved once per
+    attempt rather than once per step, and a wait that loses the repository mid-way stops
+    before launching the next predicate instead of running it in a repository another run
+    now owns ([27 D]).
+    """
     _positive_bound("timeout", timeout_seconds)
     _positive_bound("interval", interval_seconds)
     deadline = monotonic() + timeout_seconds
@@ -145,6 +155,7 @@ def run_wait_until(
     }
     try:
         while True:
+            guard()
             attempts += 1
             child = None
             child = launch(

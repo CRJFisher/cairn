@@ -107,7 +107,11 @@ ENGINE_VERSION = "2.11.0"
 # the engine part-way through a hold this binary would make.
 # 11: a merge slot holds at the allowance as an agent step does, so its engine bound carries
 # the longest hold too. A merge slot written by 10 is killed part-way through such a hold.
-GENERATOR_VERSION = 11
+# 12: a step's branch is `step/<plan>/<step>` and is derived by the subcommand from the plan
+# and the step rather than written into the setup body. A setup body written by 11 passes a
+# `--branch` this binary does not accept, and the bare `step/<id>` it names is not a branch
+# this binary will work on at all.
+GENERATOR_VERSION = 12
 
 # The one execution type. The alternative reading serialises the graph, which is the defect
 # Cairn exists to avoid — and `type: chain` without `depends` validates clean and silently

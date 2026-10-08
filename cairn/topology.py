@@ -18,6 +18,7 @@ import re
 from pathlib import Path
 from typing import Any, NamedTuple, TypedDict
 
+from cairn.plan.ids import is_engine_id, is_plan_slug
 from cairn.plan.schema import (
     AGENT_FAMILY,
     AGENT_TIMEOUT,
@@ -139,6 +140,56 @@ def worktrees_root_for(repository_root: Path, plan_slug: str) -> Path:
     adopt each other's worktrees.
     """
     return worktrees_parent(repository_root) / plan_slug
+
+
+def branch_namespace(plan_slug: str) -> str:
+    """Every branch one plan may own, as one ref prefix.
+
+    The whole of a plan's branch identity is this prefix plus a step id, so a reader asking
+    "may this plan touch that ref" has one string to ask it with, and the prune that deletes
+    refs is bounded by the same string the setup that creates them is
+    ([worktrees.py]).
+    """
+    if not is_plan_slug(plan_slug):
+        raise TopologyError(
+            f"{plan_slug!r} is not a plan slug, so it cannot name a branch namespace"
+        )
+    return f"{BRANCH_PREFIX}{plan_slug}"
+
+
+def branch_name(plan_slug: str, step_id: str) -> str:
+    """The branch one step of one plan owns: `step/<plan>/<step>`.
+
+    Both halves of the identity are in the name, derived exactly as the worktree path is
+    ([worktrees_root_for]) and refused on the same two grammars — so a plan and a step that
+    name one directory name one branch, and two plans sharing a step id can no more adopt
+    each other's branch than each other's worktree.
+
+    The grammars are what make the pair injective, and that is why they are checked here
+    rather than assumed from a validated plan: a slug admits no `/` and a step id admits
+    neither `/` nor an opening digit, so no two distinct pairs can compose one ref, and
+    nothing in the name can be read back as a different pair.
+    """
+    if not is_engine_id(step_id):
+        raise TopologyError(f"{step_id!r} is not a step id, so it cannot name a branch")
+    return f"{branch_namespace(plan_slug)}/{step_id}"
+
+
+def step_of_branch(branch: str) -> str | None:
+    """The step id a branch of this grammar names, or None for any other ref.
+
+    The inverse of `branch_name`, and why the grammar is checked there: a plan slug admits
+    no `/` and a step id admits none either, so a `step/<plan>/<step>` ref parses back to
+    exactly the pair it was built from and nothing else parses at all. A reader with a
+    branch in hand and no plan slug to compose one with asks this ([record/extract.py]).
+    """
+    prefix, _, rest = branch.partition("/")
+    plan_slug, _, step_id = rest.partition("/")
+    if f"{prefix}/" != BRANCH_PREFIX:
+        return None
+    if not is_plan_slug(plan_slug) or not is_engine_id(step_id):
+        return None
+    return step_id
 
 
 def check_name(name: str) -> None:
@@ -468,7 +519,7 @@ def derive(
         wave_branches: list[Branch] = []
         for step_id in level:
             branch: Branch = {
-                "name": f"{BRANCH_PREFIX}{step_id}",
+                "name": branch_name(plan_slug, step_id),
                 "step": step_id,
                 "wave": index,
                 "worktree": str(roots / step_id),
@@ -620,11 +671,14 @@ __all__ = [
     "Topology",
     "TopologyError",
     "Wave",
+    "branch_name",
+    "branch_namespace",
     "check_name",
     "dependency_levels",
     "derive",
     "node_name",
     "parse_node_name",
+    "step_of_branch",
     "total_seconds",
     "worktrees_parent",
     "worktrees_root_for",

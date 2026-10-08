@@ -81,21 +81,41 @@ documented recovery impossible for the very run it recovers — but returning th
 unchanged would leave an already-expired window expired, and a third run would take the
 repository out from under the retry.
 
-## A step halts if the repository stopped being its own
+## A step writes only through ownership it can prove
 
-Every step that opens a session or writes — `agent`, `exec`, `commit`, `worktree` — reads
-the lock before it starts and halts if the repository is held by a different run. A run
-whose lock was reclaimed while it queued would otherwise discover it at its next commit, an
-hour of agent time later, with a second run already writing to the same repository.
+Every step that opens a session or writes — `agent`, `exec`, `wait`, `commit`, `worktree`,
+`merge`, `wave` — proves the repository is still its own before it starts, and halts if it
+cannot. A run whose lock was reclaimed while it queued would otherwise discover it at its
+next commit, an hour of agent time later, with a second run already writing to the same
+repository.
 
-Only a lock held by somebody else counts. An absent lock does not: these subcommands are the
-step vocabulary and stand on their own, and a working directory that is no repository at all
-has nothing to lose. Refusal follows proof, never silence — the same discipline the reclaim
-decision uses.
+**Ownership is positive, so inspection reporting no readable holder is not permission.** An
+absent lock is the loss of the only thing that said this run may write here. Four things are
+required, and each is one way a run can be writing to a repository that is no longer its
+own:
 
-It is a check at the head of a step and deliberately not a heartbeat. A run renewing its
-lease as it worked would make the reclaim window meaningless as a bound on how long a
-crashed run holds a repository, which is the only job that window has.
+- a present, readable run-lock record;
+- a `run_id` that is this run's;
+- the object the acquisition pinned, where this run's own `lock_acquire` report still says
+  what that was — a lock replaced in place names the same run and proves nothing;
+- a repository the record agrees is the one this step is standing in.
+
+Deleting run A's lock, corrupting it, or replacing it therefore all stop A's next guarded
+operation, whether or not a run B has since taken the repository.
+
+That is the inverse of the acquisition's reading of the same three states, and the inverse
+is the design. Acquisition is where an unreadable lock may be taken and a repository
+recovered, because a repository nobody can run against is a state I4 forbids. A step already
+running has no such claim to make: it either still holds what it took, or it stops.
+
+A `wait` is checked before either of its forms **and before every attempt of an `until`
+predicate**. The predicate is arbitrary shell, relaunched for as long as the plan's bound
+allows while the run lock is held the whole time, so a wait that lost the repository stops
+before launching the next predicate and leaves a report naming the lock it lost.
+
+Otherwise it is a check at the head of a step and deliberately not a heartbeat. A run
+renewing its lease as it worked would make the reclaim window meaningless as a bound on how
+long a crashed run holds a repository, which is the only job that window has.
 
 ## What a run's first step does
 
@@ -123,16 +143,31 @@ A run also refuses to start against a repository that already has uncommitted wo
 before the run starts, and again here as the backstop for a tree that dirtied itself in
 between ([../capabilities/running.md](../capabilities/running.md)). A chain step commits in
 the repository itself, and its commit stages only what its own session dirtied: it
-snapshots the dirty paths before the session and stages the paths dirty afterwards that
-were not dirty before, plus its marker by path. A path dirty both before and after is left
-alone and named in the step's record rather than swept into a commit the plan claims as a
-step's output — which is why a person already working in the same checkout when a step
-starts keeps their edits, and why an edit the step itself needed to make to such a path
-cannot land until they settle it. The snapshot is taken before the session, so this scopes
-what was already dirty and not what someone first touches while the step runs: that is
-indistinguishable from the step's own work and still lands. The commit names its paths, so
-nothing another session staged mid-step rides along either. A tree git will not answer about
-is a refusal rather than a commit of the marker alone.
+snapshots what is dirty before the session — every path **and the content of each** — and
+stages the paths dirty afterwards that were not dirty before, plus its marker by path. A
+path dirty both before and after is left alone and named in the step's record rather than
+swept into a commit the plan claims as a step's output, which is why a person already
+working in the same checkout when a step starts keeps their edits. The snapshot is taken
+before the session, so this scopes what was already dirty and not what someone first touches
+while the step runs: that is indistinguishable from the step's own work and still lands. The
+commit names its paths, so nothing another session staged mid-step rides along either. A
+tree git will not answer about is a refusal rather than a commit of the marker alone.
+
+**A marker is published only over state the commit carries, and path membership cannot
+establish that.** A path dirty before the step and changed by the step is classified as
+somebody else's, so the commit would hold the marker and not the work the assertion passed
+over — and discarding the residual edit would leave completion standing over work absent
+from `HEAD`, which the next run skips rather than redoes. So every excluded path is proved
+byte-identical to the content the baseline recorded. A step that altered one commits nothing
+at all: not the marker, not its own partial output, and the refusal names the overlap.
+Reverting such a path counts as altering it, and content that could not be read either time
+proves nothing and counts as altered too. The marker is the exception and is not an
+exclusion: the step takes its own marker by path whoever had it dirty.
+
+The marker the mark node wrote is **withdrawn from the working tree on every refusal** the
+commit reaches, because the gate that decides whether the step runs again reads the tree
+rather than `HEAD`. What `HEAD` already holds is restored instead of deleted: an earlier
+run's committed marker is not this commit's to withdraw.
 
 ## How git itself is invoked
 

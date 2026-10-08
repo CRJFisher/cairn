@@ -439,28 +439,24 @@ def emit_lock(node: Node, run_timeout_seconds: int) -> EngineStep:
 
 
 def emit_setup(node: Node) -> EngineStep:
-    """Where the worktree goes is derived at run time, not written into the body.
+    """Where the worktree goes and what the branch is called are both derived at run time.
 
     The path is `<repository>.cairn-worktrees/<plan>/<step>`, so writing it here would bake
     one repository into the file — and a parameter reference cannot stand in a body, because
     the only spelling that survives quoting also runs whatever the value holds
     ([workflow.md]). The step's own working directory is the repository, so the subcommand
     derives the path from where it already stands.
+
+    The branch is `step/<plan>/<step>` and is derived there too, from the same two values.
+    Writing it here as well would put a second spelling of one identity in the file, and the
+    branch is what the ownership record is written under — so the two could disagree about
+    which ref this step is answerable for.
     """
     detail = node["detail"]
     return _support_step(
         node["name"],
         node["working_directory"],
-        [
-            "worktree",
-            "setup",
-            "--plan",
-            str(detail["plan"]),
-            "--step",
-            str(node["step"]),
-            "--branch",
-            str(detail["branch"]),
-        ],
+        ["worktree", "setup", "--plan", str(detail["plan"]), "--step", str(node["step"])],
     )
 
 

@@ -11,17 +11,25 @@ fast unit test rather than a workflow run, and a shape nobody anticipated reache
 that refuses and reports what it saw instead of falling into whichever arm happened to be
 last.
 
+**A branch is reused only on proof that it is this plan's.** The name carries plan and step
+([topology.branch_name]), and beside it a durable owner record under
+`refs/cairn/branch-owner/` says which plan, step and parent branch the ref was created for.
+A branch nothing can attribute is refused rather than adopted, which is the positive
+ownership a run writes through ([27]).
+
 Nothing here deletes content it cannot attribute. A directory that has to go is renamed
 aside, because the one thing a killed agent leaves that matters is uncommitted work.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NamedTuple, TypedDict, cast
 
 from cairn.core import (
     EXIT_OK,
@@ -35,16 +43,28 @@ from cairn.gitio import (
     checked_out_branch,
     common_directory,
     git,
+    hash_object,
     is_ancestor,
     main_working_tree,
+    read_blob,
+    resolve_ref,
     same_repository,
     tree_state,
+    update_ref,
     working_tree_root,
     worktree_entries,
 )
 from cairn.locks import git_write_mutex, refuse_unresolved_merge, unresolved_merge
 from cairn.marker import marker_path
-from cairn.topology import WORKTREES_SUFFIX, node_name
+from cairn.topology import (
+    BRANCH_PREFIX,
+    WORKTREES_SUFFIX,
+    branch_name,
+    branch_namespace,
+    node_name,
+    worktrees_parent,
+    worktrees_root_for,
+)
 
 QUARANTINE_SUFFIX = ".broken"
 
@@ -108,6 +128,225 @@ class Facts:
     dirty_paths: tuple[str, ...] = field(default=())
 
 
+BRANCH_OWNER_PREFIX = "refs/cairn/branch-owner/"
+
+# What a legacy ref's classification concluded, reported by the setup node that reached it.
+MIGRATED = "migrated"
+OWNED_ELSEWHERE = "owned_elsewhere"
+UNATTRIBUTABLE = "unattributable"
+SUPERSEDED = "superseded"
+
+
+class BranchOwner(TypedDict):
+    """Who a branch belongs to, recorded where only Cairn's own writes can reach it.
+
+    Durable because the question outlives every process: a run that died between creating a
+    branch and committing to it leaves a ref whose next reader has nothing but this record
+    to decide the ref's plan, step and starting point by.
+    """
+
+    branch: str
+    plan: str
+    step: str
+    parent: str
+
+
+class LegacyVerdict(NamedTuple):
+    """What a bare `step/<id>` ref was classified as, and what was done about it."""
+
+    ref: str
+    verdict: str
+
+
+def owner_ref(plan: str, step: str) -> str:
+    return f"{BRANCH_OWNER_PREFIX}{plan}/{step}"
+
+
+def read_branch_owner(repository: Path, plan: str, step: str) -> BranchOwner | None:
+    """The owner record for this plan's step, or None where there is no proof to read.
+
+    Unreadable and absent answer the same None on purpose. Both mean the same thing to the
+    only caller: nothing here proves a branch belongs to this plan, so an existing one is
+    refused rather than adopted. Distinguishing them would offer a second arm, and the
+    only move that arm could make is the adoption this exists to prevent.
+    """
+    object_id = resolve_ref(repository, owner_ref(plan, step))
+    if object_id is None:
+        return None
+    kind = git(repository, ("cat-file", "-t", object_id), check=False)
+    if kind.exit_code != 0 or kind.stdout != "blob":
+        return None
+    try:
+        payload: Any = json.loads(read_blob(repository, object_id))
+    except (json.JSONDecodeError, CairnError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    record = cast(dict[str, Any], payload)
+    if any(not isinstance(record.get(name), str) for name in BranchOwner.__annotations__):
+        return None
+    return cast(BranchOwner, record)
+
+
+def write_branch_owner(
+    repository: Path, *, branch: str, plan: str, step: str, parent: str
+) -> BranchOwner:
+    """Record that this plan's step owns this branch, from this parent.
+
+    Written unconditionally rather than by compare-and-swap: the caller holds the git write
+    mutex and has already established that no branch exists for this identity, so there is
+    no second writer to lose to and a record left by a dead run is exactly what has to be
+    replaced.
+    """
+    record: BranchOwner = {
+        "branch": branch,
+        "plan": plan,
+        "step": step,
+        "parent": parent,
+    }
+    payload = json.dumps(record, indent=2, sort_keys=True, allow_nan=False) + "\n"
+    object_id = hash_object(repository, payload)
+    if not update_ref(repository, f"update {owner_ref(plan, step)} {object_id}"):
+        raise CairnError(
+            "branch_unowned",
+            f"the ownership of {branch} could not be recorded, so this step would work on "
+            "a branch no later run could prove is its own",
+            detail={"branch": branch, "plan": plan, "step": step},
+        )
+    return record
+
+
+def _delete_branch_owner(repository: Path, plan: str, step: str) -> None:
+    object_id = resolve_ref(repository, owner_ref(plan, step))
+    if object_id is not None:
+        update_ref(repository, f"delete {owner_ref(plan, step)} {object_id}")
+
+
+def _refuse_namespace_collision(repository: Path, plan: str) -> None:
+    """Refuse a ref sitting where this plan's whole branch namespace goes.
+
+    `refs/heads/step/<plan>` and `refs/heads/step/<plan>/<step>` cannot both exist — git
+    stores a ref as a file and a namespace as a directory — so one such ref blocks every
+    branch the plan owns. Left to git it surfaces as `cannot lock ref` from whichever step
+    created a branch first, which reads as contention; named here it reads as the one ref
+    that has to go. The worktree path has the same collision in the same place: a file
+    where the plan's worktree directory belongs.
+    """
+    namespace = branch_namespace(plan)
+    if branch_exists(repository, namespace):
+        raise CairnError(
+            "branch_unowned",
+            f"refs/heads/{namespace} occupies the whole branch namespace of plan {plan!r}, "
+            f"so no step of it can have a branch; rename or delete that ref",
+            detail={"plan": plan, "blocking_ref": f"refs/heads/{namespace}"},
+        )
+
+
+def _legacy_owning_plan(repository: Path, step: str) -> str | None:
+    """The plan a bare `step/<id>` ref can be *proved* to belong to, or None.
+
+    The proof is the ref's own worktree registration, because a worktree path has carried
+    the plan slug since worktrees were namespaced: a registration at
+    `<repository>.cairn-worktrees/<plan>/<step>` is the plan that created the ref saying so,
+    in a place no later plan writes.
+
+    None is every other answer — no registration, a registration at a path of another
+    shape, or registrations naming two plans. A ref whose registration has simply gone
+    answers None too, and deliberately: a disappeared registration is the absence of
+    evidence, and adopting a branch on it is how one plan would take another's work.
+    """
+    legacy = f"{BRANCH_PREFIX}{step}"
+    parent = Path(os.path.realpath(worktrees_parent(repository)))
+    plans: set[str] = set()
+    for entry in worktree_entries(repository):
+        if entry.branch != legacy:
+            continue
+        path = Path(os.path.realpath(entry.path))
+        if path.name != step or Path(os.path.realpath(path.parent.parent)) != parent:
+            return None
+        plans.add(path.parent.name)
+    if len(plans) != 1:
+        return None
+    return plans.pop()
+
+
+def _classify_legacy_branch(
+    repository: Path, *, plan: str, step: str, branch: str, parent: str
+) -> LegacyVerdict | None:
+    """Classify a bare `step/<id>` ref, and migrate only the one that is provably ours.
+
+    Four outcomes, and only the last moves anything. A plan that already has its namespaced
+    branch is answered first and whatever the legacy ref is: that branch is this plan's
+    current line of work and nothing may rewrite it. A ref nothing can attribute is left
+    where it is and named, because the one thing that must never happen is a plan adopting a
+    branch on the strength of a step id they happen to share. A ref owned by another plan is
+    left where it is too, because it is that plan's to migrate. Only a ref whose owning plan
+    is this plan is renamed onto the namespaced identity and recorded, which carries a
+    killed run's work forward.
+
+    The migration establishes the plan, never the parent: the parent recorded is the one
+    this run lands on, and whether the ref's tip may move onto it is the ancestry question
+    the convergence asks next.
+    """
+    legacy = f"{BRANCH_PREFIX}{step}"
+    if not branch_exists(repository, legacy):
+        return None
+    if branch_exists(repository, branch):
+        return LegacyVerdict(legacy, SUPERSEDED)
+    owning = _legacy_owning_plan(repository, step)
+    if owning is None:
+        return LegacyVerdict(legacy, UNATTRIBUTABLE)
+    if owning != plan:
+        return LegacyVerdict(legacy, OWNED_ELSEWHERE)
+    git(repository, ("branch", "-m", legacy, branch))
+    write_branch_owner(repository, branch=branch, plan=plan, step=step, parent=parent)
+    return LegacyVerdict(legacy, MIGRATED)
+
+
+def _claim_branch(repository: Path, *, plan: str, step: str, parent: str) -> str:
+    """Prove this plan's step owns its branch, or refuse; return the branch it owns.
+
+    A branch that does not exist is claimed outright — there is nothing to adopt, so the
+    record is written for the branch the convergence is about to create. A branch that does
+    exist is reused only when the record proves all three things a reuse rests on: this
+    plan, this step, and the parent the branch was started from. A branch reused from
+    another parent would carry the wrong history into this run's merges while every name
+    and path said it was right.
+    """
+    branch = branch_name(plan, step)
+    _refuse_namespace_collision(repository, plan)
+    owner = read_branch_owner(repository, plan, step)
+    if not branch_exists(repository, branch):
+        write_branch_owner(
+            repository, branch=branch, plan=plan, step=step, parent=parent
+        )
+        return branch
+    if owner is None:
+        raise CairnError(
+            "branch_unowned",
+            f"{branch} exists and nothing records which plan, step and parent it was "
+            "created for, so Cairn will not work on it; delete it or settle it by hand",
+            detail={"branch": branch, "plan": plan, "step": step},
+        )
+    if (owner["branch"], owner["plan"], owner["step"]) != (branch, plan, step):
+        raise CairnError(
+            "branch_unowned",
+            f"the owner record for {branch} names {owner['branch']!r} of step "
+            f"{owner['step']!r} in plan {owner['plan']!r}, so it proves nothing about this "
+            "step's branch",
+            detail={"branch": branch, "recorded": dict(owner)},
+        )
+    if owner["parent"] != parent:
+        raise CairnError(
+            "branch_unowned",
+            f"{branch} was created from {owner['parent']!r} and this run lands on "
+            f"{parent!r}, so reusing it would carry the wrong history into the merge; "
+            "delete the branch or run against the parent it was started from",
+            detail={"branch": branch, "recorded_parent": owner["parent"], "parent": parent},
+        )
+    return branch
+
+
 def classify(facts: Facts) -> str:
     """Exactly one state per fact record, with no fall-through into an action."""
     if facts.identity == FOREIGN:
@@ -144,11 +383,11 @@ def inspect(repository: Path, worktree: Path, branch: str, base: str) -> Facts:
     entries = worktree_entries(repository)
     resolved = Path(os.path.realpath(worktree))
     here = next((entry for entry in entries if entry.path == resolved), None)
-    # A registration is only a holder while its directory is still there. Branch names
-    # carry no plan slug while worktree paths do, so a crashed run of another plan leaves
-    # exactly this: a registration for `step/<id>` at a path nothing occupies. Refusing on
-    # it would halt every later plan naming that step, permanently, over a directory the
-    # create arm's own `worktree prune` clears.
+    # A registration is only a holder while its directory is still there. A run killed
+    # after its worktrees root was moved or deleted leaves exactly this: a registration for
+    # this plan's own branch at a path nothing occupies. Refusing on it would halt every
+    # later run of the plan, permanently, over a directory the create arm's own
+    # `worktree prune` clears.
     holder = next(
         (
             entry
@@ -237,9 +476,15 @@ def _relation(repository: Path, branch: str, base: str) -> str:
 
 
 def setup_worktree(
-    repository: Path, worktree: Path, branch: str, base: str
+    repository: Path, worktree: Path, base: str, *, plan: str, step: str
 ) -> CommandResult:
-    """Bring the step's worktree to a state its agent can work in, from any starting point."""
+    """Bring the step's worktree to a state its agent can work in, from any starting point.
+
+    The branch is derived here from the plan and the step rather than passed in, so the one
+    identity the ownership record is written under is the same one the worktree is checked
+    out on. A branch carried in alongside them would be a second derivation of one name,
+    and the only thing two derivations can do is disagree.
+    """
     if Path(os.path.realpath(worktree)) == main_working_tree(repository):
         raise CairnError(
             "worktree_unusable",
@@ -247,6 +492,17 @@ def setup_worktree(
             detail={"worktree": str(worktree)},
         )
     with git_write_mutex(repository):
+        # Ownership is settled before a single fact is gathered: every arm below creates,
+        # moves or checks out this branch, and none of them may run against a ref this plan
+        # cannot prove is its own ([27 A]).
+        legacy = _classify_legacy_branch(
+            repository,
+            plan=plan,
+            step=step,
+            branch=branch_name(plan, step),
+            parent=base,
+        )
+        branch = _claim_branch(repository, plan=plan, step=step, parent=base)
         facts = inspect(repository, worktree, branch, base)
         state = classify(facts)
         if state == REPAIRABLE:
@@ -258,14 +514,33 @@ def setup_worktree(
             state = classify(facts)
         outcome = _converge(repository, worktree, branch, base, facts, state)
     return outcome._replace(
+        follow_up_work=[*outcome.follow_up_work, *_legacy_follow_up(legacy)],
         detail={
             **outcome.detail,
             "state": state,
             "worktree": str(worktree),
             "branch": branch,
             "base": base,
-        }
+            "legacy_branch": None if legacy is None else legacy._asdict(),
+        },
     )
+
+
+def _legacy_follow_up(legacy: LegacyVerdict | None) -> list[str]:
+    """One line for a legacy ref left standing, and none for one nothing had to decide."""
+    if legacy is None or legacy.verdict == MIGRATED:
+        return []
+    if legacy.verdict == UNATTRIBUTABLE:
+        return [
+            f"{legacy.ref} is a branch no worktree registration attributes to a plan, so "
+            "nothing adopted it; delete it or rename it onto the plan that owns it"
+        ]
+    if legacy.verdict == OWNED_ELSEWHERE:
+        return [f"{legacy.ref} belongs to another plan and was left where it is"]
+    return [
+        f"{legacy.ref} was left where it is: this step already has its own branch, which "
+        "nothing may rewrite"
+    ]
 
 
 def _converge(
@@ -475,9 +750,9 @@ def _create(
 
 def prune_worktrees(
     repository: Path,
-    worktrees: list[str],
-    branches: list[str],
     *,
+    plan: str,
+    steps: list[str],
     parent: str,
     force: bool = False,
 ) -> CommandResult:
@@ -486,7 +761,14 @@ def prune_worktrees(
     Every green run prunes, so nothing accumulates. A dirty worktree is refused rather than
     discarded unless the caller asks for it explicitly: uncommitted work in a worktree is a
     killed agent's output.
+
+    **The cleanup is bounded to the plan being pruned, by derivation rather than by a
+    check.** Paths and branches are composed here from the plan and its step ids, so there
+    is no argument through which a ref outside `step/<plan>/` could be named — which is
+    what keeps one plan's prune off another plan's branch for a step id they share ([27 A]).
     """
+    worktrees = [str(worktrees_root_for(repository, plan) / step) for step in steps]
+    branches = [branch_name(plan, step) for step in steps]
     removed: list[str] = []
     kept: list[str] = []
     absent: list[str] = []
@@ -517,8 +799,9 @@ def prune_worktrees(
                 failed.append(path)
                 follow_up.append(f"{path} could not be removed: {outcome.stderr}")
         git(repository, ("worktree", "prune"))
-        for branch in branches:
+        for step, branch in zip(steps, branches, strict=True):
             if not branch_exists(repository, branch):
+                _delete_branch_owner(repository, plan, step)
                 continue
             # Merged into the branch the topology named, not into whatever HEAD happens to
             # be: `git branch -d` asks about HEAD, so a branch already folded into the
@@ -529,6 +812,10 @@ def prune_worktrees(
             outcome = git(repository, ("branch", "-D", branch), check=False)
             if outcome.exit_code == 0:
                 deleted.append(branch)
+                # The record goes with the branch it describes. A retained branch keeps
+                # its record, because that record is the only thing that will let a later
+                # run of this plan prove the branch is its own and pick the work back up.
+                _delete_branch_owner(repository, plan, step)
             else:
                 unmerged.append(branch)
     detail = {
@@ -595,11 +882,87 @@ def _staged_diffstat(working_directory: Path, paths: list[str]) -> dict[str, int
     return {"files": files, "insertions": insertions, "deletions": deletions}
 
 
-# The key under which a work step records the paths that were already dirty when its
-# session started. Named here because it crosses a seam: the work handlers write it and the
-# commit reads it, and a literal spelled twice would drift with nothing failing — the commit
-# would silently stage only the marker, for ever.
+# The key under which a work step records what was already dirty when its session started,
+# path by path with the content of each. Named here because it crosses a seam: the work
+# handlers write it and the commit reads it, and a literal spelled twice would drift with
+# nothing failing — the commit would silently stage only the marker, for ever.
 DIRTY_BEFORE = "dirty_before"
+
+# What a baseline records for a path there is no content to take: a path dirty because it is
+# gone, and a path the filesystem would not read. They are kept apart because only the first
+# is an answer — the second is the absence of one, and a commit cannot prove anything about
+# content it could not read either time.
+ABSENT_CONTENT = "absent"
+UNREADABLE_CONTENT = "unreadable"
+
+_DIGEST_CHUNK = 1 << 20
+
+
+def _content_digest(path: Path) -> str:
+    """One path's content as it stands now, for comparison against the same path later.
+
+    A symlink is digested as its target rather than as what it points at: the link is the
+    content a commit would carry, and following it would read a file outside the tree.
+    """
+    try:
+        if path.is_symlink():
+            return hashlib.sha256(
+                b"symlink\0" + os.readlink(path).encode("utf-8", "surrogateescape")
+            ).hexdigest()
+        running = hashlib.sha256()
+        with path.open("rb") as handle:
+            while chunk := handle.read(_DIGEST_CHUNK):
+                running.update(chunk)
+        return running.hexdigest()
+    except FileNotFoundError:
+        return ABSENT_CONTENT
+    except OSError:
+        return UNREADABLE_CONTENT
+
+
+def dirty_snapshot(working_directory: Path) -> dict[str, str] | None:
+    """What is uncommitted in this tree right now, path by path and content by content.
+
+    Taken before a step's session and compared after it. **The content is the point.** A
+    before-and-after set of paths can say that a path was somebody else's when the step
+    started; it cannot say whether the step then changed that very path — and a commit that
+    excluded such a path while publishing the step's marker would record completion over
+    work absent from `HEAD`, which the next run would skip rather than redo ([21 B]).
+
+    None where git would not say what is dirty. Absent is not clean: a tree whose
+    uncommitted work cannot be established is one whose commit cannot be scoped, and the
+    commit refuses rather than taking the marker alone.
+    """
+    paths = tree_state(working_directory)
+    if paths is None:
+        return None
+    root = working_tree_root(working_directory)
+    return {path: _content_digest(root / path) for path in paths}
+
+
+def _altered_excluded_paths(
+    root: Path, before: dict[str, str], marker: str
+) -> list[str]:
+    """The excluded paths this step cannot prove it left alone.
+
+    Every path the baseline holds is one the commit will not stage, so every one of them
+    must still hold the content it held — a changed one is work the commit would leave
+    behind a marker, and a path that is no longer dirty at all is a person's edit the step
+    wrote over. Content that could not be read either time proves nothing and counts as
+    altered, because the one thing this may not do is pass on silence.
+
+    The marker is the exception, and it is not an exclusion: the step takes its own marker
+    by path whoever else had it dirty, so a marker the mark node rewrote is the commit
+    working as intended.
+    """
+    altered: list[str] = []
+    for path, recorded in sorted(before.items()):
+        if path == marker:
+            continue
+        current = _content_digest(root / path)
+        if current != recorded or current == UNREADABLE_CONTENT:
+            altered.append(path)
+    return altered
 
 
 def _addable_paths(working_directory: Path, root: Path, paths: list[str]) -> list[str]:
@@ -633,14 +996,76 @@ def commit_step(
     no-op, or a report this run cannot read — stages the marker alone, because the
     alternative is sweeping the whole tree on every no-op of every recovery.
 
+    **A marker is published only over state the commit carries.** Path membership alone
+    cannot establish that: a path dirty before the step and changed by it is classified as
+    somebody else's, so the commit would hold the marker and not the work the assertion
+    passed over. Every excluded path is therefore proved unchanged against the content the
+    baseline recorded, and a step that altered one commits nothing at all ([21 B]).
+
     A no-op when there is nothing staged and a failure when staging itself fails: the two
     must never be confused, because one is a step that had nothing to say and the other is
     a step whose output was lost. A worktree run starts clean, so nothing here changes what
     it commits.
     """
-    refuse_unresolved_merge(working_directory)
     root = working_tree_root(working_directory)
     marker = marker_path(root, step_id).relative_to(root).as_posix()
+    try:
+        return _commit_scoped(
+            working_directory, message, step_id=step_id, context=context,
+            root=root, marker=marker,
+        )
+    except CairnError:
+        # Every refusal below leaves the mark node's marker sitting in the working tree,
+        # and the gate that decides whether this step runs again reads the tree rather than
+        # `HEAD` — so a marker this commit declined to publish would make the next run skip
+        # the very step that would redo the work ([21 B]). Withdrawing it is part of the
+        # refusal, not cleanup after one.
+        _withdraw_marker(working_directory, root, marker)
+        raise
+
+
+def _withdraw_marker(working_directory: Path, root: Path, marker: str) -> None:
+    """Take a marker this commit refused to publish back out of the working tree.
+
+    What `HEAD` already holds is restored rather than deleted. An earlier run's committed
+    marker is not this commit's to withdraw: the work behind it is in history, and removing
+    it would make a step that really is done run again with no marker left to say so.
+
+    Where git will not answer at all, the file goes. What `HEAD` holds cannot be established
+    then, and the two errors are not the same size: redoing a convergent step costs a run,
+    while a marker left standing over unproved state makes every later run skip the step
+    that would catch it. The withdrawal also cannot raise over the refusal that called it —
+    that refusal is the fault a person has to read.
+    """
+    try:
+        committed = git(
+            working_directory, ("cat-file", "-e", f"HEAD:{marker}"), check=False
+        )
+        if committed.exit_code == 0:
+            git(
+                working_directory,
+                ("--literal-pathspecs", "checkout", "HEAD", "--", marker),
+                check=False,
+            )
+            return
+    except CairnError:
+        pass
+    try:
+        (root / marker).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _commit_scoped(
+    working_directory: Path,
+    message: str,
+    *,
+    step_id: str,
+    context: RuntimeContext,
+    root: Path,
+    marker: str,
+) -> CommandResult:
+    refuse_unresolved_merge(working_directory)
     before = _dirty_before(context, step_id)
     with git_write_mutex(working_directory):
         now = tree_state(working_directory)
@@ -651,6 +1076,18 @@ def commit_step(
                 "step may commit cannot be established",
                 detail={"working_directory": str(working_directory)},
             )
+        if before is not None:
+            altered = _altered_excluded_paths(root, before, marker)
+            if altered:
+                raise CairnError(
+                    "excluded_path_changed",
+                    f"step {step_id!r} changed {len(altered)} path(s) that were already "
+                    "uncommitted when it started, so its commit can neither claim them as "
+                    "its own work nor prove it left them alone: "
+                    f"{', '.join(altered)}. Nothing was committed, and this step's marker "
+                    "was withdrawn so the next run redoes it; settle that work first",
+                    detail={"step": step_id, "altered_excluded_paths": altered},
+                )
         own = sorted(set(now) - set(before)) if before is not None else []
         # The marker is staged by path whenever the tree has something to say about it,
         # whoever else had it dirty; a pathspec naming a path git has nothing for fails
@@ -721,14 +1158,19 @@ def _follow_up(left: list[str]) -> list[str]:
     ]
 
 
-def _dirty_before(context: RuntimeContext, step_id: str) -> list[str] | None:
-    """The paths the work step saw dirty before its session, or None where it recorded none.
+def _dirty_before(context: RuntimeContext, step_id: str) -> dict[str, str] | None:
+    """What the work step saw dirty before its session, or None where it recorded none.
 
     None means no work node of this run left a snapshot at all — a step its marker gate
     skipped, which has nothing of its own to stage. A snapshot the work node recorded as
     absent is a different answer: git would not say what was dirty, so what this step may
     take cannot be established, and that is a refusal rather than a commit of the marker
     over work nobody can scope ([21]).
+
+    A snapshot of some other shape is read as no snapshot at all. A report arrives through
+    JSON written by another process, and the one thing a half-understood payload must not
+    do is answer a question whose wrong answers are "stage someone else's work" and "prove
+    a path unchanged against a digest that is not one".
     """
     try:
         report = read_step_report(
@@ -747,9 +1189,15 @@ def _dirty_before(context: RuntimeContext, step_id: str) -> list[str] | None:
             "it started, so what this commit may take cannot be established",
             detail={"step": step_id},
         )
-    if not isinstance(found, list):
+    if not isinstance(found, dict):
         return None
-    return [path for path in cast(list[Any], found) if isinstance(path, str)]
+    recorded = cast(dict[Any, Any], found)
+    if not all(
+        isinstance(path, str) and isinstance(digest, str)
+        for path, digest in recorded.items()
+    ):
+        return None
+    return cast(dict[str, str], recorded)
 
 
 # Distinguishes a report with no snapshot key from one whose snapshot is `null`.
@@ -757,8 +1205,21 @@ _NO_SNAPSHOT = object()
 
 
 __all__ = [
+    "ABSENT_CONTENT",
+    "BRANCH_OWNER_PREFIX",
     "DIRTY_BEFORE",
+    "MIGRATED",
+    "OWNED_ELSEWHERE",
+    "SUPERSEDED",
+    "UNATTRIBUTABLE",
+    "UNREADABLE_CONTENT",
+    "BranchOwner",
+    "LegacyVerdict",
     "commit_step",
+    "dirty_snapshot",
+    "owner_ref",
     "prune_worktrees",
+    "read_branch_owner",
     "setup_worktree",
+    "write_branch_owner",
 ]

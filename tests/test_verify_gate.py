@@ -89,16 +89,17 @@ from cairn.verify import (
     work_name,
 )
 from cairn.workflow.build import envelope
+from tests.ownership import own_repository
+from tests.test_step_protocol import run_cli, runtime_env, work_report
 
 # The engine mints a run id when none is given, and a run's records are keyed by it.
 ENGINE_RUN_ID = "gate-engine-run"
+
 
 def reports_of(root: Path, run_id: str = "run-1") -> Path:
     """Where a run's accounts land, composed the way a step composes it for itself."""
     return reports_directory(root / "runs", run_id)
 
-
-from tests.test_step_protocol import run_cli, runtime_env, work_report
 
 CAIRN_ROOT = Path(__file__).resolve().parent.parent
 GATE_DOC = CAIRN_ROOT / "docs" / "verify-gate.md"
@@ -1683,6 +1684,10 @@ class TheEngineRoutesFailureByPosition(unittest.TestCase):
             ("commit", "--allow-empty", "-m", "root"),
         ):
             subprocess.run(("git", *arguments), cwd=self.root, check=True, capture_output=True)
+        # The lowered graph is one step's group with no `lock_acquire` ahead of it, so the
+        # ownership a real run's first act leaves behind is put there directly: the commit
+        # node proves it before it writes ([27 C]).
+        own_repository(self.root, ENGINE_RUN_ID)
 
     def commit_node(self, step_id: str, position: str) -> Node:
         return {

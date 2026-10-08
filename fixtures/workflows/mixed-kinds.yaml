@@ -9,7 +9,7 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "mixed-kinds",
-    "cairn_generator": "11",
+    "cairn_generator": "12",
     "cairn_engine": "2.11.0",
     "cairn_graph_sha256": "f161f6e08241c6e5e01d10fe9d662fe73a96923d936098f028cf7211302ee61b",
     "cairn_body_sha256": "b36f2d2fd426242e6b95910ced5122722398adaac7a08b8e9859db21bcfa8d7b"

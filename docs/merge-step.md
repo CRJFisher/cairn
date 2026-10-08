@@ -57,7 +57,7 @@ The topology derives these nodes and the emitters give them bodies;
   depends: [join_w2]
   run: python3 -m cairn merge land --slot 1 --provider claude
     --model sonnet
-    --branch step/keymap_reader --branch step/theme_reader
+    --branch step/fan-out/keymap_reader --branch step/fan-out/theme_reader
   working_dir: ${CAIRN_REPOSITORY}
   timeout_sec: 4320
   retry_policy: { limit: 0, interval_sec: 1 }
@@ -65,7 +65,7 @@ The topology derives these nodes and the emitters give them bodies;
 - name: verify_merge_w2_1 # the proof, in a process of its own
   depends: [merge_w2_1]
   run: python3 -m cairn merge verify --merge merge_w2_1
-    --branch step/keymap_reader --branch step/theme_reader
+    --branch step/fan-out/keymap_reader --branch step/fan-out/theme_reader
   working_dir: ${CAIRN_REPOSITORY}
   timeout_sec: 600
   retry_policy: { limit: 0, interval_sec: 1 }

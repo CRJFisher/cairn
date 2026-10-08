@@ -41,6 +41,11 @@ stages it by path with the work — one commit carrying both is that step's obli
 the commit stages the marker and the paths the step's own session dirtied, never the
 working tree at large ([cli-contract.md](cli-contract.md)).
 
+**A marker only counts once it is committed**, which is why a commit that refuses takes the
+fresh marker back out of the working tree with it: the gate reads the tree, so a marker left
+standing over work the commit declined to carry would make the next run skip the step that
+would redo it ([supervision.md](supervision.md)).
+
 **The marker is the completion authority.** With a fresh marker present, a step is a no-op
 and changes nothing, whatever the tree looks like. A mismatch between marker and tree can
 be someone's later deliberate decision, so it is surfaced as data rather than repaired.

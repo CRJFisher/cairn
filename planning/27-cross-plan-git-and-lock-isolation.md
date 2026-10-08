@@ -67,3 +67,47 @@ leave a report naming the lost lock.
 `cairn/topology.py`, `cairn/worktrees.py`, `cairn/locks.py`, `cairn/__main__.py`,
 `cairn/commands.py`, `cairn/parameters.py`, supervision/topology/run-model documentation,
 [21](21-commit-scope.md), generated workflow fixtures, and concurrency tests.
+
+## Close-out
+
+Done. All four sections hold, and [21](21-commit-scope.md)'s section B is built here with C.
+
+**A run writes only through identities it can prove are its own.** A step's branch is
+`step/<plan>/<step>`, derived inside `cairn worktree setup` from the same `--plan` and
+`--step` the worktree path comes from and refused on the same two grammars, so two plans
+sharing a step id share no branch and cannot see, verify, merge or prune each other's. The
+prune composes every path and branch it touches from the plan it was given, so its reach is
+bounded by derivation and not by a check. Beside each branch is a durable owner record at
+`refs/cairn/branch-owner/<plan>/<step>` naming the branch, plan, step and parent: an
+existing branch is reused only when that record proves all three, and one with no readable
+record is refused rather than adopted. A ref occupying a plan's whole namespace is named as
+the ref that has to go instead of surfacing as git's `cannot lock ref`.
+
+A bare `step/<id>` ref is classified and reported as the setup node's `legacy_branch`:
+`migrated` only where its own worktree registration establishes this plan as its owner,
+`owned_elsewhere` where that registration names another, `unattributable` where nothing
+attributes it — including a registration that has simply disappeared — and `superseded`
+where this plan already has its branch. Only `migrated` moves anything; the rest are left
+where they are and named in follow-up work.
+
+Runtime ownership fails closed. `require_run_lock` replaces the fail-open guard on every
+subcommand that opens a session, runs a command or writes, and requires a present readable
+record, this run's id, the lock object the acquisition pinned, and a repository the record
+agrees is the one the step stands in — so deleting, corrupting or replacing run A's lock all
+stop A's next guarded operation, whether or not a run B has since taken over. Acquisition
+keeps its separate reclaim path, which is the only place an unreadable lock may be taken.
+
+Waits are guarded for their whole duration: ownership is proved before either form and
+before every attempt of an `until` predicate, so a wait that loses the repository stops
+before launching the next predicate and leaves a report naming the lock it lost.
+
+A marker cannot outrun committed state. Every work step's snapshot carries the content of
+each dirty path and not just its name, and the commit proves every excluded path
+byte-identical to that baseline. A step that altered one fails `excluded_path_changed` and
+commits nothing — no marker, no partial output — and every refusal the commit reaches
+withdraws the fresh marker from the working tree, restoring whatever `HEAD` held, because
+the gate that decides whether the step runs again reads the tree.
+
+Generator version 12 marks the shape: a setup body written by 11 passes a `--branch` this
+binary does not accept, and the bare `step/<id>` it names is not a branch this binary will
+work on.

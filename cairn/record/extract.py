@@ -104,12 +104,12 @@ from cairn.text import (
     normalise_all,
 )
 from cairn.topology import (
-    BRANCH_PREFIX,
     RUN_ROLES,
     WAVE_ROLES,
     TopologyError,
     dependency_levels,
     node_name,
+    step_of_branch,
 )
 from cairn.verify import (
     ASSERTION_INTERRUPTED,
@@ -677,12 +677,12 @@ def derive_attention(
     # match. Suppressing on the step's identity alone would drop the only line naming a
     # dropped branch.
     spoken_for = {
-        (f"{BRANCH_PREFIX}{step['step_id']}", step["cause"])
+        (step["step_id"], step["cause"])
         for step in steps
         if step["outcome"] in (OUTCOME_EXCLUDED, OUTCOME_FAILED, OUTCOME_NOT_REACHED)
     }
     for entry in census_exclusions(waves):
-        if (entry["branch"], entry["cause"]) in spoken_for:
+        if (step_of_branch(entry["branch"]), entry["cause"]) in spoken_for:
             continue
         items.append(
             Attention(

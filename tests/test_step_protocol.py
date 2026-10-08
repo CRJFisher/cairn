@@ -47,6 +47,7 @@ from cairn.protocol import (
 )
 from cairn.providers import PROVIDER_RUNNERS, hook_settings, run_claude
 from cairn.topology import node_name
+from tests.ownership import own_repository
 
 CAIRN_ROOT = Path(__file__).resolve().parent.parent
 PROTOCOL_DOC = CAIRN_ROOT / "docs" / "step-protocol.md"
@@ -1128,6 +1129,10 @@ class TheThreeStates(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name).resolve()
         self.addCleanup(self.temporary.cleanup)
+        # These states are driven one subcommand at a time, with no `lock_acquire` ahead of
+        # them, so the ownership a real run's first act leaves behind is put there directly:
+        # a work subcommand proves it before it runs anything ([27 C]).
+        own_repository(self.root, "run-1")
 
     def test_a_fresh_step_does_the_work_and_verification_marks_it(self) -> None:
         env = runtime_env(self.root)

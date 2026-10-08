@@ -66,6 +66,9 @@ Doc 06 adds `invalid_marker`, `invalid_occasion`, `invalid_reads`, `invalid_scop
 09 add `git_failed`, `not_a_repository`, `git_mutex_timeout`, `merge_in_progress`,
 `repository_busy`, `repository_dirty`, `lock_not_held`, `base_retry_enabled`,
 `base_config_unreadable`, `worktree_dirty`, `worktree_foreign`, and `worktree_unusable`.
+Doc 27 adds `branch_unowned`, raised where a branch cannot be proved to belong to this
+plan's step and parent, and `excluded_path_changed`, raised where a step altered a path its
+commit is not allowed to stage.
 Doc 10 adds `merge_conflict`, `merge_not_landed`, `conflict_markers_committed`,
 `merge_indeterminate`, `merge_unowned_conflict`, `merge_wrong_branch`, and
 `merge_environment_redirected`. Doc 13 adds `engine_paths_unreadable`, which `lock
@@ -216,17 +219,22 @@ load-bearing infrastructure in the run record — so anything else it learns rid
 report rather than in its status.
 `worktree setup` converges every worktree state it can and halts on the rest, `worktree
 prune` removes a wave's worktrees and its merged branches only — both taking `--plan` and
-`--step` and deriving the worktree path from the repository they stand in, so no body names
-one target — and `commit`, taking `--message` and `--step`, stages what the step's own
-session dirtied and the step's marker by path, never the working tree at large, and
-distinguishes nothing-to-commit from a staging failure by reading the index. Every work
-step records in its report's `detail`, as `dirty_before`, the paths that were already
-dirty when its session started; the commit stages the paths dirty now and not then, leaves
-the rest alone, and names them as `left_uncommitted` and in its follow-up work. A work
-report that carries no snapshot at all — a marker no-op's — stages the marker alone; one
-whose snapshot is absent because git would not answer is a `git_failed` refusal, because a
-commit that cannot be scoped is the loss this scoping exists to prevent. Each holds
-the git write mutex inside itself.
+`--step` and deriving the worktree path _and_ the branch `step/<plan>/<step>` from them
+against the repository they stand in, so no body names one target and no body spells the
+branch twice ([topology.md](topology.md)) — and `commit`, taking `--message` and `--step`,
+stages what the step's own session dirtied and the step's marker by path, never the working
+tree at large, and distinguishes nothing-to-commit from a staging failure by reading the
+index. Every work step records in its report's `detail`, as `dirty_before`, what was already
+dirty when its session started: a mapping of path to the content it then held. The commit
+stages the paths dirty now and not then, leaves the rest alone, and names them as
+`left_uncommitted` and in its follow-up work. An excluded path whose content moved is an
+`excluded_path_changed` refusal that commits nothing — the step cannot claim the path as its
+own work nor prove it left it alone, and a marker over it would stand for work absent from
+`HEAD`. A work report that carries no snapshot at all — a marker no-op's — stages the marker
+alone; one whose snapshot is absent because git would not answer is a `git_failed` refusal,
+because a commit that cannot be scoped is the loss this scoping exists to prevent. Every
+refusal withdraws the step's fresh marker from the working tree, restoring whatever `HEAD`
+already held. Each holds the git write mutex inside itself.
 
 `wave join` records which of a wave's branches carry work to land, before any slot moves a
 tip and makes an excluded branch indistinguishable from a landed one. `merge land` chooses

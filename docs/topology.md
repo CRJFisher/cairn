@@ -18,11 +18,11 @@ A wave of one step is a **chain segment**: the step runs on the parent branch, i
 repository itself, as `work`, then `verify`, then `mark`, then `commit`. No worktree, no
 join, no prune.
 
-A wave of two or more steps is **isolated**: each step gets its own branch `step/<id>` and
-its own worktree, and runs `setup`, `work`, `verify`, `mark`, `commit`. The wave's commits
-feed one `join`, the join feeds a chain of `merge` slots each followed by its own proof
-([merge-step.md](merge-step.md)), and the last proof feeds a `prune`. The next wave starts
-from the prune.
+A wave of two or more steps is **isolated**: each step gets its own branch
+`step/<plan>/<step>` and its own worktree, and runs `setup`, `work`, `verify`, `mark`,
+`commit`. The wave's commits feed one `join`, the join feeds a chain of `merge` slots each
+followed by its own proof ([merge-step.md](merge-step.md)), and the last proof feeds a
+`prune`. The next wave starts from the prune.
 
 A step that declares `remediate` runs `remedy` and `recheck` between its `verify` and its
 `mark`, in either position: one resumed session over a failed assertion, then the same
@@ -44,13 +44,68 @@ that depended on the work ([verify-gate.md](verify-gate.md)).
 A step whose plan declared it unverified has nothing on disk to assert, so it gets no
 `verify` node and its `mark` is gated on its own report alone.
 
-## Where worktrees live
+## Where worktrees live, and what the branch is called
 
 The worktree parent is `<repository>.cairn-worktrees/<plan-slug>/<step-id>`, derived from
 the repository's own location and resolved at invocation. It sits **beside** the repository
 so no commit step can sweep a worktree into a commit, and it is namespaced by plan so two
 plans with the same step ids can never adopt each other's worktrees. No path contains a
 home directory or an assumed workspace root.
+
+The branch is `step/<plan-slug>/<step-id>`, the same two values in the same order, refused
+on the same two grammars. A plan slug matches `^[a-z0-9][a-z0-9-]*$` and a step id is an
+engine identifier, so neither admits a `/` and the pair composes exactly one ref and parses
+back to exactly one pair. **Two plans sharing a step id therefore share no branch**, and
+cannot see, verify, merge or prune each other's, because the only source of a branch name is
+a generated workflow and every name in it carries the plan it was generated for.
+
+Both derivations happen inside `cairn worktree setup`, from `--plan` and `--step`. Neither
+the path nor the branch is written into the generated body: a path names one repository, and
+a second spelling of the branch would be a second idea of which ref the step is answerable
+for ([workflow.md](workflow.md)).
+
+## A branch belongs to one plan and one step
+
+Beside each branch is a durable owner record, a blob at
+`refs/cairn/branch-owner/<plan>/<step>` holding the branch, the plan, the step and the
+parent branch it was created from. A branch that does not exist is claimed outright. **A
+branch that does exist is reused only when that record proves all three**: this plan, this
+step, and this parent. The name proves the first two and nothing proves the third, and a
+branch reused from a different parent would carry the wrong history into the run's merges
+while every name and path still said it was right.
+
+A branch with no readable record is refused, never adopted. Unreadable and absent are one
+answer here on purpose: both mean nothing proves the ref is this plan's, and the only move a
+second arm could make is the adoption this exists to prevent. The record is deleted with the
+branch it describes and kept for a branch the prune retained, because that record is what
+lets a later run of the plan prove the surviving branch is its own and pick the work up.
+
+`refs/heads/step/<plan>` and `refs/heads/step/<plan>/<step>` cannot both exist — git stores
+a ref as a file and a namespace as a directory — so a ref sitting on a plan's whole
+namespace is refused by name. Left to git it surfaces as `cannot lock ref`, which reads as
+contention rather than as the one ref that has to go. The worktree path has the same
+collision in the same place: a file where the plan's directory belongs.
+
+## A bare `step/<id>` ref is classified, never adopted
+
+A ref named for a step and no plan is attributed by its own worktree registration: a
+registration at `<repository>.cairn-worktrees/<plan>/<step>` is the plan that created the
+ref saying so, in a place no later plan writes. `cairn worktree setup` reaches one of four
+verdicts and reports it as the setup node's `legacy_branch`:
+
+| Verdict           | What happens                                                        |
+| ----------------- | ------------------------------------------------------------------- |
+| `superseded`      | This plan already has its namespaced branch; the legacy ref is left |
+| `unattributable`  | No registration attributes it; it is left where it is and named     |
+| `owned_elsewhere` | Another plan owns it; it is that plan's to migrate                  |
+| `migrated`        | This plan owns it: renamed onto `step/<plan>/<step>` and recorded   |
+
+Only the last moves anything, and it carries a killed run's committed work forward. A
+registration that has simply gone attributes nothing: a disappeared registration is the
+absence of evidence, and adopting a branch on it is how one plan would take another's work.
+The migration establishes the plan and never the parent — the parent recorded is the one
+this run lands on, and whether the ref's tip may move onto it is the ancestry question the
+convergence asks next.
 
 ## The node-name contract
 
@@ -151,9 +206,9 @@ Seven states halt:
 
 A worktree holding uncommitted work on a ref other than the one this step owns halts as
 `worktree_dirty`, and the repository's own working tree is refused before any of this. A
-registration whose directory no longer exists does **not** hold its branch: branch names
-carry no plan slug while worktree paths do, so a crashed run of another plan otherwise
-halts every later plan naming that step, permanently.
+registration whose directory no longer exists does **not** hold its branch: a run killed
+after its worktrees root was moved or deleted leaves exactly that, and refusing on it would
+halt every later run of the plan, permanently, over a directory the create arm prunes.
 
 **Convergence never loses work.** A worktree git can still read is repaired before any arm
 that would move it, so a broken `.git` file loses nothing. A directory that has to go is
@@ -171,6 +226,10 @@ topology named, so an unmerged branch is never deleted and a merged one is not r
 because the repository sits elsewhere. When a removal refuses, why is read back off the
 worktree itself rather than out of git's wording, so a directory that is simply gone is not
 reported as work to rescue.
+
+It takes `--plan` and `--step` and composes every path and every branch from them, so **the
+cleanup is bounded to the plan being pruned by derivation rather than by a check**: there is
+no argument through which a ref outside `step/<plan>/` could be named.
 
 ## The run's maximum duration
 

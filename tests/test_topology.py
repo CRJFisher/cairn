@@ -24,10 +24,13 @@ from cairn.topology import (
     Node,
     Topology,
     TopologyError,
+    branch_name,
+    branch_namespace,
     check_name,
     derive,
     node_name,
     parse_node_name,
+    step_of_branch,
     total_seconds,
     worktrees_root_for,
 )
@@ -127,6 +130,26 @@ class Paths(unittest.TestCase):
             worktrees_root_for(REPOSITORY, "one"), worktrees_root_for(REPOSITORY, "two")
         )
 
+    def test_a_branch_carries_the_plan_exactly_as_the_worktree_path_does(self) -> None:
+        self.assertEqual(branch_name("fan-out", "theme_reader"), "step/fan-out/theme_reader")
+        self.assertEqual(branch_namespace("fan-out"), "step/fan-out")
+
+    def test_two_plans_sharing_a_step_id_never_share_a_branch(self) -> None:
+        self.assertNotEqual(branch_name("one", "alpha"), branch_name("two", "alpha"))
+
+    def test_a_branch_parses_back_to_the_step_it_was_built_from(self) -> None:
+        # The grammars are what make the pair injective, which is what lets a reader with a
+        # branch and no plan slug in hand ask which step it names.
+        self.assertEqual(step_of_branch(branch_name("fan-out", "theme_reader")), "theme_reader")
+        for ref in ("main", "step/alpha", "step/fan-out", "step/Bad_Slug/alpha", "other/x/y"):
+            self.assertIsNone(step_of_branch(ref), ref)
+
+    def test_a_name_outside_either_grammar_is_refused_rather_than_composed(self) -> None:
+        with self.assertRaises(TopologyError):
+            branch_name("Not A Slug", "alpha")
+        with self.assertRaises(TopologyError):
+            branch_name("fan-out", "1-not-an-id")
+
     def test_no_derived_path_carries_a_home_directory(self) -> None:
         rendered = json.dumps(topology("multi-wave"))
         self.assertNotIn(str(Path.home()), rendered)
@@ -194,7 +217,7 @@ class FanOutShape(unittest.TestCase):
         fan = topology("fan-out")
         self.assertEqual(
             [branch["name"] for branch in fan["branches"]],
-            ["step/keymap_reader", "step/theme_reader"],
+            ["step/fan-out/keymap_reader", "step/fan-out/theme_reader"],
         )
         self.assertEqual(
             by_name(fan, "setup_theme_reader")["detail"]["worktree"],
@@ -255,7 +278,7 @@ class FanOutShape(unittest.TestCase):
         for merge in merges:
             self.assertEqual(
                 by_name(fan, merge)["detail"]["candidates"],
-                ["step/keymap_reader", "step/theme_reader"],
+                ["step/fan-out/keymap_reader", "step/fan-out/theme_reader"],
             )
         # A slot waits on the proof of the slot before it, never on that slot's own account
         # of itself, so nothing lands over a merge that was never established.
@@ -264,14 +287,17 @@ class FanOutShape(unittest.TestCase):
     def test_the_merge_order_is_a_bound_per_wave_and_not_a_sequence(self) -> None:
         self.assertEqual(
             topology("fan-out")["merge_order"],
-            [["step/keymap_reader", "step/theme_reader"]],
+            [["step/fan-out/keymap_reader", "step/fan-out/theme_reader"]],
         )
 
     def test_the_prune_follows_the_last_merge_and_names_what_it_removes(self) -> None:
         fan = topology("fan-out")
         prune = by_name(fan, "prune_w2")
         self.assertEqual(prune["after"], ["verify_merge_w2_2"])
-        self.assertEqual(prune["detail"]["branches"], ["step/keymap_reader", "step/theme_reader"])
+        self.assertEqual(
+            prune["detail"]["branches"],
+            ["step/fan-out/keymap_reader", "step/fan-out/theme_reader"],
+        )
 
 
 class MultiWaveShape(unittest.TestCase):

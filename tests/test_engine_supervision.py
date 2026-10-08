@@ -387,8 +387,7 @@ class Adversarial(EngineCase):
             {
                 "name": "setup_alpha",
                 "run": (
-                    f"{cairn} worktree setup --plan {plan} --step alpha "
-                    f"--branch step/alpha"
+                    f"{cairn} worktree setup --plan {plan} --step alpha"
                 ),
                 "depends": ["lock_acquire"],
             },
@@ -436,8 +435,7 @@ class Adversarial(EngineCase):
                 {
                     "name": "setup_alpha",
                     "run": (
-                        f"{cairn} worktree setup --plan plan-a --step alpha "
-                        f"--branch step/alpha"
+                        f"{cairn} worktree setup --plan plan-a --step alpha"
                     ),
                     "depends": ["lock_acquire"],
                 }
@@ -496,7 +494,7 @@ class FanOut(EngineCase):
                         "name": f"setup_s{index}",
                         "run": (
                             f"{sys.executable} -m cairn worktree setup "
-                            f"--plan {plan} --step s{index} --branch step/s{index}"
+                            f"--plan {plan} --step s{index}"
                         ),
                         "depends": ["lock_acquire"],
                     },

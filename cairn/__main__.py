@@ -14,6 +14,7 @@ import time
 import traceback
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any, cast
 
 from cairn.assertions import (
     NEEDED_VERB,
@@ -35,13 +36,14 @@ from cairn.core import (
     CommandResult,
     RuntimeContext,
     cancel_on_termination,
+    read_step_report,
     stop_orphans,
     survive_termination,
     sweep_stale_reports,
     write_report,
 )
 from cairn.enginehome import run_records_path
-from cairn.gitio import refuse_unusable_repository, tree_state
+from cairn.gitio import refuse_unusable_repository
 from cairn.headroom import session_within_allowance
 from cairn.hooks import HOOK_VERB, hook_main
 from cairn.locks import (
@@ -49,9 +51,9 @@ from cairn.locks import (
     describe_holder,
     git_write_mutex,
     refuse_dirty_repository,
-    refuse_lost_repository,
     refuse_unresolved_merge,
     release_run_lock,
+    require_run_lock,
 )
 from cairn.marker import (
     current_key,
@@ -74,12 +76,18 @@ from cairn.schedule_cli import main as schedule_main
 from cairn.skill.cli import explain_main, run_main
 from cairn.supervise import find_run_record
 from cairn.supervise_cli import main as supervise_main
-from cairn.topology import BRANCH_PREFIX, worktrees_root_for
+from cairn.topology import node_name, worktrees_root_for
 from cairn.verify import gate_main as verify_gate_main
 from cairn.wave import run_join
 from cairn.workflow.cli import main as workflow_main
 from cairn.workflow.stamp import read_stamp, workflow_path
-from cairn.worktrees import DIRTY_BEFORE, commit_step, prune_worktrees, setup_worktree
+from cairn.worktrees import (
+    DIRTY_BEFORE,
+    commit_step,
+    dirty_snapshot,
+    prune_worktrees,
+    setup_worktree,
+)
 
 Handler = Callable[[argparse.Namespace, RuntimeContext], CommandResult]
 DEFAULT_SHELL = "/bin/sh"
@@ -92,34 +100,78 @@ GATE_WORK_PENDING = EXIT_OK
 GATE_MARKER_FRESH = EXIT_FAILED
 
 
-def _with_dirty_before(result: CommandResult, before: tuple[str, ...] | None) -> CommandResult:
+def _with_dirty_before(
+    result: CommandResult, before: dict[str, str] | None
+) -> CommandResult:
     """Carry what was already dirty when the step started into the step's own report.
 
     Taken before the session and recorded after it, because the commit that follows can
     only stage what the step itself dirtied if it knows what somebody else had already
-    dirtied ([21]). The key is written either way: `null` where git would not say, so the
-    commit can refuse rather than stage the marker over work it cannot scope — a step whose
-    snapshot failed is not a step that dirtied nothing.
+    dirtied — and can only exclude such a path if it can prove the step left its content
+    alone, which is why the snapshot carries content and not just paths ([21]). The key is
+    written either way: `null` where git would not say, so the commit can refuse rather than
+    stage the marker over work it cannot scope — a step whose snapshot failed is not a step
+    that dirtied nothing.
     """
-    snapshot = None if before is None else sorted(before)
-    return result._replace(detail={**result.detail, DIRTY_BEFORE: snapshot})
+    return result._replace(detail={**result.detail, DIRTY_BEFORE: before})
+
+
+def _acquired_lock_object(context: RuntimeContext) -> str | None:
+    """The lock object this run's own acquisition pinned, where it is still readable.
+
+    Read from the acquisition's own report rather than carried in an argument: a generated
+    body is written before the run exists, so there is nowhere in it the object id could be
+    written. None where the report is gone or says nothing — the other three ownership
+    proofs still hold, and a step that refused because a report was swept would halt a run
+    that owns its repository perfectly well.
+    """
+    try:
+        report = read_step_report(
+            context.report_path.parent, node_name("lock", "acquire"), context.run_id
+        )
+    except CairnError:
+        return None
+    detail = report.get("detail")
+    if not isinstance(detail, dict):
+        return None
+    found = cast(dict[str, Any], detail).get("object_id")
+    return found if isinstance(found, str) and found else None
+
+
+def _require_ownership(context: RuntimeContext) -> None:
+    """Halt unless this run still provably owns the repository it is about to write to.
+
+    Every runtime subcommand that opens a session, runs a command or writes goes through
+    this, and so does every attempt of a wait's predicate. A run whose lock was reclaimed
+    while it queued would otherwise find out at its next commit — an hour of agent work
+    later, with a second run already writing to the same repository ([27 C]).
+    """
+    require_run_lock(
+        context.working_directory,
+        run_id=context.run_id,
+        acquired_object=_acquired_lock_object(context),
+    )
 
 
 def _exec(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
-    refuse_lost_repository(context.working_directory, context.run_id)
-    before = tree_state(context.working_directory)
+    _require_ownership(context)
+    before = dirty_snapshot(context.working_directory)
     return _with_dirty_before(
         run_exec(args.command, context.working_directory, args.shell), before
     )
 
 
 def _wait(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
+    # Ownership is proved before either form of wait, and for the `until` form before every
+    # predicate attempt: the predicate is arbitrary shell, run over and over for as long as
+    # the plan's bound allows, and the repository can change hands inside that window.
     if args.duration is not None:
+        _require_ownership(context)
         return run_wait_duration(args.duration, args.timeout)
     # A wait is a work node like any other, so it snapshots like one: its commit reads the
     # same key, and a wait that recorded none would be indistinguishable from a step whose
     # snapshot failed.
-    before = tree_state(context.working_directory)
+    before = dirty_snapshot(context.working_directory)
     return _with_dirty_before(
         run_wait_until(
             args.until,
@@ -127,6 +179,7 @@ def _wait(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
             args.shell,
             args.timeout,
             args.interval,
+            guard=lambda: _require_ownership(context),
         ),
         before,
     )
@@ -135,7 +188,7 @@ def _wait(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
 def _agent(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
     # The earliest moment this run can discover it no longer owns the repository: one ref
     # read, ahead of a session that may run for an hour.
-    refuse_lost_repository(context.working_directory, context.run_id)
+    _require_ownership(context)
     if not isinstance(args.model, str) or not args.model.strip():
         raise CairnError(
             "invalid_arguments",
@@ -155,7 +208,7 @@ def _agent(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
             "first_exit": brief.exit_code,
             "resumed_session": resume,
         }
-    before = tree_state(context.working_directory)
+    before = dirty_snapshot(context.working_directory)
     result = session_within_allowance(
         context,
         provider=args.provider,
@@ -317,38 +370,39 @@ def _authored_plan(repository: Path, plan: str) -> dict[str, str]:
 def _worktree(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
     """Derive every worktree path from the repository this step already stands in.
 
-    The paths are not carried in the body. A worktree lives beside the repository, so its
-    path names one target, and a generated workflow that named one could not be pointed at
-    another ([workflow/schema.py]).
+    The paths are not carried in the body, and neither is the branch. A worktree lives
+    beside the repository, so its path names one target, and a generated workflow that named
+    one could not be pointed at another ([workflow/schema.py]); the branch is the plan and
+    the step in one name ([topology.branch_name]), so passing it would be a second
+    derivation of something already given.
     """
-    refuse_lost_repository(context.working_directory, context.run_id)
-    root = worktrees_root_for(context.working_directory, args.plan)
+    _require_ownership(context)
     if args.worktree_command == "prune":
-        steps: list[str] = list(args.step or [])
         return prune_worktrees(
             context.working_directory,
-            [str(root / step_id) for step_id in steps],
-            [f"{BRANCH_PREFIX}{step_id}" for step_id in steps],
+            plan=args.plan,
+            steps=list(args.step or []),
             parent=parent_branch(),
             force=args.force,
         )
     return setup_worktree(
         context.working_directory,
-        root / args.step,
-        args.branch,
+        worktrees_root_for(context.working_directory, args.plan) / args.step,
         parent_branch(),
+        plan=args.plan,
+        step=args.step,
     )
 
 
 def _commit(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
-    refuse_lost_repository(context.working_directory, context.run_id)
+    _require_ownership(context)
     return commit_step(
         context.working_directory, args.message, step_id=args.step, context=context
     )
 
 
 def _merge(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
-    refuse_lost_repository(context.working_directory, context.run_id)
+    _require_ownership(context)
     if args.merge_command == "verify":
         return verify_landed(
             context.working_directory,
@@ -374,7 +428,7 @@ def _merge(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
 
 
 def _wave(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
-    refuse_lost_repository(context.working_directory, context.run_id)
+    _require_ownership(context)
     return run_join(
         args.wave, args.branch, parent_branch(), context
     )
@@ -455,15 +509,15 @@ def _parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     child.add_argument("--base-config")
     lock_subcommands.add_parser("release", add_help=add_help)
 
-    # Neither verb takes a worktree path. A path names one repository, and the whole point
-    # of the generated file's parameters is that it names none — so the plan and the step
-    # are given instead and the path is derived from the repository the step stands in.
+    # Neither verb takes a worktree path, and neither takes a branch. A path names one
+    # repository, and the whole point of the generated file's parameters is that it names
+    # none — so the plan and the step are given instead, and both the path and the branch
+    # are derived from them against the repository the step stands in.
     worktree = subcommands.add_parser("worktree", add_help=add_help)
     worktree_subcommands = worktree.add_subparsers(dest="worktree_command", required=True)
     child = worktree_subcommands.add_parser("setup", add_help=add_help)
     child.add_argument("--plan", required=True)
     child.add_argument("--step", required=True)
-    child.add_argument("--branch", required=True)
     child = worktree_subcommands.add_parser("prune", add_help=add_help)
     child.add_argument("--plan", required=True)
     child.add_argument("--step", action="append")

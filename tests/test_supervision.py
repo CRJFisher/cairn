@@ -2,13 +2,14 @@
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 import unittest
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
@@ -27,6 +28,7 @@ from cairn.gitio import (
     REF_LOCK_TIMEOUT_MILLISECONDS,
     GitOutcome,
     absolute_directory,
+    branch_exists,
     common_directory,
     git,
     hash_object,
@@ -54,13 +56,14 @@ from cairn.locks import (
     read_run_lock,
     reclaimability,
     refuse_dirty_repository,
-    refuse_lost_repository,
     refuse_unresolved_merge,
     release_run_lock,
+    require_run_lock,
     stale_git_locks,
     taking_is_allowed,
     unresolved_merge,
 )
+from cairn.marker import read_marker, write_marker
 from cairn.supervise import (
     ALREADY_TERMINAL,
     NO_RECORD,
@@ -76,7 +79,7 @@ from cairn.supervise import (
     reconcile,
     reconcile_status_file,
 )
-from cairn.topology import worktrees_root_for
+from cairn.topology import branch_name, worktrees_root_for
 from cairn.worktrees import (
     ABSENT,
     ANCESTOR_OF_PARENT,
@@ -88,10 +91,14 @@ from cairn.worktrees import (
     JUNK,
     LOCKED,
     MERGED_BEHIND,
+    MIGRATED,
+    OWNED_ELSEWHERE,
     REPAIRABLE,
     SAME_AS_PARENT,
     STALE_REGISTRATION,
     STATES,
+    SUPERSEDED,
+    UNATTRIBUTABLE,
     UNCLASSIFIED,
     UNMERGED,
     UNREADABLE,
@@ -99,7 +106,10 @@ from cairn.worktrees import (
     Facts,
     classify,
     commit_step,
+    dirty_snapshot,
+    owner_ref,
     prune_worktrees,
+    read_branch_owner,
     setup_worktree,
 )
 
@@ -164,6 +174,15 @@ class RepositoryCase(unittest.TestCase):
         self.root = Path(self._temporary.name).resolve()
         self.repository = make_repository(self.root)
         self.addCleanup(self._temporary.cleanup)
+
+    def step_branch(self, step: str, plan: str = "demo") -> str:
+        return branch_name(plan, step)
+
+    def step_worktree(self, step: str, plan: str = "demo") -> Path:
+        """Converge one step's worktree where the topology puts it, and hand back the path."""
+        worktree = worktrees_root_for(self.repository, plan) / step
+        setup_worktree(self.repository, worktree, "main", plan=plan, step=step)
+        return worktree
 
 
 class Liveness(RepositoryCase):
@@ -310,7 +329,7 @@ class StaleGitLocks(RepositoryCase):
         # A killed isolated step leaves its lock in the worktree's admin directory, not in
         # the repository's — sweeping only the latter would miss every fan-out casualty.
         worktree = self.root / "trees" / "alpha"
-        setup_worktree(self.repository, worktree, "step/alpha", "main")
+        setup_worktree(self.repository, worktree, "main", plan="demo", step="alpha")
         admin = Path(
             (worktree / ".git").read_text(encoding="utf-8").split("gitdir:")[1].strip()
         )
@@ -453,6 +472,14 @@ class RepositoryState(RepositoryCase):
 class SubcommandsTakeTheMutex(RepositoryCase):
     """The mutex is only worth anything if the write paths actually hold it."""
 
+    def setUp(self) -> None:
+        super().setUp()
+        # Every runtime subcommand proves it owns the repository before it writes, so the
+        # probe run holds the lock the way a real run's first act leaves it ([27 C]).
+        acquire_run_lock(
+            self.repository, run_id="run_probe", plan="demo", run_timeout_seconds=600.0
+        )
+
     def step_environment(self, directory: Path) -> dict[str, str]:
         """The identity the engine gives a step, so the subcommand leaves a report.
 
@@ -520,7 +547,7 @@ class SubcommandsTakeTheMutex(RepositoryCase):
 
     def test_commit_is_held_out_while_the_mutex_is_taken(self) -> None:
         head = git(self.repository, ("rev-parse", "HEAD")).stdout
-        write_work_report(self.root, self.repository, "a", run_id="run_probe", dirty_before=[])
+        write_work_report(self.root, self.repository, "a", run_id="run_probe", dirty_before={})
         (self.repository / "new.txt").write_text("content\n", encoding="utf-8")
         with git_write_mutex(self.repository):
             child = self.start_subcommand(
@@ -575,16 +602,17 @@ class SubcommandsTakeTheMutex(RepositoryCase):
         # was standing in, check another step's branch out over it, and report `done`. There
         # is no such argument now; the path comes from the repository the step stands in.
         worktree = self.root / "repo.cairn-worktrees" / "demo" / "alpha"
-        setup_worktree(self.repository, worktree, "step/alpha", "main")
+        setup_worktree(self.repository, worktree, "main", plan="demo", step="alpha")
         outcome = self.run_subcommand(
             self.repository, "worktree", "setup", "--worktree", str(worktree),
-            "--branch", "step/alpha", "--base", "main",
+            "--branch", branch_name("demo", "alpha"), "--base", "main",
         )
         self.assertNotEqual(outcome.returncode, 0)
         report = json.loads((reports_of(self.root, "run_probe") / "probe.json").read_text())
         self.assertEqual(report["cause"], "invalid_arguments")
         self.assertEqual(
-            git(worktree, ("rev-parse", "--abbrev-ref", "HEAD")).stdout, "step/alpha"
+            git(worktree, ("rev-parse", "--abbrev-ref", "HEAD")).stdout,
+            branch_name("demo", "alpha"),
         )
 
     def test_worktree_setup_is_held_out_too(self) -> None:
@@ -598,8 +626,6 @@ class SubcommandsTakeTheMutex(RepositoryCase):
                 "demo",
                 "--step",
                 "alpha",
-                "--branch",
-                "step/alpha",
             )
             self.assert_held_out(child)
             self.assertFalse(
@@ -608,6 +634,58 @@ class SubcommandsTakeTheMutex(RepositoryCase):
             )
         self.assertEqual(child.wait(timeout=120), 0)
         self.assertTrue((worktree / "README.md").exists())
+
+    def test_a_long_wait_stops_the_moment_the_repository_changes_hands(self) -> None:
+        """[27 D]: the predicate is arbitrary shell, relaunched for the whole of a bound
+        that can run to hours, and nothing checked that the run still owned the tree."""
+        attempts = self.root / "attempts"
+        attempts.mkdir()
+        condition = (
+            f"{shlex.quote(sys.executable)} -c "
+            + shlex.quote(
+                "import os, pathlib, sys; "
+                f"d = pathlib.Path({str(attempts)!r}); "
+                "(d / str(len(list(d.iterdir())))).write_text('x'); "
+                "sys.exit(1)"
+            )
+        )
+        child = self.start_subcommand(
+            self.repository,
+            "wait",
+            "--until",
+            condition,
+            "--timeout",
+            "120",
+            "--interval",
+            "0.2",
+        )
+        for _ in range(300):
+            if len(list(attempts.iterdir())) >= 2:
+                break
+            time.sleep(0.05)
+        self.assertGreaterEqual(
+            len(list(attempts.iterdir())), 2, "the predicate never ran twice"
+        )
+        held = read_run_lock(self.repository)
+        assert held is not None
+        update_ref(self.repository, f"delete {RUN_LOCK_REF} {held[1]}")
+        acquire_run_lock(
+            self.repository,
+            run_id="run_other",
+            plan="demo",
+            run_timeout_seconds=600.0,
+        )
+
+        self.assertNotEqual(child.wait(timeout=60), 0)
+        ran = len(list(attempts.iterdir()))
+        report = json.loads((reports_of(self.root, "run_probe") / "probe.json").read_text())
+        self.assertEqual(report["cause"], "lock_not_held")
+        self.assertIn("run_other", report["summary"])
+        self.assertEqual(
+            ran,
+            len(list(attempts.iterdir())),
+            "no predicate ran after the wait reported the lost lock",
+        )
 
     def test_lock_acquire_refuses_an_engine_that_still_retries_whole_dags(self) -> None:
         base = self.root / "engine" / "base.yaml"
@@ -753,31 +831,92 @@ class RunLock(RepositoryCase):
         self.assertIsNone(holder_liveness(record))
         self.assertFalse(taking_is_allowed(record).reclaimable)
 
-    def test_a_repository_that_will_not_answer_is_not_read_as_an_absent_lock(self) -> None:
+    def test_a_repository_that_will_not_answer_is_not_read_as_permission(self) -> None:
         # Failing open here would run a whole agent session in a repository another run
-        # may well own. Only "there is no repository here" is silence.
+        # may well own.
         self.acquire("holder")
         with patch(
-            "cairn.locks.read_run_lock",
+            "cairn.locks._held",
             side_effect=CairnError("git_failed", "git cat-file blob failed"),
         ), self.assertRaises(CairnError) as caught:
-            refuse_lost_repository(self.repository, "displaced")
+            require_run_lock(self.repository, run_id="displaced")
         self.assertEqual(caught.exception.cause, "git_failed")
 
     def test_a_run_that_lost_the_repository_halts_before_it_starts_a_session(self) -> None:
         self.acquire("holder")
         with self.assertRaises(CairnError) as caught:
-            refuse_lost_repository(self.repository, "displaced")
+            require_run_lock(self.repository, run_id="displaced")
         self.assertEqual(caught.exception.cause, "lock_not_held")
         self.assertIn("holder", str(caught.exception))
 
-    def test_the_guard_reads_silence_as_silence_rather_than_as_loss(self) -> None:
-        # These subcommands are the step vocabulary and stand on their own; an absent lock
-        # is not evidence that one was taken away, and neither is a plain directory.
-        refuse_lost_repository(self.repository, "nobody")
-        refuse_lost_repository(self.root, "nobody")
+    def test_a_run_whose_lock_was_deleted_refuses_rather_than_carrying_on(self) -> None:
+        # Inspection reporting no holder is the loss of the only thing that said this run
+        # may write here, never permission to write ([27 C]).
         self.acquire("mine")
-        refuse_lost_repository(self.repository, "mine")
+        object_id = resolve_ref(self.repository, RUN_LOCK_REF)
+        assert object_id is not None
+        update_ref(self.repository, f"delete {RUN_LOCK_REF} {object_id}")
+        with self.assertRaises(CairnError) as caught:
+            require_run_lock(self.repository, run_id="mine")
+        self.assertEqual(caught.exception.cause, "lock_not_held")
+
+    def test_a_lock_naming_no_readable_holder_refuses_at_runtime(self) -> None:
+        self.acquire("mine")
+        garbage = hash_object(self.repository, "not a lock record\n")
+        update_ref(self.repository, f"update {RUN_LOCK_REF} {garbage}")
+        with self.assertRaises(CairnError) as caught:
+            require_run_lock(self.repository, run_id="mine")
+        self.assertEqual(caught.exception.cause, "lock_not_held")
+
+    def test_a_lock_replaced_in_place_refuses_even_under_the_same_run_id(self) -> None:
+        # The replacement names this very run, so the run id proves nothing. The object the
+        # acquisition pinned is what says the lock in the ref is the lock this run took.
+        first = self.acquire("mine")
+        update_ref(self.repository, f"delete {RUN_LOCK_REF} {first.object_id}")
+        self.acquire("mine")
+        require_run_lock(self.repository, run_id="mine")
+        with self.assertRaises(CairnError) as caught:
+            require_run_lock(
+                self.repository, run_id="mine", acquired_object=first.object_id
+            )
+        self.assertEqual(caught.exception.cause, "lock_not_held")
+
+    def test_a_directory_that_is_no_repository_proves_no_ownership(self) -> None:
+        with self.assertRaises(CairnError) as caught:
+            require_run_lock(self.root, run_id="nobody")
+        self.assertEqual(caught.exception.cause, "lock_not_held")
+
+    def test_a_run_whose_lock_run_b_now_holds_refuses_even_after_the_handover(self) -> None:
+        first = self.acquire("mine")
+        update_ref(self.repository, f"delete {RUN_LOCK_REF} {first.object_id}")
+        self.acquire("theirs")
+        with self.assertRaises(CairnError) as caught:
+            require_run_lock(
+                self.repository, run_id="mine", acquired_object=first.object_id
+            )
+        self.assertEqual(caught.exception.cause, "lock_not_held")
+        self.assertIn("theirs", str(caught.exception))
+
+    def test_a_lock_recording_another_repository_is_not_this_steps_ownership(self) -> None:
+        other = make_repository(self.root, "other")
+        self.acquire("mine")
+        record, object_id = read_run_lock(self.repository) or (None, None)
+        assert record is not None and object_id is not None
+        displaced = hash_object(
+            self.repository,
+            json.dumps({**record, "repository": str(common_directory(other))}),
+        )
+        update_ref(self.repository, f"update {RUN_LOCK_REF} {displaced} {object_id}")
+        with self.assertRaises(CairnError) as caught:
+            require_run_lock(self.repository, run_id="mine")
+        self.assertEqual(caught.exception.cause, "lock_not_held")
+
+    def test_the_run_holding_the_repository_passes_its_own_guard(self) -> None:
+        held = self.acquire("mine")
+        record = require_run_lock(
+            self.repository, run_id="mine", acquired_object=held.object_id
+        )
+        self.assertEqual(record["run_id"], "mine")
 
     def test_a_free_repository_is_taken_and_the_holder_is_recorded(self) -> None:
         held = self.acquire()
@@ -1502,14 +1641,176 @@ class WorktreeClassifier(unittest.TestCase):
         self.assertEqual(classify(Facts(disk="socket")), UNCLASSIFIED)
 
 
+class ABranchBelongsToOnePlanAndOneStep(RepositoryCase):
+    """[27 A]: branch names were `step/<id>`, so a later plan adopted a surviving branch of
+    another plan with the same step id."""
+
+    def converge(self, plan: str, step: str = "alpha", base: str = "main") -> Any:
+        return setup_worktree(
+            self.repository,
+            worktrees_root_for(self.repository, plan) / step,
+            base,
+            plan=plan,
+            step=step,
+        )
+
+    def test_two_plans_sharing_a_step_id_get_two_branches_and_two_records(self) -> None:
+        ours = self.converge("demo")
+        theirs = self.converge("other")
+        self.assertEqual(ours.detail["branch"], "step/demo/alpha")
+        self.assertEqual(theirs.detail["branch"], "step/other/alpha")
+        (Path(str(ours.detail["worktree"])) / "ours.txt").write_text("x\n", encoding="utf-8")
+        self.assertEqual(tree_state(Path(str(theirs.detail["worktree"]))), ())
+        self.assertEqual(
+            read_branch_owner(self.repository, "other", "alpha"),
+            {
+                "branch": "step/other/alpha",
+                "plan": "other",
+                "step": "alpha",
+                "parent": "main",
+            },
+        )
+
+    def test_a_branch_nothing_records_an_owner_for_is_refused_never_adopted(self) -> None:
+        git(self.repository, ("branch", "step/demo/alpha", "main"))
+        with self.assertRaises(CairnError) as caught:
+            self.converge("demo")
+        self.assertEqual(caught.exception.cause, "branch_unowned")
+
+    def test_a_branch_recorded_against_another_parent_is_refused(self) -> None:
+        # Reusing it would carry the wrong history into this run's merges while every name
+        # and path still said it was right.
+        self.converge("demo")
+        git(self.repository, ("branch", "release", "main"))
+        with self.assertRaises(CairnError) as caught:
+            self.converge("demo", base="release")
+        self.assertEqual(caught.exception.cause, "branch_unowned")
+        self.assertIn("main", str(caught.exception))
+
+    def test_a_record_naming_a_different_step_proves_nothing(self) -> None:
+        self.converge("demo")
+        misfiled = hash_object(
+            self.repository,
+            json.dumps(
+                {
+                    "branch": "step/demo/beta",
+                    "plan": "demo",
+                    "step": "beta",
+                    "parent": "main",
+                }
+            ),
+        )
+        update_ref(self.repository, f"update {owner_ref('demo', 'alpha')} {misfiled}")
+        with self.assertRaises(CairnError) as caught:
+            self.converge("demo")
+        self.assertEqual(caught.exception.cause, "branch_unowned")
+        self.assertIn("beta", str(caught.exception))
+
+    def test_a_record_git_cannot_read_back_is_no_proof_at_all(self) -> None:
+        self.converge("demo")
+        garbage = hash_object(self.repository, "not an owner record\n")
+        update_ref(self.repository, f"update {owner_ref('demo', 'alpha')} {garbage}")
+        self.assertIsNone(read_branch_owner(self.repository, "demo", "alpha"))
+        with self.assertRaises(CairnError) as caught:
+            self.converge("demo")
+        self.assertEqual(caught.exception.cause, "branch_unowned")
+
+    def test_a_ref_occupying_the_plans_namespace_is_named_rather_than_left_to_git(
+        self,
+    ) -> None:
+        # `refs/heads/step/demo` and `refs/heads/step/demo/alpha` cannot both exist, so one
+        # such ref blocks every branch the plan owns. Left to git it reads as contention.
+        git(self.repository, ("branch", "step/demo", "main"))
+        with self.assertRaises(CairnError) as caught:
+            self.converge("demo")
+        self.assertEqual(caught.exception.cause, "branch_unowned")
+        self.assertIn("refs/heads/step/demo", str(caught.exception))
+
+
+class ALegacyBranchIsMigratedOnlyOnEvidence(RepositoryCase):
+    """[27 A]: a bare `step/<id>` ref names a step and no plan, so adopting one is how a
+    plan would take another's work."""
+
+    def converge(self, plan: str, step: str = "alpha") -> Any:
+        return setup_worktree(
+            self.repository,
+            worktrees_root_for(self.repository, plan) / step,
+            "main",
+            plan=plan,
+            step=step,
+        )
+
+    def legacy_with_worktree(self, plan: str, step: str = "alpha") -> Path:
+        """A bare `step/<id>` ref registered where that plan's worktree goes.
+
+        The registration is the proof: a worktree path has carried the plan slug since
+        worktrees were namespaced, so it is the plan that created the ref saying so.
+        """
+        path = worktrees_root_for(self.repository, plan) / step
+        path.parent.mkdir(parents=True, exist_ok=True)
+        git(
+            self.repository,
+            ("worktree", "add", "--quiet", str(path), "-b", f"step/{step}"),
+        )
+        return path
+
+    def test_a_legacy_ref_its_own_registration_attributes_is_migrated_with_its_work(
+        self,
+    ) -> None:
+        path = self.legacy_with_worktree("demo")
+        (path / "earlier.txt").write_text("from the killed run\n", encoding="utf-8")
+        git(path, ("add", "--all"))
+        git(path, ("commit", "--quiet", "-m", "work the kill interrupted"))
+        landed = git(path, ("rev-parse", "HEAD")).stdout
+
+        result = self.converge("demo")
+        self.assertEqual(result.detail["legacy_branch"]["verdict"], MIGRATED)
+        self.assertFalse(branch_exists(self.repository, "step/alpha"))
+        self.assertEqual(
+            resolve_ref(self.repository, "refs/heads/step/demo/alpha"), landed
+        )
+        self.assertIsNotNone(read_branch_owner(self.repository, "demo", "alpha"))
+
+    def test_a_legacy_ref_nothing_attributes_is_left_alone_and_named(self) -> None:
+        git(self.repository, ("branch", "step/alpha", "main"))
+        result = self.converge("demo")
+        self.assertEqual(result.detail["legacy_branch"]["verdict"], UNATTRIBUTABLE)
+        self.assertTrue(branch_exists(self.repository, "step/alpha"))
+        self.assertTrue(any("step/alpha" in line for line in result.follow_up_work))
+
+    def test_a_registration_that_disappeared_is_not_evidence_of_ownership(self) -> None:
+        # The one adoption that must never happen: a plan taking a branch because the
+        # registration that said whose it was has gone.
+        path = self.legacy_with_worktree("demo")
+        subprocess.run(["rm", "-rf", str(path)], check=True)
+        git(self.repository, ("worktree", "prune"))
+        result = self.converge("demo")
+        self.assertEqual(result.detail["legacy_branch"]["verdict"], UNATTRIBUTABLE)
+        self.assertTrue(branch_exists(self.repository, "step/alpha"))
+
+    def test_a_legacy_ref_another_plan_owns_is_left_for_that_plan(self) -> None:
+        self.legacy_with_worktree("other")
+        result = self.converge("demo")
+        self.assertEqual(result.detail["legacy_branch"]["verdict"], OWNED_ELSEWHERE)
+        self.assertTrue(branch_exists(self.repository, "step/alpha"))
+        self.assertTrue(branch_exists(self.repository, "step/demo/alpha"))
+
+    def test_a_plan_that_already_has_its_branch_rewrites_nothing(self) -> None:
+        self.converge("demo")
+        git(self.repository, ("branch", "step/alpha", "main"))
+        result = self.converge("demo")
+        self.assertEqual(result.detail["legacy_branch"]["verdict"], SUPERSEDED)
+        self.assertTrue(branch_exists(self.repository, "step/alpha"))
+
+
 class WorktreeConvergence(RepositoryCase):
     def setUp(self) -> None:
         super().setUp()
         self.worktree = self.root / "repo.cairn-worktrees" / "demo" / "alpha"
-        self.branch = "step/alpha"
+        self.branch = branch_name("demo", "alpha")
 
     def setup(self) -> Any:
-        return setup_worktree(self.repository, self.worktree, self.branch, "main")
+        return setup_worktree(self.repository, self.worktree, "main", plan="demo", step="alpha")
 
     def test_a_missing_worktree_is_created_on_its_own_branch(self) -> None:
         result = self.setup()
@@ -1651,11 +1952,12 @@ class WorktreeConvergence(RepositoryCase):
         self.assertTrue((self.worktree / "README.md").exists())
 
     def test_a_registration_whose_directory_is_gone_does_not_hold_the_branch(self) -> None:
-        # Branch names carry no plan slug while worktree paths do, so a crashed run of
-        # another plan leaves a registration for this branch at a path nothing occupies.
-        # Refusing on it would halt every later plan naming that step, permanently.
-        elsewhere = self.root / "repo.cairn-worktrees" / "other-plan" / "alpha"
-        git(self.repository, ("worktree", "add", "--quiet", str(elsewhere), "-b", self.branch))
+        # A run killed after its worktrees root was moved leaves a registration for this
+        # plan's own branch at a path nothing occupies. Refusing on it would halt every
+        # later run of the plan, permanently, over a directory the create arm prunes.
+        self.setup()
+        elsewhere = self.root / "repo.cairn-worktrees" / "demo" / "alpha-moved"
+        git(self.repository, ("worktree", "move", str(self.worktree), str(elsewhere)))
         subprocess.run(["rm", "-rf", str(elsewhere)], check=True)
         self.setup()
         self.assertTrue((self.worktree / "README.md").exists())
@@ -1664,8 +1966,9 @@ class WorktreeConvergence(RepositoryCase):
         )
 
     def test_a_branch_live_in_another_worktree_still_halts(self) -> None:
-        elsewhere = self.root / "repo.cairn-worktrees" / "other-plan" / "alpha"
-        git(self.repository, ("worktree", "add", "--quiet", str(elsewhere), "-b", self.branch))
+        self.setup()
+        elsewhere = self.root / "repo.cairn-worktrees" / "demo" / "alpha-moved"
+        git(self.repository, ("worktree", "move", str(self.worktree), str(elsewhere)))
         with self.assertRaises(CairnError) as caught:
             self.setup()
         self.assertEqual(caught.exception.cause, "worktree_unusable")
@@ -1704,7 +2007,7 @@ class WorktreeConvergence(RepositoryCase):
         worktree = linked_root / "demo" / "alpha"
         worktree.mkdir(parents=True)
         (worktree / "debris.txt").write_text("from a dead run\n", encoding="utf-8")
-        result = setup_worktree(self.repository, worktree, self.branch, "main")
+        result = setup_worktree(self.repository, worktree, "main", plan="demo", step="alpha")
         self.assertEqual(result.detail["state"], JUNK)
         self.assertTrue((worktree / "README.md").exists())
         self.assertTrue(
@@ -1723,7 +2026,7 @@ class WorktreeConvergence(RepositoryCase):
         self,
     ) -> None:
         with self.assertRaises(CairnError) as caught:
-            setup_worktree(self.repository, self.repository, self.branch, "main")
+            setup_worktree(self.repository, self.repository, "main", plan="demo", step="alpha")
         self.assertEqual(caught.exception.cause, "worktree_unusable")
 
     def test_a_directory_cairn_cannot_account_for_is_moved_aside_never_deleted(self) -> None:
@@ -1746,7 +2049,7 @@ class WorktreeConvergence(RepositoryCase):
         stray.mkdir(parents=True)
         (stray / "someones-file.txt").write_text("precious\n", encoding="utf-8")
         with self.assertRaises(CairnError) as caught:
-            setup_worktree(self.repository, stray, self.branch, "main")
+            setup_worktree(self.repository, stray, "main", plan="demo", step="alpha")
         self.assertEqual(caught.exception.cause, "worktree_unusable")
         self.assertTrue((stray / "someones-file.txt").exists())
 
@@ -1762,13 +2065,24 @@ class WorktreeConvergence(RepositoryCase):
         self.assertTrue((self.worktree / "README.md").exists())
 
 
+def snapshot_of(repository: Path, *paths: str) -> dict[str, str]:
+    """What a work node records for these paths, read as they stand at this moment.
+
+    Called before a test's simulated step edits anything it means the step to change, and
+    after it for a path the step is meant to leave alone — which is the whole of what the
+    commit's proof turns on.
+    """
+    found = dirty_snapshot(repository) or {}
+    return {path: found[path] for path in paths if path in found}
+
+
 def write_work_report(
     root: Path,
     repository: Path,
     step_id: str,
     *,
     run_id: str,
-    dirty_before: list[str] | None,
+    dirty_before: Mapping[str, str] | None,
     snapshot_failed: bool = False,
 ) -> Path:
     """The account a work step leaves, carrying what was dirty before its session —
@@ -1780,7 +2094,7 @@ def write_work_report(
     directory = reports_of(root, run_id)
     directory.mkdir(parents=True, exist_ok=True)
     detail: dict[str, Any] = {DIRTY_BEFORE: None} if snapshot_failed else (
-        {} if dirty_before is None else {DIRTY_BEFORE: list(dirty_before)}
+        {} if dirty_before is None else {DIRTY_BEFORE: dict(dirty_before)}
     )
     path = directory / f"work_{step_id}.json"
     path.write_text(
@@ -1809,14 +2123,14 @@ def commit_as_step(
     message: str,
     *,
     step_id: str = "a",
-    dirty_before: Sequence[str] | None = (),
+    dirty_before: Mapping[str, str] | None = {},
     snapshot_failed: bool = False,
 ) -> CommandResult:
     """Commit the way the emitted commit node does: after a work step that recorded what
     was dirty before its session."""
     report = write_work_report(
         root, repository, step_id, run_id="run-1",
-        dirty_before=None if dirty_before is None else list(dirty_before),
+        dirty_before=None if dirty_before is None else dict(dirty_before),
         snapshot_failed=snapshot_failed,
     )
     context = RuntimeContext(
@@ -1881,6 +2195,112 @@ class AStagedDeletionIsCommittedWithTheStepsOtherWork(RepositoryCase):
         self.assertEqual(committed_paths_of_head(self.repository), ["README.md"])
 
 
+class AMarkerNeverOutrunsTheCommittedTree(RepositoryCase):
+    """[21 B]: path membership classifies a path the step itself changed as somebody
+    else's, so the commit held the marker and not the work the assertion passed over."""
+
+    def mark(self, step_id: str = "a", summary: str = "done") -> Path:
+        """The marker the mark node leaves in the tree before the commit node runs."""
+        return write_marker(self.repository, step_id, "run-1", "once", "once", summary)
+
+    def test_a_pre_dirty_path_the_step_changed_commits_nothing_at_all(self) -> None:
+        target = self.repository / "target.txt"
+        target.write_text("someone else's\n", encoding="utf-8")
+        before = snapshot_of(self.repository, "target.txt")
+        target.write_text("the step's own work\n", encoding="utf-8")
+        head = git(self.repository, ("rev-parse", "HEAD")).stdout
+        self.mark()
+
+        with self.assertRaises(CairnError) as caught:
+            commit_as_step(
+                self.root, self.repository, "cairn(a): work", dirty_before=before
+            )
+        self.assertEqual(caught.exception.cause, "excluded_path_changed")
+        self.assertEqual(caught.exception.detail["altered_excluded_paths"], ["target.txt"])
+        self.assertEqual(git(self.repository, ("rev-parse", "HEAD")).stdout, head)
+        # Neither marker nor partial output, and the step's own edit is left where it is
+        # for whoever has to settle the overlap.
+        self.assertEqual(target.read_text(encoding="utf-8"), "the step's own work\n")
+
+    def test_no_fresh_marker_survives_a_refusal(self) -> None:
+        # The gate reads the marker out of the working tree, so a marker left standing over
+        # state `HEAD` does not hold would make the next run skip the step that would
+        # redo the work.
+        target = self.repository / "target.txt"
+        target.write_text("someone else's\n", encoding="utf-8")
+        before = snapshot_of(self.repository, "target.txt")
+        target.write_text("the step's own work\n", encoding="utf-8")
+        marker = self.mark()
+        with self.assertRaises(CairnError):
+            commit_as_step(
+                self.root, self.repository, "cairn(a): work", dirty_before=before
+            )
+        self.assertFalse(marker.exists())
+        self.assertIsNone(read_marker(self.repository, "a"))
+
+    def test_a_marker_already_in_history_is_restored_rather_than_removed(self) -> None:
+        # An earlier run's committed marker is not this commit's to withdraw: the work
+        # behind it is in history, and removing it would make a step that is done run again.
+        self.mark(summary="the run that really did it")
+        git(self.repository, ("add", "--all"))
+        git(self.repository, ("commit", "--quiet", "-m", "an earlier run's marker"))
+        target = self.repository / "target.txt"
+        target.write_text("someone else's\n", encoding="utf-8")
+        before = snapshot_of(self.repository, "target.txt")
+        target.write_text("the step's own work\n", encoding="utf-8")
+        self.mark(summary="this run's claim")
+
+        with self.assertRaises(CairnError):
+            commit_as_step(
+                self.root, self.repository, "cairn(a): work", dirty_before=before
+            )
+        recorded = read_marker(self.repository, "a")
+        assert recorded is not None
+        self.assertEqual(recorded["summary"], "the run that really did it")
+
+    def test_a_pre_dirty_path_the_step_reverted_is_refused_too(self) -> None:
+        # Reverting an excluded path is altering it: the step wrote over a person's edit,
+        # and nothing in a path-only reading of before and after can see that it did.
+        (self.repository / "README.md").write_text("someone else's\n", encoding="utf-8")
+        before = snapshot_of(self.repository, "README.md")
+        (self.repository / "README.md").write_text("start\n", encoding="utf-8")
+        with self.assertRaises(CairnError) as caught:
+            commit_as_step(
+                self.root, self.repository, "cairn(a): work", dirty_before=before
+            )
+        self.assertEqual(caught.exception.cause, "excluded_path_changed")
+
+    def test_a_marker_dirty_before_the_step_is_taken_rather_than_proved_unchanged(
+        self,
+    ) -> None:
+        # The marker is the one path the step takes whoever had it dirty, so a marker the
+        # mark node rewrote is the commit working as intended and not an altered exclusion.
+        self.mark(summary="a killed run's claim")
+        before = snapshot_of(self.repository, ".steps/a.done")
+        self.assertEqual(list(before), [".steps/a.done"])
+        self.mark(summary="this run's claim")
+        (self.repository / "own.txt").write_text("the step's\n", encoding="utf-8")
+        result = commit_as_step(
+            self.root, self.repository, "cairn(a): work", dirty_before=before
+        )
+        self.assertEqual(result.status, "done")
+        self.assertEqual(
+            committed_paths_of_head(self.repository), [".steps/a.done", "own.txt"]
+        )
+        self.assertEqual(result.detail["left_uncommitted"], [])
+
+    def test_an_excluded_path_the_step_left_alone_still_commits(self) -> None:
+        (self.repository / "theirs.txt").write_text("someone else's\n", encoding="utf-8")
+        before = snapshot_of(self.repository, "theirs.txt")
+        (self.repository / "own.txt").write_text("the step's\n", encoding="utf-8")
+        result = commit_as_step(
+            self.root, self.repository, "cairn(a): work", dirty_before=before
+        )
+        self.assertEqual(result.status, "done")
+        self.assertEqual(committed_paths_of_head(self.repository), ["own.txt"])
+        self.assertEqual(result.detail["left_uncommitted"], ["theirs.txt"])
+
+
 class TheCommitCarriesOnlyTheStepsOwnWork(RepositoryCase):
     """[21]: a second session's three-file edit landed byte-identical inside
     `cairn(task_381_10): …`, under a message that described none of it."""
@@ -1889,7 +2309,10 @@ class TheCommitCarriesOnlyTheStepsOwnWork(RepositoryCase):
         (self.repository / "eslint.config.js").write_text("someone else's\n", encoding="utf-8")
         (self.repository / "own.txt").write_text("the step's\n", encoding="utf-8")
         result = commit_as_step(
-            self.root, self.repository, "cairn(a): work", dirty_before=["eslint.config.js"]
+            self.root,
+            self.repository,
+            "cairn(a): work",
+            dirty_before=snapshot_of(self.repository, "eslint.config.js"),
         )
         self.assertEqual(result.status, "done")
         self.assertEqual(committed_paths_of_head(self.repository), ["own.txt"])
@@ -1951,7 +2374,10 @@ class TheCommitCarriesOnlyTheStepsOwnWork(RepositoryCase):
         (self.repository / "theirs.txt").write_text("someone else's\n", encoding="utf-8")
         git(self.repository, ("add", "--", "theirs.txt"))
         result = commit_as_step(
-            self.root, self.repository, "cairn(a): work", dirty_before=["theirs.txt"]
+            self.root,
+            self.repository,
+            "cairn(a): work",
+            dirty_before=snapshot_of(self.repository, "theirs.txt"),
         )
         self.assertEqual(result.status, "done")
         self.assertEqual(committed_paths_of_head(self.repository), ["own.txt"])
@@ -1979,8 +2405,8 @@ class TheCommitCarriesOnlyTheStepsOwnWork(RepositoryCase):
         before = self.repository / "newdir" / "theirs.txt"
         before.parent.mkdir()
         before.write_text("theirs\n", encoding="utf-8")
-        snapshot = list(tree_state(self.repository) or ())
-        self.assertEqual(snapshot, ["newdir/theirs.txt"])
+        snapshot = snapshot_of(self.repository, "newdir/theirs.txt")
+        self.assertEqual(list(snapshot), ["newdir/theirs.txt"])
         (self.repository / "newdir" / "ours.txt").write_text("ours\n", encoding="utf-8")
         result = commit_as_step(self.root, self.repository, "cairn(a): work", dirty_before=snapshot)
         self.assertEqual(committed_paths_of_head(self.repository), ["newdir/ours.txt"])
@@ -1988,7 +2414,7 @@ class TheCommitCarriesOnlyTheStepsOwnWork(RepositoryCase):
 
     def test_a_worktree_that_started_clean_commits_everything_its_step_left(self) -> None:
         worktree = self.root / "trees" / "alpha"
-        setup_worktree(self.repository, worktree, "step/alpha", "main")
+        setup_worktree(self.repository, worktree, "main", plan="demo", step="alpha")
         self.assertEqual(tree_state(worktree), ())
         (worktree / "one.txt").write_text("1\n", encoding="utf-8")
         (worktree / "two.txt").write_text("2\n", encoding="utf-8")
@@ -2011,47 +2437,71 @@ class TheCommitCarriesOnlyTheStepsOwnWork(RepositoryCase):
             refuse_dirty_repository(self.repository)
         self.assertEqual(caught.exception.detail["paths"], ["newdir/"])
 
-    def test_a_prune_removes_merged_worktrees_and_branches(self) -> None:
-        worktree = self.root / "trees" / "alpha"
-        setup_worktree(self.repository, worktree, "step/alpha", "main")
-        result = prune_worktrees(
-            self.repository, [str(worktree)], ["step/alpha"], parent="main"
+    def prune(self, *steps: str, force: bool = False) -> Any:
+        return prune_worktrees(
+            self.repository, plan="demo", steps=list(steps), parent="main", force=force
         )
+
+    def test_a_prune_removes_merged_worktrees_and_branches(self) -> None:
+        worktree = self.step_worktree("alpha")
+        result = self.prune("alpha")
         self.assertEqual(result.status, "done")
         self.assertFalse(worktree.exists())
-        self.assertEqual(result.detail["deleted_branches"], ["step/alpha"])
+        self.assertEqual(result.detail["deleted_branches"], [self.step_branch("alpha")])
+
+    def test_a_deleted_branch_takes_its_ownership_record_with_it(self) -> None:
+        # The record exists to prove a surviving branch is this plan's. One left behind a
+        # branch that is gone would be the only evidence about a ref nothing can reach.
+        self.step_worktree("alpha")
+        self.assertIsNotNone(read_branch_owner(self.repository, "demo", "alpha"))
+        self.prune("alpha")
+        self.assertIsNone(read_branch_owner(self.repository, "demo", "alpha"))
 
     def test_a_prune_never_deletes_an_unmerged_branch(self) -> None:
-        worktree = self.root / "trees" / "alpha"
-        setup_worktree(self.repository, worktree, "step/alpha", "main")
+        worktree = self.step_worktree("alpha")
         (worktree / "work.txt").write_text("real\n", encoding="utf-8")
         git(worktree, ("add", "--all"))
         git(worktree, ("commit", "--quiet", "-m", "unmerged work"))
-        result = prune_worktrees(
-            self.repository, [str(worktree)], ["step/alpha"], parent="main"
+        result = self.prune("alpha")
+        self.assertEqual(result.detail["retained_branches"], [self.step_branch("alpha")])
+        self.assertIsNotNone(
+            resolve_ref(self.repository, f"refs/heads/{self.step_branch('alpha')}")
         )
-        self.assertEqual(result.detail["retained_branches"], ["step/alpha"])
-        self.assertIsNotNone(resolve_ref(self.repository, "refs/heads/step/alpha"))
+        # A retained branch keeps its record: it is the only thing that will let a later
+        # run of this plan prove the branch is its own and pick the work back up.
+        self.assertIsNotNone(read_branch_owner(self.repository, "demo", "alpha"))
+
+    def test_a_prune_reaches_no_ref_outside_the_plan_it_is_pruning(self) -> None:
+        # Two plans, one step id. The prune composes its own paths and branches from the
+        # plan it was given, so there is no argument through which it could name the other
+        # plan's branch at all ([27 A]).
+        theirs = setup_worktree(
+            self.repository,
+            worktrees_root_for(self.repository, "other") / "alpha",
+            "main",
+            plan="other",
+            step="alpha",
+        )
+        self.step_worktree("alpha")
+        self.prune("alpha")
+        self.assertIsNone(read_branch_owner(self.repository, "demo", "alpha"))
+        self.assertIsNotNone(read_branch_owner(self.repository, "other", "alpha"))
+        self.assertTrue(branch_exists(self.repository, str(theirs.detail["branch"])))
+        self.assertTrue(Path(str(theirs.detail["worktree"])).exists())
 
     def test_merged_is_decided_against_the_parent_the_topology_named(self) -> None:
         # `git branch -d` asks about HEAD, so a branch already folded into the parent
         # would be retained forever whenever the repository sits on something else.
-        worktree = self.root / "trees" / "alpha"
-        setup_worktree(self.repository, worktree, "step/alpha", "main")
+        self.step_worktree("alpha")
         git(self.repository, ("checkout", "--quiet", "-b", "elsewhere"))
         advance(self.repository, "unrelated.txt")
-        result = prune_worktrees(
-            self.repository, [str(worktree)], ["step/alpha"], parent="main"
-        )
-        self.assertEqual(result.detail["deleted_branches"], ["step/alpha"])
+        result = self.prune("alpha")
+        self.assertEqual(result.detail["deleted_branches"], [self.step_branch("alpha")])
 
     def test_a_prune_refuses_a_dirty_worktree_and_says_so(self) -> None:
-        worktree = self.root / "trees" / "alpha"
-        setup_worktree(self.repository, worktree, "step/alpha", "main")
+        worktree = self.step_worktree("alpha")
         (worktree / "wip.txt").write_text("killed mid-edit\n", encoding="utf-8")
-        result = prune_worktrees(
-            self.repository, [str(worktree)], ["step/alpha"], parent="main"
-        )
+        result = self.prune("alpha")
         self.assertEqual(result.detail["kept"], [str(worktree)])
         self.assertTrue((worktree / "wip.txt").exists())
         self.assertTrue(result.follow_up_work)
@@ -2061,8 +2511,8 @@ class TheCommitCarriesOnlyTheStepsOwnWork(RepositoryCase):
     ) -> None:
         # Re-running the plan is the recovery procedure, so the second prune must not
         # report work to rescue from a directory that no longer exists.
-        missing = str(self.root / "trees" / "never-made")
-        result = prune_worktrees(self.repository, [missing], ["step/nope"], parent="main")
+        result = self.prune("nope")
+        missing = str(worktrees_root_for(self.repository, "demo") / "nope")
         self.assertEqual(result.detail["already_gone"], [missing])
         self.assertEqual(result.detail["kept"], [])
         self.assertEqual(result.detail["retained_branches"], [])

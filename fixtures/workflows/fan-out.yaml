@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "fan-out",
-    "cairn_generator": "11",
+    "cairn_generator": "12",
     "cairn_engine": "2.11.0",
     "cairn_graph_sha256": "b97756700ae22f181a7b7f458f0b42eab757c9ec8565e5e119851362fd5e1a30",
-    "cairn_body_sha256": "ba02405ff47f7c09e5abd4c3c68c6286da4761e8b7a4f485ee5bd16ffec0b020"
+    "cairn_body_sha256": "3d3761db777ccb980bc2a6946fd2c56c973f66122f2196c815400a1d5402bf9a"
   },
   "params": [
     {
@@ -140,7 +140,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn worktree setup --plan fan-out --step keymap_reader --branch step/keymap_reader",
+      "run": "python3 -m cairn worktree setup --plan fan-out --step keymap_reader",
       "depends": [
         "commit_extract_the_loader_interface"
       ]
@@ -232,7 +232,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn worktree setup --plan fan-out --step theme_reader --branch step/theme_reader",
+      "run": "python3 -m cairn worktree setup --plan fan-out --step theme_reader",
       "depends": [
         "commit_extract_the_loader_interface"
       ]
@@ -324,7 +324,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn wave join --wave 2 --branch step/keymap_reader --branch step/theme_reader",
+      "run": "python3 -m cairn wave join --wave 2 --branch step/fan-out/keymap_reader --branch step/fan-out/theme_reader",
       "depends": [
         "commit_keymap_reader",
         "commit_theme_reader"
@@ -338,7 +338,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn merge land --slot 1 --provider claude --model sonnet --branch step/keymap_reader --branch step/theme_reader",
+      "run": "python3 -m cairn merge land --slot 1 --provider claude --model sonnet --branch step/fan-out/keymap_reader --branch step/fan-out/theme_reader",
       "depends": [
         "join_w2"
       ]
@@ -351,7 +351,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn merge verify --merge merge_w2_1 --branch step/keymap_reader --branch step/theme_reader",
+      "run": "python3 -m cairn merge verify --merge merge_w2_1 --branch step/fan-out/keymap_reader --branch step/fan-out/theme_reader",
       "depends": [
         "merge_w2_1"
       ]
@@ -364,7 +364,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn merge land --slot 2 --provider claude --model sonnet --branch step/keymap_reader --branch step/theme_reader",
+      "run": "python3 -m cairn merge land --slot 2 --provider claude --model sonnet --branch step/fan-out/keymap_reader --branch step/fan-out/theme_reader",
       "depends": [
         "verify_merge_w2_1"
       ]
@@ -377,7 +377,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn merge verify --merge merge_w2_2 --branch step/keymap_reader --branch step/theme_reader",
+      "run": "python3 -m cairn merge verify --merge merge_w2_2 --branch step/fan-out/keymap_reader --branch step/fan-out/theme_reader",
       "depends": [
         "merge_w2_2"
       ]

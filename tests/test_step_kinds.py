@@ -52,6 +52,7 @@ from cairn.providers import (
     run_provider,
 )
 from cairn.verify import REPORTED_KILLED, TIMED_OUT, judge
+from tests.ownership import own_repository
 from tests.test_step_protocol import plan_step
 
 
@@ -157,8 +158,14 @@ def report_file(env: dict[str, str], step: str = "step_a") -> Path:
 
 @contextmanager
 def engine_step(root: Path, env: dict[str, str] | None = None) -> Generator[None]:
-    """Run as the engine runs a step: its injected identity, in its working directory."""
+    """Run as the engine runs a step: its injected identity, in its working directory.
+
+    And in a repository the run holds, because that is the other half of what a step stands
+    in: every runtime subcommand proves it owns the repository before it runs anything
+    ([27 C]), so a directory with no lock in it is not a step's working directory at all.
+    """
     values = runtime_env(root) if env is None else env
+    own_repository(root, values["DAG_RUN_ID"])
     with patch.dict(os.environ, values, clear=True), chdir(root):
         yield
 
@@ -357,6 +364,35 @@ class ExecAndWait(unittest.TestCase):
         self.assertNotEqual(result[0], 0)
         self.assertEqual(result[5], "wait_timeout")
 
+    def test_a_predicate_never_runs_after_the_wait_loses_the_repository(self) -> None:
+        """[27 D]: a wait executes arbitrary shell over and over while holding the run
+        lock, and did so without checking that it still held it."""
+        with tempfile.TemporaryDirectory() as temporary:
+            ran = Path(temporary, "ran")
+            command = f"touch {shlex.quote(str(ran))}; false"
+            attempts = 0
+
+            def guard() -> None:
+                nonlocal attempts
+                attempts += 1
+                if attempts > 2:
+                    raise CairnError("lock_not_held", "the repository changed hands")
+
+            with self.assertRaises(CairnError) as caught:
+                run_wait_until(
+                    command,
+                    Path(temporary),
+                    "/bin/sh",
+                    60.0,
+                    0.01,
+                    guard=guard,
+                )
+            self.assertEqual(caught.exception.cause, "lock_not_held")
+            # Two predicates ran under ownership and the third never launched: the wait
+            # stops before the next attempt rather than at the end of the one in flight.
+            self.assertEqual(attempts, 3)
+            self.assertTrue(ran.exists())
+
     def test_cleanup_terminates_active_child(self) -> None:
         process = subprocess.Popen(
             [sys.executable, "-c", "import time; time.sleep(30)"],
@@ -430,6 +466,7 @@ class ExecAndWait(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             env = {**os.environ, **runtime_env(root), "PYTHONPATH": str(CAIRN_ROOT)}
+            own_repository(root, env["DAG_RUN_ID"])
             pid_path = root / "condition.pid"
             condition = (
                 f"{shlex.quote(sys.executable)} -c "
@@ -472,6 +509,7 @@ class ExecAndWait(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             env = {**os.environ, **runtime_env(root), "PYTHONPATH": str(CAIRN_ROOT)}
+            own_repository(root, env["DAG_RUN_ID"])
             pid_path = root / "child.pid"
             body = (
                 f"{shlex.quote(sys.executable)} -c "
@@ -522,6 +560,7 @@ class ExecAndWait(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             env = {**os.environ, **runtime_env(root), "PYTHONPATH": str(CAIRN_ROOT)}
+            own_repository(root, env["DAG_RUN_ID"])
             pid_path = root / "helpers"
             # A condition that backgrounds a helper and then fails: every poll would
             # otherwise leave one more sleeper behind, and the step exits on its own, so
@@ -840,6 +879,7 @@ class ExecAndWait(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             env = {**os.environ, **runtime_env(root), "PYTHONPATH": str(CAIRN_ROOT)}
+            own_repository(root, env["DAG_RUN_ID"])
             pid_path = root / "grandchild.pid"
             inner = (
                 f"{shlex.quote(sys.executable)} -c "

@@ -53,3 +53,27 @@ runtime ownership across branches, paths, and locks.
   `HEAD`.
 - A worktree-topology run is unaffected: nothing there is ever dirty except the step's own work, so scoping the stage changes nothing observable for it.
 - Reproduction: two Claude Code sessions in one checkout, one running a chain-shaped Cairn step, the other holding an unrelated uncommitted edit for the step's whole duration — the step's wrapping commit does not contain it.
+
+## Close-out
+
+Done. Both sections hold; B was built with [27](27-cross-plan-git-and-lock-isolation.md) C.
+
+**A step's commit claims the step's own work and nothing else in the checkout.** Every work
+step records, before its session, what is already uncommitted — each path together with the
+content it then holds. Its commit stages the paths dirty afterwards that were not dirty
+before, plus its own marker by path, and names the rest as `left_uncommitted` with one
+follow-up line, so `cairn(task_X): …` can be read as scoped without diffing it against the
+step's transcript. The no-op/failure distinction, the git-write mutex and `--no-verify` are
+all as they were; a worktree-topology run starts clean, so nothing there is observably
+different.
+
+**And a marker is published only over state the commit carries.** Path membership cannot
+establish that, so every excluded path is proved byte-identical to the baseline's content. A
+step that altered one fails `excluded_path_changed`, naming the overlap, and commits nothing
+— not the marker, not its own partial output. Reverting such a path counts as altering it,
+and content unreadable either time proves nothing and counts as altered too; the marker
+itself is exempt, because the step takes its own marker whoever had it dirty. Every refusal
+the commit reaches withdraws the fresh marker from the working tree and restores whatever
+`HEAD` held, because the gate deciding whether the step runs again reads the tree rather
+than `HEAD` — so no marker survives over work absent from history, and the next run redoes
+the step once the overlap is settled.

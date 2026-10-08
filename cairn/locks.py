@@ -36,6 +36,7 @@ from cairn.gitio import (
     hash_object,
     read_blob,
     resolve_ref,
+    same_repository,
     state_directory,
     tree_state,
     update_ref,
@@ -548,43 +549,84 @@ def acquire_run_lock(
     return HeldLock(record, object_id, None if own else holder)
 
 
-def refuse_lost_repository(directory: Path, run_id: str) -> None:
-    """Halt before starting a session or writing if this repository now belongs to a different run.
+def require_run_lock(
+    directory: Path, *, run_id: str, acquired_object: str | None = None
+) -> LockRecord:
+    """Prove this run still owns this repository, or halt. Every runtime write goes through it.
 
-    A run whose lock was reclaimed while it queued would otherwise find out at its next
-    commit — an hour of agent work later, with a second run already writing to the
-    same repository. One ref read in front of that is enough.
+    **Ownership is positive.** Inspection reporting no readable holder is not permission: it
+    is the loss of the only thing that said this run may write here. So a lock that is
+    absent, that names no holder Cairn can read, that names a different run, or that has
+    been replaced since this run acquired it, all answer the same way — this run no longer
+    owns the repository, and nothing further may touch it ([27 C]).
 
-    Only a lock held by *somebody else* is evidence of loss. An absent lock is not: these
-    subcommands are the step vocabulary, exercisable on their own, and a working directory
-    that is no repository at all has nothing to lose. The same three-valued discipline the
-    reclaim decision uses — refuse on proof, never on silence.
+    That is the inverse of the acquisition's reading of the same three states, and the
+    inverse is the design. Acquisition is where an unreadable lock may be taken and a
+    repository recovered, because a repository nobody can run against is a state I4 forbids.
+    A step already running has no such claim to make: it either still holds what it took, or
+    it stops.
 
-    This is a check at the head of a step, not a heartbeat. A run that renewed its lease
-    as it worked would make the reclaim window meaningless as a bound on how long a
-    *crashed* run holds a repository, which is the only job that window has.
+    Four things are checked, and each is one way a run can be writing to a repository that
+    is no longer its own:
+
+    - a present, readable run-lock record, because its absence is loss and not freedom;
+    - a `run_id` that is this run's;
+    - the object the acquisition pinned, where this run's own acquisition report still says
+      what that was — a lock replaced in place names the same run and proves nothing;
+    - a repository the record agrees is the one this step is standing in.
+
+    This is a check at the head of a step and before each attempt of a wait's predicate, and
+    deliberately not a heartbeat. A run that renewed its lease as it worked would make the
+    reclaim window meaningless as a bound on how long a *crashed* run holds a repository,
+    which is the only job that window has.
     """
-    try:
-        held = read_run_lock(directory)
-    except CairnError as exc:
-        # Only "there is no repository here" is silence. A repository that will not answer
-        # is the case this module elsewhere insists must fail closed: reading it as "no
-        # lock, carry on" would run a whole agent session in a repository another run may
-        # well own, which is the one outcome the guard exists to prevent.
-        if exc.cause == "not_a_repository":
-            return
-        raise
+    held = _held(directory)
     if held is None:
-        return
-    record, _ = held
-    if record["run_id"] == run_id:
-        return
-    raise CairnError(
-        "lock_not_held",
-        f"run {run_id!r} no longer holds {record['repository']}, which is held by "
-        f"{describe_holder(record)}",
-        detail={"run_id": run_id, "holder": dict(record)},
-    )
+        raise CairnError(
+            "lock_not_held",
+            f"{directory} carries no run lock, so run {run_id!r} cannot prove it owns the "
+            "repository it is about to write to; the lock it acquired has been deleted, or "
+            "this directory is not the repository the run acquired",
+            detail={"run_id": run_id, "working_directory": str(directory)},
+        )
+    object_id, record = held
+    if record is None:
+        raise CairnError(
+            "lock_not_held",
+            f"the run lock on {directory} names no holder Cairn can read, so run "
+            f"{run_id!r} cannot prove it owns the repository",
+            detail={"run_id": run_id, "working_directory": str(directory)},
+        )
+    if record["run_id"] != run_id:
+        raise CairnError(
+            "lock_not_held",
+            f"run {run_id!r} no longer holds {record['repository']}, which is held by "
+            f"{describe_holder(record)}",
+            detail={"run_id": run_id, "holder": dict(record)},
+        )
+    if acquired_object is not None and object_id != acquired_object:
+        raise CairnError(
+            "lock_not_held",
+            f"the run lock on {record['repository']} was replaced since run {run_id!r} "
+            "acquired it, so what it records is no longer the lock this run took",
+            detail={
+                "run_id": run_id,
+                "acquired_object": acquired_object,
+                "object_id": object_id,
+            },
+        )
+    if not same_repository(Path(record["repository"]), common_directory(directory)):
+        raise CairnError(
+            "lock_not_held",
+            f"run {run_id!r} holds {record['repository']} and is standing in {directory}, "
+            "which is a different repository",
+            detail={
+                "run_id": run_id,
+                "held": record["repository"],
+                "working_directory": str(directory),
+            },
+        )
+    return record
 
 
 def release_run_lock(directory: Path, *, run_id: str) -> LockRecord | None:
@@ -643,9 +685,9 @@ __all__ = [
     "read_run_lock",
     "reclaimability",
     "refuse_dirty_repository",
-    "refuse_lost_repository",
     "refuse_unresolved_merge",
     "release_run_lock",
+    "require_run_lock",
     "stale_git_locks",
     "taking_is_allowed",
     "unresolved_merge",

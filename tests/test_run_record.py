@@ -1364,6 +1364,46 @@ class AWavesExclusionsComeFromTheCensus(unittest.TestCase):
         self.assertEqual(record["waves"][0]["excluded"], [])
         self.assertEqual(record["git"]["excluded"], [])
 
+    def _census_declining(self, branch: str, cause: str) -> RunRecord:
+        """A run whose own step `beta` was excluded, and whose join declined a branch too."""
+        state, reports, run_id = load("green-with-exclusions")
+        reports["join_w1"] = {
+            "run_id": run_id,
+            "status": "done",
+            "step_id": "join_w1",
+            "summary": "wave 1: 1 of 2 branches carry work to land",
+            "needs_user_decision": False,
+            "follow_up_work": [],
+            "cause": None,
+            "detail": {
+                "wave": 1,
+                "into": "main",
+                "arrived": ["step/green-with-exclusions/alpha"],
+                "excluded": {branch: {"cause": cause, "summary": "nothing landed"}},
+                "settled": [],
+            },
+        }
+        return extract(state, reports, run_id=run_id)
+
+    def test_a_branch_its_own_step_already_accounts_for_is_named_once(self) -> None:
+        # The join reads the gate's report and the verdict walks the gate's node, so a
+        # branch declined for the cause its step was excluded for is one event seen twice.
+        record = self._census_declining(
+            "step/green-with-exclusions/beta", "gate_indeterminate"
+        )
+        excluded = [item for item in record["attention"] if item["kind"] == "excluded"]
+        self.assertEqual([item["subject"] for item in excluded], ["beta"])
+
+    def test_a_branch_declined_for_a_cause_of_its_own_is_named_beside_its_step(self) -> None:
+        # The two disagree exactly when something went wrong between them, so the cause is
+        # part of the match and the only line naming a dropped branch is never dropped.
+        record = self._census_declining("step/green-with-exclusions/beta", "verify_failed")
+        excluded = [item for item in record["attention"] if item["kind"] == "excluded"]
+        self.assertEqual(
+            [item["subject"] for item in excluded],
+            ["beta", "step/green-with-exclusions/beta"],
+        )
+
     def _green_run_whose_census_declined_a_branch(self) -> RunRecord:
         """Every step verified, and the join still declined one of their branches.
 
