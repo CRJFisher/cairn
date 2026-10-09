@@ -178,6 +178,31 @@ subagent is made to report each time it does: measured, a review that dispatched
 subagents filed an interim `failed` while they ran and `done` once both had finished. A
 subagent's calls report for the subagent, never for the step.
 
+**A report accepted after refused ones is asked for again, once.** The provider refuses a
+call whose output lacks the shape, and accepting one ends the turn. Measured across every
+recorded run: seven review sessions had their real account refused — `follow_up_work` written
+inside `summary` — and two of them then filed `summary: "test"` to find out what would pass.
+That probe was accepted, ended the session, and became the step's whole account, with eleven
+fixes and four follow-ups lost behind it. So where the accepted report followed refused ones,
+the session is continued once with this, and its new report replaces the accepted one:
+
+```text
+This session is ending now and nothing will re-invoke it. Do no further work.
+
+The structured output refused {refused} report(s) you filed before it accepted this one,
+which is the account this step will be recorded by:
+
+{accepted}
+
+If that is your whole account of this step, file it again unchanged. If it is not — a
+placeholder, a test, or a shortened version of what you meant — file your whole account
+now, with status, summary, follow_up_work and needs_user_decision each in its own field.
+```
+
+It is bounded like the resume for a report below, and the step's `detail` records
+`report_refusals` and what came of the ask under `refiled`: `refiled`, `still_silent` or
+`resume_failed`. Whatever it does, the accepted report stands unless a new one replaces it.
+
 ## The preamble
 
 Every agent step's prompt is this text followed by the step's task. Measured against a
@@ -213,6 +238,11 @@ end state now holds, `noop` when it already held and you changed nothing, and `f
 when you could not reach it. List work you found but did not do in `follow_up_work`. Set
 `needs_user_decision` when a human has to decide something before the plan can safely
 proceed; that blocks the step rather than failing it.
+
+A report that is accepted ends your turn, and may be the account this step is recorded by:
+never file a placeholder or a test report. If the structured output refuses a report, it
+names what is missing; file your whole report again with each of the four fields in its own
+place.
 
 The task:
 ```

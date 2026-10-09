@@ -111,16 +111,17 @@ HANG_GUARD = 14400
 # rather than a dated identifier, so the default does not go stale with a release.
 AGENT_MODEL = "sonnet"
 
-# Nothing is retried. A step that failed because the provider blinked and one that failed
-# because the task is wrong are indistinguishable from outside, and a second session would
-# run against a repository the first one already changed.
+# The engine retries nothing. A fresh session started over a failed one would run against a
+# repository the first one already changed, knowing nothing of what it did.
 #
-# A subscription limit is not a failure and is not retried either: the engine's retry policy
-# is a static number in a file and cannot read the reset time a limit carries. The step
-# itself holds instead — before a session, when the shared reading says a window is closed or
-# closing, and after one, when a session meets the limit and is resumed once the window
-# reopens ([headroom.py]). A hold longer than the step can wait ends it `quota_held`, naming
-# the moment, and the committed marker means the re-run skips what already landed.
+# Two interruptions are not failures, and the step itself holds through them and resumes
+# the **same** session, which still holds the task and what it has done so far
+# ([headroom.py]). A subscription limit: held before a session when the shared reading says a
+# window is closed or closing, and after one that meets the limit, until the window reopens.
+# A lost provider — a session that ended on an `api_error` the provider's own client had
+# already given up retrying — held until a probe reaches the provider again. A hold longer
+# than the step can wait ends it `quota_held` or `provider_unreachable`, and the committed
+# marker means the re-run skips what already landed.
 AGENT_RETRIES = 0
 COMMAND_RETRIES = 0
 RETRY_INTERVAL = 1
@@ -176,6 +177,12 @@ AGENT_RESUME_MARGIN = 30
 # exactly as it grows by the report grace, so the run's maximum and the lock's reclaim window
 # stay derivable from the graph ([headroom.py]).
 QUOTA_WAIT = 21600
+
+# How long an agent step may spend waiting for a provider it lost mid-session to answer
+# again. Drawn from the same hold budget as `QUOTA_WAIT` rather than added to it, so the
+# engine's bound is unchanged: an outage outlasting this is not a blip the step can ride out,
+# and the queue behind it is better told so than held for the rest of the day.
+OUTAGE_WAIT = 14400
 
 # How full a window may be before a session is not started into it. One figure per window,
 # because 0.95 of a 5-hour window reopens within hours and 0.95 of a weekly one may not

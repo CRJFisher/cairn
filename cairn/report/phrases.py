@@ -74,7 +74,13 @@ from cairn.verify import (
     ORCHESTRATOR_DIED as CAUSE_ORCHESTRATOR_DIED,
 )
 from cairn.verify import (
+    PROVIDER_FAILED as CAUSE_PROVIDER_FAILED,
+)
+from cairn.verify import (
     PROVIDER_PROTOCOL as CAUSE_PROVIDER_PROTOCOL,
+)
+from cairn.verify import (
+    PROVIDER_UNREACHABLE as CAUSE_PROVIDER_UNREACHABLE,
 )
 from cairn.verify import (
     QUOTA_HELD as CAUSE_QUOTA_HELD,
@@ -212,6 +218,19 @@ SENTENCE_BY_CAUSE: dict[str, str] = {
         "met the limit and could not resume its session. Its work was not judged wrong; the "
         "step names the window and when it reopens, and a re-run after that moment skips "
         "everything already landed"
+    ),
+    CAUSE_PROVIDER_FAILED: (
+        "the step's session ended on a fault of the provider's own process — a crash, a "
+        "launch that failed, a limit on turns — before it gave any verdict of its own. This "
+        "is not a step that reported failure; where a divergence stands beside it, an "
+        "assertion ran over what the session left and that is how it went"
+    ),
+    CAUSE_PROVIDER_UNREACHABLE: (
+        "the step's session lost the model provider — no connection, an edge or server "
+        "error, a credential refused — and the step held, probing, for as long as it may "
+        "wait without the provider answering again. Its work was not judged wrong; the "
+        "step's summary says what the provider answered, and a re-run once it answers again "
+        "skips everything already landed"
     ),
 }
 

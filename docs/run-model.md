@@ -254,11 +254,13 @@ Each step carries `step_id`, `outcome`, `overlays`, `cause`, `position`, `asked`
 `headroom` is present on an agent step whose session reached admission, and on a step holding
 right now. It carries the `admission` decided — `admitted`, `warned`, `unknown`, `inert` or
 `held` — with the `reason`, the `reading` it rested on, every `holds` entry (window, from,
-until, why, and whether it came before the session or `after` a limit), the number of
-`resumes` after a limit, and, on a step that stopped at the allowance, the `held_window` and the
-moment it `held_until`. `holding` is the hold a running step is announcing now, read from
+until, why, and whether it came before the session, `after` a limit, or `after` an outage —
+a session that lost the model provider, whose hold names no window), the number of `resumes`
+after a hold, and, on a step that stopped at the allowance, the `held_window` and the moment it
+`held_until`. `holding` is the hold a running step is announcing now, read from
 `runs/<run-id>/holds/` and only while the engine still calls the step running — which is what
-lets a run waiting hours for a window read as waiting rather than stalled.
+lets a run waiting hours for a window, or for the provider to answer again, read as waiting
+rather than stalled.
 
 `assertion_exit` is what the step's assertion exited, and `assertion_source` says which
 execution backed it — `executed` by the step's own assertion node, or `shared` from the

@@ -1631,6 +1631,8 @@ class TheGateIsStatedOnce(unittest.TestCase):
                 "orchestrator_died",
                 "assertion_interrupted",
                 "quota_held",
+                "provider_failed",
+                "provider_unreachable",
             ),
         )
 

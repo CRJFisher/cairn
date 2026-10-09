@@ -150,8 +150,10 @@ def render(proposals: list[Proposal], graph_path: str = "<graph>") -> str:
             # what would be accepted.
             lines.extend(
                 [
-                    "The derivation proposed nothing for this step. An assertable end state "
-                    "takes one of these shapes:",
+                    (
+                        "The derivation proposed nothing for this step. An assertable end "
+                        "state takes one of these shapes:"
+                    ),
                     "",
                     *(f"  - {shape}" for shape in END_STATE_SHAPES),
                     "",

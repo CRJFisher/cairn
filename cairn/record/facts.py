@@ -13,6 +13,7 @@ agreeing with it quietly.
 
 from __future__ import annotations
 
+from cairn.headroom import AFTER_OUTAGE
 from cairn.record.model import AllowanceHold, AllowanceWindow, Headroom, RunRecord
 from cairn.record.vocabulary import PROVENANCE_ABSENT, STEP_OUTCOMES
 
@@ -54,8 +55,9 @@ def _windows(windows: list[AllowanceWindow]) -> str:
 
 
 def _hold(hold: AllowanceHold) -> str:
+    held_on = "the model provider" if hold["after"] == AFTER_OUTAGE else hold["window"] or "the allowance"
     return (
-        f"{hold['window'] or 'the allowance'} from {hold['started'] or 'an unrecorded time'} "
+        f"{held_on} from {hold['started'] or 'an unrecorded time'} "
         f"until {hold['until'] or 'an unrecorded time'}: {hold['why'] or 'no reason recorded'}"
     )
 

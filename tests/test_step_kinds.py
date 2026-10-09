@@ -43,15 +43,24 @@ from cairn.providers import (
     ENDED_WITHOUT_REPORTING,
     NEVER_DELIVERED,
     PROVIDER_RUNNERS,
+    REFILE_ANSWERED,
     RESUME_ATTEMPTED,
     RESUME_FAILED,
     RESUME_STILL_SILENT,
     Observer,
     ended_without_reporting,
+    provider_answered,
     run_claude,
     run_provider,
 )
-from cairn.verify import REPORTED_KILLED, TIMED_OUT, judge
+from cairn.verify import (
+    PROVIDER_FAILED,
+    PROVIDER_UNREACHABLE,
+    REPORTED_KILLED,
+    REPORTED_NOTHING,
+    TIMED_OUT,
+    judge,
+)
 from tests.ownership import own_repository
 from tests.test_step_protocol import plan_step
 
@@ -1228,6 +1237,49 @@ class ProviderBehavior(unittest.TestCase):
             result = run_claude(StepPrompt(None, "x"), Path.cwd(), "auto", None, [], SpendLimit)
         self.assertEqual(result[5], "rate_limited")
 
+    def _ended_on_api_error(self, status: int | None) -> CommandResult:
+        edge = (
+            'Failed to authenticate. API Error: 403 {"title":"Error 1034: Edge IP Restricted"}'
+        )
+
+        class ApiError(FakeProcess):
+            def __init__(self, command: list[str], **kwargs: object) -> None:
+                super().__init__(command, **kwargs)
+                self.returncode: int | None = 1
+
+            def output(self) -> dict[str, Any]:
+                record = super().output()
+                record["terminal_reason"] = "api_error"
+                record["api_error_status"] = status
+                record["result"] = edge
+                del record["structured_output"]
+                return record
+
+        with redirect_stdout(io.StringIO()):
+            return run_claude(StepPrompt(None, "x"), Path.cwd(), "auto", None, [], ApiError)
+
+    def test_a_provider_the_session_could_not_reach_is_an_outage_not_a_failure(self) -> None:
+        """Measured: a Cloudflare edge answered 403 fifteen turns into a session, after the
+        provider's own client had given up, and the step was excluded as a failure."""
+        for status in (None, 401, 403, 408, 500, 529):
+            with self.subTest(status=status):
+                result = self._ended_on_api_error(status)
+                self.assertEqual(result.cause, PROVIDER_UNREACHABLE)
+                self.assertEqual(result.detail["api_error_status"], status)
+                self.assertIn("Edge IP Restricted", result.detail["api_error"])
+
+    def test_a_request_the_provider_refused_as_wrong_is_the_sessions_failure(self) -> None:
+        for status in (400, 404, 413):
+            with self.subTest(status=status):
+                self.assertEqual(self._ended_on_api_error(status).cause, PROVIDER_FAILED)
+
+    def test_a_probe_reached_the_provider_only_when_it_was_served(self) -> None:
+        self.assertTrue(provider_answered([{"type": "rate_limit_event"}]))
+        self.assertTrue(provider_answered([{"type": "result", "is_error": False}]))
+        self.assertFalse(provider_answered([{"type": "result", "is_error": True}]))
+        self.assertFalse(provider_answered([{"type": "system", "subtype": "api_retry"}]))
+        self.assertFalse(provider_answered([]))
+
     def test_protocol_failure_preserves_available_provider_detail(self) -> None:
         class Mismatched(FakeProcess):
             def output(self) -> dict[str, Any]:
@@ -1840,6 +1892,115 @@ class TheReportIsTheLastOneTheSessionFiled(unittest.TestCase):
             run_claude(StepPrompt(None, "do work"), Path("/tmp"), "auto", None, [], factory)
         self.assertEqual(len(made), 2)
         self.assertEqual(made[1].prompt, RESUME_FOR_REPORT)
+
+
+class AReportAcceptedAfterRefusedOnesIsAskedForAgain(unittest.TestCase):
+    """Measured: a review's real account was refused three times — its `follow_up_work`
+    written inside its `summary` — and the session then filed `summary: "test"`, which was
+    accepted, ended the session, and became the step's whole account."""
+
+    REFUSED: ClassVar[dict[str, Any]] = {
+        "status": "done",
+        "summary": 'eleven fixes</summary><parameter name="follow_up_work">["a"]',
+        "needs_user_decision": False,
+    }
+
+    def _scripted(
+        self, refile: dict[str, Any] | None
+    ) -> tuple[Callable[..., FakeProcess], list[FakeProcess]]:
+        made: list[FakeProcess] = []
+
+        def factory(command: list[str], **kwargs: object) -> FakeProcess:
+            process = FakeProcess(command, **kwargs)
+            if not made:
+                probe = report("done", "test")
+                closing = {**process.output(), "structured_output": probe}
+                process.stdout = FakeOutput(
+                    "".join(
+                        line + "\n"
+                        for line in [
+                            filed_report({"file_path": "dummy"}),
+                            filed_report(self.REFUSED),
+                            filed_report(self.REFUSED),
+                            filed_report(probe),
+                            json.dumps(closing),
+                        ]
+                    )
+                )
+            elif refile is not None:
+                process.stdout = FakeOutput(session_stream({**process.output(), **refile}))
+            made.append(process)
+            return process
+
+        return factory, made
+
+    def _ran(self, factory: Callable[..., FakeProcess]) -> CommandResult:
+        with redirect_stdout(io.StringIO()):
+            return run_claude(
+                StepPrompt(None, "do work"), Path("/tmp"), "auto", "sonnet", [], factory
+            )
+
+    def test_the_session_is_asked_once_and_its_whole_account_replaces_the_probe(self) -> None:
+        whole = {**report("done", "eleven fixes"), "follow_up_work": ["a", "b"]}
+        factory, made = self._scripted({"structured_output": whole, "num_turns": 1})
+        result = self._ran(factory)
+        self.assertEqual(len(made), 2)
+        self.assertIn("--resume", made[1].command)
+        self.assertIn("refused 3 report(s)", made[1].prompt)
+        self.assertIn('"summary": "test"', made[1].prompt)
+        self.assertEqual(result.summary, "eleven fixes")
+        self.assertEqual(result.follow_up_work, ["a", "b"])
+        self.assertEqual(result.detail["report_refusals"], 3)
+        self.assertEqual(result.detail["refiled"], REFILE_ANSWERED)
+        self.assertEqual(result.detail["turn_count"], 3)
+
+    def test_a_session_that_does_not_file_again_keeps_the_report_it_filed(self) -> None:
+        factory, made = self._scripted({"structured_output": None})
+        result = self._ran(factory)
+        self.assertEqual(len(made), 2)
+        self.assertEqual(result.summary, "test")
+        self.assertEqual(result.detail["refiled"], RESUME_STILL_SILENT)
+
+    def test_a_report_accepted_first_time_is_never_asked_for_again(self) -> None:
+        made: list[FakeProcess] = []
+
+        def factory(command: list[str], **kwargs: object) -> FakeProcess:
+            process = FakeProcess(command, **kwargs)
+            made.append(process)
+            return process
+
+        result = self._ran(factory)
+        self.assertEqual(len(made), 1)
+        self.assertNotIn("refiled", result.detail)
+
+
+class AProviderFaultIsNeverTheStepsOwnVeto(unittest.TestCase):
+    """Measured: a session cut off by the provider was recorded as having "reported 'failed'
+    while its assertion passed" — a verdict it never gave."""
+
+    def test_each_way_a_session_ends_unreported_is_read_as_unreported(self) -> None:
+        for cause, excluded in (
+            ("provider_failed", PROVIDER_FAILED),
+            ("turn_limit", PROVIDER_FAILED),
+            ("process_launch_failed", PROVIDER_FAILED),
+            ("provider_unavailable", PROVIDER_FAILED),
+            ("provider_unreachable", PROVIDER_UNREACHABLE),
+        ):
+            with self.subTest(cause=cause):
+                said = {
+                    "status": "failed",
+                    "cause": cause,
+                    "needs_user_decision": False,
+                    "summary": "agent process ended",
+                }
+                verdict = judge(0, said)
+                self.assertFalse(verdict["record"])
+                self.assertEqual(verdict["cause"], excluded)
+                self.assertEqual(
+                    verdict["divergence"], {"reported": REPORTED_NOTHING, "asserted": True}
+                )
+                self.assertNotIn("reported failure", verdict["summary"])
+                self.assertIsNone(judge(1, said)["divergence"])
 
 
 class AStepLedByACommandRunsItAloneFirst(unittest.TestCase):

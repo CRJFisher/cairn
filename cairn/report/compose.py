@@ -15,6 +15,7 @@ Sections are built by walking `SECTIONS`, so their order is the tuple's and no c
 
 from __future__ import annotations
 
+from cairn.headroom import AFTER_OUTAGE
 from cairn.record.engine import RUN_RUNNING
 from cairn.record.model import RunRecord
 from cairn.record.vocabulary import (
@@ -192,11 +193,16 @@ def _verdict(record: RunRecord) -> list[Block]:
     for step in record["steps"]:
         headroom = step["headroom"]
         if headroom is not None and headroom["holding"] is not None:
+            waiting_for = (
+                "the model provider to answer again"
+                if headroom["holding"]["after"] == AFTER_OUTAGE
+                else "the subscription's allowance"
+            )
             blocks.append(
                 Statement(
                     "statement",
                     (
-                        Chrome(f"{step['step_id']} is waiting for the subscription's allowance, not stalled:"),
+                        Chrome(f"{step['step_id']} is waiting for {waiting_for}, not stalled:"),
                         Fact((f"step.{step['step_id']}.holding",)),
                         Chrome("."),
                     ),
@@ -597,7 +603,7 @@ def _receipts(record: RunRecord) -> list[Block]:
                     ("because", Fact((f"{key}.allowance_reason",))),
                     ("the allowance it was admitted on", Fact((f"{key}.allowance_reading",))),
                     ("held", Fact((f"{key}.holds",))),
-                    ("resumed after a limit", Fact((f"{key}.resumes",))),
+                    ("resumed after a hold", Fact((f"{key}.resumes",))),
                     ("stopped holding on", Fact((f"{key}.held_window",))),
                     ("which reopens", Fact((f"{key}.held_until",))),
                     ("holding now", Fact((f"{key}.holding",))),

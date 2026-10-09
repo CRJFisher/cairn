@@ -422,10 +422,39 @@ same 6-hour hold budget, and its outcome feeds the same reading.
 Held time is never charged as work: every session the step opens shares one hang guard,
 counted as time inside a session, and each resume is given what is left of it.
 
+### Losing the provider mid-session
+
+A session can also end because the model provider could not be reached: no connection, an
+edge or server error, a credential refused. The provider's own client has already retried
+whatever it judged transient — up to ten times with backoff — so a session that ends this
+way, as an `api_error` with no HTTP status or a 401, 403, 408 or 5xx, met something a short
+retry did not outlast. Measured: a Cloudflare edge answering 403 _"Edge IP Restricted"_
+fifteen turns into a session ended a run and the queue behind it.
+
+Such a session is a pause, like a limit. The step holds and probes the provider with the
+allowance's own probe — at once, then after 1, 2, 5 and every 10 minutes — and as soon as a
+probe is served it **resumes the session by id**, asked to continue from where the tree now
+stands. A session lost before any of it was kept cannot be resumed; the task then starts
+again in a fresh session, whose preamble sends it to the tree for whatever the lost one did.
+A resumed session that loses the provider again is held again.
+
+The step may spend at most `OUTAGE_WAIT`, **4 hours**, waiting on the provider, drawn from
+the same 6-hour hold budget as the allowance, so the engine's bound on the step is
+unchanged. A provider that does not answer within it ends the step **`provider_unreachable`**,
+and its summary quotes what the provider answered: _the model provider could not be reached
+for 240 min after the session lost it — the model provider could not be reached (HTTP 403:
+…)_. Its work was not judged; the run's next action is a re-run, which skips every step that
+already landed. While it waits, the step announces the hold like any other, so the run reads
+as waiting on the provider rather than stalled. Any other `api_error` — a request the
+provider refused as malformed — is the session's failure, `provider_failed`, because no wait
+changes it.
+
 ### What the step's report carries
 
 `detail.headroom` records the admission decision and its reason, the reading it rested on
 with each window's age and source, every hold (window, from, until, why, and whether it came
-before the session or after a limit), and every resume. `detail.resets_at` is the ISO-8601
-UTC moment of the furthest `resetsAt` the session's stream reported. The run record and every
-report state the same facts ([run-model.md](run-model.md)).
+before the session, after a limit, or after an outage), and every resume. `detail.resets_at`
+is the ISO-8601 UTC moment of the furthest `resetsAt` the session's stream reported, and a
+session that ended on an `api_error` carries `detail.api_error_status` and the provider's own
+words in `detail.api_error`. The run record and every report state the same facts
+([run-model.md](run-model.md)).

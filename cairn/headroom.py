@@ -24,6 +24,12 @@ depends on this check having run.
 **Cairn never computes a reset.** A hold lasts until the moment a measurement reported, and
 the step then measures again rather than believing the clock. A window that reopens late or
 moves its reset is a few more minutes of hold, never a session started into a closed window.
+
+**A lost provider is the same kind of pause.** A session that ends because the model provider
+could not be reached — no connection, an edge or server error, a credential refused, after the
+provider's own client gave up retrying — holds on the same budget, probing with the same
+instrument until the provider answers, and is then resumed by id. Only an outage longer than
+`OUTAGE_WAIT` ends the step, `provider_unreachable`; a network blip never ends a queue.
 """
 
 from __future__ import annotations
@@ -40,6 +46,7 @@ from pathlib import Path
 from typing import Any, NamedTuple, TypedDict, cast
 
 from cairn.core import (
+    EXIT_FAILED,
     EXIT_RATE_LIMITED,
     CairnError,
     CommandResult,
@@ -48,8 +55,8 @@ from cairn.core import (
 )
 from cairn.layout import HEADROOM_ENDPOINT_ENV, headroom_directory, holds_directory
 from cairn.locks import exclusive_lock
-from cairn.plan.schema import HANG_GUARD, HOLD_THRESHOLDS, QUOTA_WAIT
-from cairn.protocol import RESUME_AFTER_LIMIT
+from cairn.plan.schema import HANG_GUARD, HOLD_THRESHOLDS, OUTAGE_WAIT, QUOTA_WAIT
+from cairn.protocol import RESUME_AFTER_LIMIT, RESUME_AFTER_OUTAGE
 from cairn.providers import (
     METERED_PROVIDERS,
     RATE_LIMITED,
@@ -57,12 +64,13 @@ from cairn.providers import (
     EndpointRefused,
     Unmeasured,
     iso_moment,
+    provider_answered,
     read_usage,
     reset_epoch,
     run_probe,
     run_provider,
 )
-from cairn.verify import QUOTA_HELD
+from cairn.verify import PROVIDER_FAILED, PROVIDER_UNREACHABLE, QUOTA_HELD
 
 WINDOW_FIVE_HOUR = "five_hour"
 WINDOW_SEVEN_DAY = "seven_day"
@@ -94,9 +102,11 @@ INERT = "inert"
 HELD = "held"
 ADMISSIONS: tuple[str, ...] = (ADMITTED, WARNED, UNKNOWN, INERT, HELD)
 
-# Which moment a hold answered: the one before a session started, or a limit a session met.
+# Which moment a hold answered: the one before a session started, a limit a session met, or
+# a provider a session lost.
 BEFORE_SESSION = "admission"
 AFTER_LIMIT = "limit"
+AFTER_OUTAGE = "outage"
 
 # A reading older than this is unknown rather than stale-but-trusted.
 READING_TTL = 600.0
@@ -106,6 +116,10 @@ RESET_SETTLE = 60.0
 # The waits between measurements of a window still closed after the moment it was reported
 # to reopen, capped at the last.
 RECHECK_BACKOFF: tuple[float, ...] = (300.0, 600.0, 1200.0)
+# The waits between probes of a provider a session lost, capped at the last. The first probe
+# is immediate: the provider's client has already backed off and retried by the time the
+# session ends, so a blip is often over by then.
+OUTAGE_BACKOFF: tuple[float, ...] = (60.0, 120.0, 300.0, 600.0)
 
 READING_FILE = "reading.json"
 READING_LOCK = "reading.lock"
@@ -596,7 +610,8 @@ class Resume(TypedDict):
 
 
 Session = Callable[[float], CommandResult]
-Resumer = Callable[[str, float], CommandResult]
+# A session continued by id: the session, what it is told, and what is left of the guard.
+Resumer = Callable[[str, str, float], CommandResult]
 Announcer = Callable[[Hold | None], None]
 
 
@@ -663,6 +678,16 @@ def _limit_window(result: CommandResult) -> tuple[str, int | None]:
     return _text(info.get("rateLimitType")) or WINDOW_FIVE_HOUR, reset_epoch(chosen)
 
 
+def _outage_reason(lost: CommandResult) -> str:
+    """What the session met when it lost the provider, in the provider's own words."""
+    status = lost.detail.get("api_error_status")
+    said = _text(lost.detail.get("api_error"))
+    met = f"HTTP {status}" if isinstance(status, int) else "no connection"
+    return f"the model provider could not be reached ({met}: {said})" if said else (
+        f"the model provider could not be reached ({met})"
+    )
+
+
 def _joined(earlier: CommandResult, later: CommandResult) -> CommandResult:
     """One step's account across a session and its resumes: the later word, every turn."""
     turns = sum(
@@ -709,6 +734,7 @@ class Steward:
         self.notes: list[str] = []
         self.holds: list[Hold] = []
         self.resumes: list[Resume] = []
+        self.outage_held = 0.0
 
     def hold_ceiling(self) -> float:
         return self.started + self.hold_budget + self.worked
@@ -786,6 +812,78 @@ class Steward:
                 self.announce(None)
             newer_than = decision.until if decision.until is not None else until
             decision = None
+
+    def wait_for_provider(self, lost: CommandResult) -> bool:
+        """Hold until a probe reaches the provider again; False where the step can wait no
+        longer.
+
+        One hold per outage, announced with the latest moment it may last and recorded with
+        the moment it ended, because a person watching wants to know the step is waiting on
+        the provider and for how long at most — not every probe it took to find out. The
+        probes are the allowance's own, so each one that gets through also refreshes the
+        shared reading.
+        """
+        began = self.gauge.clock()
+        deadline = min(self.hold_ceiling(), began + OUTAGE_WAIT - self.outage_held)
+        hold = Hold(
+            window=None,
+            started=iso_moment(began),
+            until=iso_moment(deadline),
+            why=_outage_reason(lost),
+            after=AFTER_OUTAGE,
+        )
+        self.announce(hold)
+        rechecks = 0
+        answered = False
+        try:
+            while True:
+                timeout = min(PROBE_TIMEOUT, deadline - self.gauge.clock())
+                if timeout < PROBE_MINIMUM:
+                    break
+                if self._probe_answers(timeout):
+                    answered = True
+                    break
+                wait = OUTAGE_BACKOFF[min(rechecks, len(OUTAGE_BACKOFF) - 1)]
+                rechecks += 1
+                if self.gauge.clock() + wait > deadline:
+                    break
+                self.sleep(wait)
+        finally:
+            self.announce(None)
+            ended = self.gauge.clock()
+            self.outage_held += ended - began
+            self.holds.append(
+                Hold(
+                    window=None,
+                    started=hold["started"],
+                    until=iso_moment(ended),
+                    why=hold["why"],
+                    after=AFTER_OUTAGE,
+                )
+            )
+        return answered
+
+    def _probe_answers(self, timeout: float) -> bool:
+        try:
+            messages = self.instruments.probe(timeout)
+        except Unmeasured:
+            return False
+        for message in messages:
+            try:
+                self.gauge.observe(message, source=SOURCE_PROBE)
+            except (CairnError, OSError):
+                pass
+        return provider_answered(messages)
+
+    def unreachable(self, prior: CommandResult, *, why: str | None = None) -> CommandResult:
+        """The step ends `provider_unreachable`: the provider it lost did not answer in time."""
+        waited = round(self.outage_held / 60)
+        summary = why or (
+            f"the model provider could not be reached for {waited} min after the session lost "
+            f"it — {_outage_reason(prior)}"
+        )
+        detail = {**prior.detail, "headroom": self.account()}
+        return CommandResult(EXIT_FAILED, "failed", summary, [], False, PROVIDER_UNREACHABLE, detail)
 
     def limit_met(self, result: CommandResult) -> Decision:
         """The window a session's limit closed, written into the shared reading.
@@ -880,6 +978,11 @@ def within_allowance(
     could not continue the session — refused, or failing before it reported — ends the step
     `quota_held` with the session's id, which is the last resort: the marker means a re-run
     skips everything that landed, and the record names the moment to run it.
+
+    A session that lost the provider is resumed by id once a probe reaches it again, within
+    `OUTAGE_WAIT` of holding across the step; one that cannot be resumed starts the task again
+    in a fresh session. A provider that does not answer in that time ends the step
+    `provider_unreachable`.
     """
     steward = Steward(
         gauge,
@@ -900,26 +1003,51 @@ def within_allowance(
     # The limit is read off the latest session alone: the joined account carries every
     # earlier session's events, and a stale rejection would name the wrong window and moment.
     latest = result
-    while latest.cause == RATE_LIMITED:
-        closed = steward.limit_met(latest)
+    while latest.cause in (RATE_LIMITED, PROVIDER_UNREACHABLE):
         session_id = _text(latest.detail.get("session_id"))
-        stopped = steward.wait_until_clear(AFTER_LIMIT, closed=closed)
-        if stopped is not None:
-            return steward.held(stopped, prior=result)
-        if session_id is None:
-            return steward.held(closed, prior=result, why="the limited session left no id to resume")
-        if steward.work_left() <= 0:
-            return steward.held(closed, prior=result, why="the step's work bound was spent before the limit cleared")
+        if latest.cause == RATE_LIMITED:
+            closed = steward.limit_met(latest)
+            stopped = steward.wait_until_clear(AFTER_LIMIT, closed=closed)
+            if stopped is not None:
+                return steward.held(stopped, prior=result)
+            if session_id is None:
+                return steward.held(closed, prior=result, why="the limited session left no id to resume")
+            if steward.work_left() <= 0:
+                return steward.held(closed, prior=result, why="the step's work bound was spent before the limit cleared")
+            told = RESUME_AFTER_LIMIT
+        else:
+            closed = None
+            if not steward.wait_for_provider(latest):
+                return steward.unreachable(result)
+            if steward.work_left() <= 0:
+                return steward.unreachable(result, why="the step's work bound was spent before the provider answered again")
+            told = RESUME_AFTER_OUTAGE
         at = iso_moment(gauge.clock())
-        try:
-            resumed = steward.run(partial(again, session_id))
-        except CairnError as refused:
-            steward.resumes.append(Resume(session_id=session_id, at=at, outcome=refused.cause))
-            return steward.held(closed, prior=result, why=f"the session could not be resumed: {refused}")
+        resumed: CommandResult | None = None
+        if session_id is not None:
+            try:
+                resumed = steward.run(partial(again, session_id, told))
+            except CairnError as refused:
+                steward.resumes.append(Resume(session_id=session_id, at=at, outcome=refused.cause))
+                if closed is not None:
+                    return steward.held(closed, prior=result, why=f"the session could not be resumed: {refused}")
+        if resumed is None:
+            # The provider is back and the session it cut off is not — one lost before its
+            # first turn was ever kept. The task starts again in a fresh session, whose
+            # preamble sends it to the tree for whatever the lost one did.
+            try:
+                resumed = steward.run(first)
+            except CairnError as failed:
+                failed.detail = {**failed.detail, "headroom": steward.account()}
+                raise
         steward.resumes.append(
-            Resume(session_id=session_id, at=at, outcome=resumed.cause or resumed.status)
+            Resume(
+                session_id=_text(resumed.detail.get("session_id")) or session_id or "",
+                at=at,
+                outcome=resumed.cause or resumed.status,
+            )
         )
-        if resumed.cause == "provider_failed":
+        if resumed.cause == PROVIDER_FAILED and closed is not None:
             return steward.held(closed, prior=_joined(result, resumed), why="the session could not be resumed")
         latest = resumed
         result = _joined(result, resumed)
@@ -969,10 +1097,10 @@ def session_within_allowance(
             observe=gauge.observe,
         )
 
-    def again(session_id: str, deadline: float) -> CommandResult:
+    def again(session_id: str, told: str, deadline: float) -> CommandResult:
         return call(
             provider,
-            RESUME_AFTER_LIMIT,
+            told,
             working_directory,
             "auto",
             model,
@@ -996,6 +1124,7 @@ def session_within_allowance(
 __all__ = [
     "ADMISSIONS",
     "AFTER_LIMIT",
+    "AFTER_OUTAGE",
     "BEFORE_SESSION",
     "Decision",
     "Gauge",

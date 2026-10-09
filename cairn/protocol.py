@@ -7,6 +7,7 @@ comes from the schema, and nothing anywhere parses a status out of prose.
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, NamedTuple
 
@@ -41,6 +42,11 @@ when you could not reach it. List work you found but did not do in `follow_up_wo
 `needs_user_decision` when a human has to decide something before the plan can safely
 proceed; that blocks the step rather than failing it.
 
+A report that is accepted ends your turn, and may be the account this step is recorded by:
+never file a placeholder or a test report. If the structured output refuses a report, it
+names what is missing; file your whole report again with each of the four fields in its own
+place.
+
 The task:
 """
 
@@ -61,6 +67,34 @@ RESUME_AFTER_LIMIT = """\
 Your previous turn in this session was stopped by the subscription's usage limit, which has
 since reset. Continue the task you were given earlier in this session from where the tree now
 stands, then report through the structured output you are constrained to.
+"""
+
+# What a session the model provider cut off is asked, once a probe reaches the provider again.
+# Same shape as the limit's: the session holds the task, and the tree holds how far it got.
+RESUME_AFTER_OUTAGE = """\
+Your previous turn in this session was cut off because the model provider could not be
+reached, and it can be reached again now. Continue the task you were given earlier in this
+session from where the tree now stands, then report through the structured output you are
+constrained to.
+"""
+
+# What a session is asked when the report it filed was accepted only after the structured
+# output refused earlier attempts. Measured: a session whose real account was refused three
+# times — its `follow_up_work` written inside its `summary` — filed `summary: "test"` to see
+# whether anything would pass, and that probe ended the session as the step's whole account,
+# its eleven fixes and four follow-ups lost. The session still holds the account it meant;
+# this asks for it once, and accepting the same report again is a full answer.
+REFILE_REPORT = """\
+This session is ending now and nothing will re-invoke it. Do no further work.
+
+The structured output refused {refused} report(s) you filed before it accepted this one,
+which is the account this step will be recorded by:
+
+{accepted}
+
+If that is your whole account of this step, file it again unchanged. If it is not — a
+placeholder, a test, or a shortened version of what you meant — file your whole account
+now, with status, summary, follow_up_work and needs_user_decision each in its own field.
 """
 
 # What a remedy session is asked, after its own step's assertion ran and exited nonzero. The
@@ -103,6 +137,13 @@ STEP_REPORT_SCHEMA: dict[str, Any] = {
 def compose_remedy_task(task: str, assertion: str, exit_code: int, said: str) -> str:
     """The task a remedy session is given, before the preamble every session receives."""
     return REMEDY_TASK.format(assertion=assertion, exit_code=exit_code, said=said, task=task)
+
+
+def compose_refile(refused: int, accepted: dict[str, Any]) -> str:
+    """What a session is asked when its accepted report followed reports that were refused."""
+    return REFILE_REPORT.format(
+        refused=refused, accepted=json.dumps(accepted, indent=2, ensure_ascii=False)
+    )
 
 
 # A first line that is a slash command: `/name`, then optional arguments. A path such as

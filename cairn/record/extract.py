@@ -117,6 +117,7 @@ from cairn.verify import (
     GATE_INDETERMINATE,
     NOT_REACHED,
     ORCHESTRATOR_DIED,
+    PROVIDER_UNREACHABLE,
     QUOTA_HELD,
     REPORTED_KILLED,
     TIMED_OUT,
@@ -407,10 +408,11 @@ def classify_step(
         status = work_report.get("status")
         reported = status if isinstance(status, str) else None
 
-    # The marker gate skipped the step and left the one report that says so. This outranks
-    # every node status because a no-op is the only outcome the engine spells `skipped` and
-    # Cairn can prove was correct.
-    if reported == "noop":
+    # The marker gate skipped the step and left the one report that says so — the one that
+    # names the marker it matched. This outranks every node status because a no-op is the
+    # only outcome the engine spells `skipped` and Cairn can prove was correct. A session that
+    # ran and said `noop` of itself is not one: it ran, and the gate judges it below.
+    if reported == "noop" and _freshness(work_report) is not None:
         return OUTCOME_NO_OP, overlays, None
 
     if work_status == engine.NODE_STATUS_ABORTED:
@@ -805,7 +807,7 @@ def derive_next_action(
         # remedy ([23 B]).
         has_merge = bool(waves) or any(item["role"] == "merge" for item in infrastructure)
         subject = by_id.get(excluded) if excluded is not None else None
-        held = subject is not None and subject["cause"] == QUOTA_HELD
+        held = subject is not None and subject["cause"] in (QUOTA_HELD, PROVIDER_UNREACHABLE)
         if has_merge and not held:
             return NextAction(action=NEXT_SETTLE_MERGE, subject=excluded, command=None)
         return NextAction(

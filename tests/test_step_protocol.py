@@ -41,6 +41,7 @@ from cairn.plan.schema import GRAPH_VERSION, SCOPES, normalise
 from cairn.protocol import (
     FOLLOW_THROUGH,
     PREAMBLE,
+    REFILE_REPORT,
     STEP_REPORT_SCHEMA,
     StepPrompt,
     compose_prompt,
@@ -318,6 +319,9 @@ class TheProtocolIsStatedOnce(unittest.TestCase):
 
     def test_follow_through_is_reproduced_verbatim_in_the_document(self) -> None:
         self.assertIn(FOLLOW_THROUGH.strip(), PROTOCOL_DOC.read_text(encoding="utf-8"))
+
+    def test_the_refile_ask_is_reproduced_verbatim_in_the_document(self) -> None:
+        self.assertIn(REFILE_REPORT.strip(), PROTOCOL_DOC.read_text(encoding="utf-8"))
 
     def test_report_schema_is_reproduced_in_the_document(self) -> None:
         blocks = re.findall(r"```json\n(.*?)```", PROTOCOL_DOC.read_text(), re.DOTALL)

@@ -26,6 +26,7 @@ from typing import Any
 from unittest.mock import patch
 
 from cairn.core import (
+    EXIT_FAILED,
     EXIT_OK,
     EXIT_RATE_LIMITED,
     CairnError,
@@ -35,9 +36,11 @@ from cairn.core import (
 from cairn.headroom import (
     ADMITTED,
     AFTER_LIMIT,
+    AFTER_OUTAGE,
     BEFORE_SESSION,
     HELD,
     INERT,
+    OUTAGE_BACKOFF,
     READING_TTL,
     RESET_SETTLE,
     UNKNOWN,
@@ -53,8 +56,8 @@ from cairn.headroom import (
     within_allowance,
 )
 from cairn.layout import HEADROOM_ENDPOINT_ENV, headroom_directory, holds_directory
-from cairn.plan.schema import HANG_GUARD, QUOTA_WAIT
-from cairn.protocol import StepPrompt
+from cairn.plan.schema import HANG_GUARD, OUTAGE_WAIT, QUOTA_WAIT
+from cairn.protocol import RESUME_AFTER_OUTAGE, StepPrompt
 from cairn.providers import (
     RATE_LIMITED,
     EndpointRefused,
@@ -66,13 +69,20 @@ from cairn.record.extract import extract, read_holds
 from cairn.record.facts import as_mapping
 from cairn.record.vocabulary import (
     NEXT_AWAIT_ALLOWANCE,
+    NEXT_RERUN,
     OUTCOME_EXCLUDED,
     OUTCOME_RUNNING,
 )
 from cairn.report.compose import document
 from cairn.report.phrases import SENTENCE_BY_ACTION
 from cairn.report.terminal import render
-from cairn.verify import QUOTA_HELD, REPORTED_HELD, divergence_line, judge
+from cairn.verify import (
+    PROVIDER_UNREACHABLE,
+    QUOTA_HELD,
+    REPORTED_HELD,
+    divergence_line,
+    judge,
+)
 from tests.test_step_kinds import FakeOutput, FakeProcess, session_stream
 
 # The measured event, from Claude Code 2.1.220 ([38] § What was measured).
@@ -167,12 +177,12 @@ class Fixture(unittest.TestCase):
     def run_step(
         self,
         first: Callable[[float], CommandResult],
-        again: Callable[[str, float], CommandResult] | None = None,
+        again: Callable[[str, str, float], CommandResult] | None = None,
         *,
         probe: Probe | None = None,
         model: str = "sonnet",
     ) -> CommandResult:
-        def refuse(_session: str, _deadline: float) -> CommandResult:
+        def refuse(_session: str, _told: str, _deadline: float) -> CommandResult:
             raise AssertionError("no resume was expected")
 
         return within_allowance(
@@ -475,7 +485,7 @@ class AStepAdmittedOnUnknownSaysWhy(Fixture):
 
         result = within_allowance(
             first,
-            lambda _s, _d: done(),
+            lambda _s, _t, _d: done(),
             gauge=self.gauge,
             model="sonnet",
             instruments=Instruments(probe=failing, endpoint=None),
@@ -561,7 +571,7 @@ class ALimitMetMidSessionIsAPause(Fixture):
             self.clock.now += 1200
             return limited(FIVE_HOUR_RESET)
 
-        def again(session: str, deadline: float) -> CommandResult:
+        def again(session: str, _told: str, deadline: float) -> CommandResult:
             resumed.append((session, deadline))
             self.clock.now += 600
             return done(turns=4)
@@ -581,7 +591,7 @@ class ALimitMetMidSessionIsAPause(Fixture):
     def test_the_limit_closes_the_window_for_every_other_step_at_once(self) -> None:
         self.gauge.observe(event())
 
-        def again(_session: str, _deadline: float) -> CommandResult:
+        def again(_session: str, _told: str, _deadline: float) -> CommandResult:
             return done()
 
         seen_closed: list[str] = []
@@ -604,7 +614,7 @@ class ALimitMetMidSessionIsAPause(Fixture):
     def test_a_resume_that_cannot_continue_ends_the_step_held_with_its_session(self) -> None:
         self.gauge.observe(event())
 
-        def again(_session: str, _deadline: float) -> CommandResult:
+        def again(_session: str, _told: str, _deadline: float) -> CommandResult:
             raise CairnError("provider_protocol", "No conversation found with session ID")
 
         result = self.run_step(
@@ -620,7 +630,7 @@ class ALimitMetMidSessionIsAPause(Fixture):
         self.gauge.observe(event())
         far = int(NOW) + QUOTA_WAIT + 7200
 
-        def again(_session: str, _deadline: float) -> CommandResult:
+        def again(_session: str, _told: str, _deadline: float) -> CommandResult:
             return limited(far, window="seven_day")._replace(
                 detail={
                     "session_id": "session-1",
@@ -654,6 +664,128 @@ class ALimitMetMidSessionIsAPause(Fixture):
         self.assertEqual(result.cause, QUOTA_HELD)
         self.assertEqual(result.detail["headroom"]["held_window"], "seven_day")
         self.assertIn("weekly allowance spent", result.summary)
+
+
+def cut_off(status: int | None = 403, session: str = "session-1") -> CommandResult:
+    """A session the provider stopped serving, as the runtime reports it."""
+    return CommandResult(
+        EXIT_FAILED,
+        "failed",
+        "agent process ended with provider_unreachable",
+        [],
+        False,
+        PROVIDER_UNREACHABLE,
+        {
+            "session_id": session,
+            "turn_count": 15,
+            "api_error_status": status,
+            "api_error": "Failed to authenticate. API Error: 403 Edge IP Restricted",
+        },
+    )
+
+
+class ALostProviderIsAPauseNotTheEndOfTheQueue(Fixture):
+    """Measured: a Cloudflare edge answered 403 fifteen turns into a session, and the step,
+    the run and every step queued behind it ended there."""
+
+    def test_the_session_is_held_until_a_probe_is_served_then_resumed(self) -> None:
+        self.gauge.observe(event())
+        answers = iter([[], [], [event()]])
+        probe = Probe(lambda: next(answers))
+        resumed: list[tuple[str, str, float]] = []
+
+        def first(_deadline: float) -> CommandResult:
+            self.clock.now += 900
+            return cut_off()
+
+        def again(session: str, told: str, deadline: float) -> CommandResult:
+            resumed.append((session, told, deadline))
+            return done(turns=4)
+
+        result = self.run_step(first, again, probe=probe)
+        self.assertEqual(result.exit_code, EXIT_OK)
+        self.assertEqual(result.status, "done")
+        self.assertEqual(resumed, [("session-1", RESUME_AFTER_OUTAGE, HANG_GUARD - 900)])
+        self.assertEqual(self.clock.slept, list(OUTAGE_BACKOFF[:2]))
+        self.assertEqual(result.detail["turn_count"], 19)
+        headroom = result.detail["headroom"]
+        [hold] = headroom["holds"]
+        self.assertEqual((hold["window"], hold["after"]), (None, AFTER_OUTAGE))
+        self.assertIn("HTTP 403", hold["why"])
+        self.assertIn("Edge IP Restricted", hold["why"])
+        self.assertEqual([entry["outcome"] for entry in headroom["resumes"]], ["done"])
+        announced, cleared = self.announced
+        assert announced is not None
+        self.assertEqual(announced["after"], AFTER_OUTAGE)
+        self.assertIsNone(cleared)
+
+    def test_a_blip_already_over_resumes_without_sleeping(self) -> None:
+        self.gauge.observe(event())
+        result = self.run_step(
+            lambda _deadline: cut_off(status=None),
+            lambda _s, _t, _d: done(),
+            probe=Probe(lambda: [event()]),
+        )
+        self.assertEqual(result.status, "done")
+        self.assertEqual(self.clock.slept, [])
+
+    def test_a_provider_that_never_answers_ends_the_step_after_the_outage_wait(self) -> None:
+        self.gauge.observe(event())
+        result = self.run_step(lambda _deadline: cut_off(), probe=silent_probe())
+        self.assertEqual(result.cause, PROVIDER_UNREACHABLE)
+        self.assertEqual(result.exit_code, EXIT_FAILED)
+        self.assertLessEqual(sum(self.clock.slept), OUTAGE_WAIT)
+        self.assertGreater(sum(self.clock.slept), OUTAGE_WAIT - OUTAGE_BACKOFF[-1] - 1)
+        self.assertRegex(result.summary, r"^the model provider could not be reached for \d+ min")
+        self.assertIn("HTTP 403", result.summary)
+        self.assertEqual(result.detail["session_id"], "session-1")
+        [hold] = result.detail["headroom"]["holds"]
+        self.assertEqual(hold["after"], AFTER_OUTAGE)
+
+    def test_the_outage_wait_is_drawn_from_the_steps_hold_budget(self) -> None:
+        self.gauge.observe(event())
+        result = within_allowance(
+            lambda _deadline: cut_off(),
+            lambda _s, _t, _d: done(),
+            gauge=self.gauge,
+            model="sonnet",
+            instruments=self.instruments(silent_probe()),
+            announce=self.announced.append,
+            sleep=self.clock.sleep,
+            hold_budget=600,
+        )
+        self.assertEqual(result.cause, PROVIDER_UNREACHABLE)
+        self.assertLessEqual(sum(self.clock.slept), 600)
+
+    def test_a_session_that_cannot_be_resumed_starts_the_task_again(self) -> None:
+        self.gauge.observe(event())
+        opened: list[float] = []
+
+        def first(deadline: float) -> CommandResult:
+            opened.append(deadline)
+            return cut_off(status=None) if len(opened) == 1 else done(session="session-2")
+
+        def again(_session: str, _told: str, _deadline: float) -> CommandResult:
+            raise CairnError("provider_protocol", "No conversation found with session ID")
+
+        result = self.run_step(first, again, probe=Probe(lambda: [event()]))
+        self.assertEqual(result.status, "done")
+        self.assertEqual(len(opened), 2)
+        outcomes = [
+            (entry["session_id"], entry["outcome"]) for entry in result.detail["headroom"]["resumes"]
+        ]
+        self.assertEqual(outcomes, [("session-1", "provider_protocol"), ("session-2", "done")])
+
+    def test_a_session_that_loses_the_provider_again_is_held_again(self) -> None:
+        self.gauge.observe(event())
+        replies = iter([cut_off(), done()])
+        result = self.run_step(
+            lambda _deadline: cut_off(),
+            lambda _s, _t, _d: next(replies),
+            probe=Probe(lambda: [event()]),
+        )
+        self.assertEqual(result.status, "done")
+        self.assertEqual(len(result.detail["headroom"]["holds"]), 2)
 
 
 class AnUnmeteredProviderStartsAsItAlwaysDid(unittest.TestCase):
@@ -778,6 +910,30 @@ class TheRecordAndTheReportSayItInASentence(unittest.TestCase):
         text = " ".join(render(document(record), as_mapping(record)).text.split())
         self.assertIn("waiting for the subscription's allowance, not stalled", text)
         self.assertIn("2026-10-05T07:31:00Z", text)
+
+    def test_a_step_waiting_on_the_provider_says_so(self) -> None:
+        state, reports = held_run(running=True)
+        holding = {
+            "run_id": "run-held", "window": None,
+            "started": "2026-10-08T12:06:02Z", "until": "2026-10-08T16:06:02Z",
+            "why": "the model provider could not be reached (HTTP 403)", "after": AFTER_OUTAGE,
+        }
+        with patch("cairn.record.extract.owner_liveness", return_value=True):
+            record = extract(state, reports, run_id="run-held", holds={"work_alpha": holding})
+        text = " ".join(render(document(record), as_mapping(record)).text.split())
+        self.assertIn("waiting for the model provider to answer again, not stalled", text)
+        self.assertIn("the model provider from 2026-10-08T12:06:02Z", text)
+        self.assertNotIn("subscription's allowance, not stalled", text)
+
+    def test_a_step_the_provider_never_came_back_for_is_re_run(self) -> None:
+        state, reports = held_run()
+        for name in ("work_alpha", "mark_alpha"):
+            reports[name]["cause"] = PROVIDER_UNREACHABLE
+        reports["work_alpha"]["detail"] = {}
+        record = extract(state, reports, run_id="run-held")
+        [step] = record["steps"]
+        self.assertEqual((step["outcome"], step["cause"]), (OUTCOME_EXCLUDED, PROVIDER_UNREACHABLE))
+        self.assertEqual(record["next_action"]["action"], NEXT_RERUN)
 
     def test_a_remedy_holding_now_reads_as_waiting_not_stalled(self) -> None:
         state, reports = held_run(running=True)

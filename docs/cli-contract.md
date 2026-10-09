@@ -60,7 +60,10 @@ The cause vocabulary is closed. Doc 05 issues `command_failed`, `wait_timeout`,
 `process_launch_failed`, `invalid_command`, `invalid_wait`, `invalid_arguments`,
 `invalid_report`, `missing_runtime_identity`, and `internal_error`. A session that meets the
 subscription's limit is held and resumed rather than reported, so the limit reaches a report
-only as `quota_held`, where the step could not wait it out.
+only as `quota_held`, where the step could not wait it out. A session that loses the model
+provider is held and resumed the same way, and reaches a report only as
+`provider_unreachable`, where the provider did not answer again within the time the step may
+wait ([supervision.md](supervision.md)).
 Doc 06 adds `invalid_marker`, `invalid_occasion`, `invalid_reads`, `invalid_scope`,
 `invalid_step_id`, `marker_ignored`, and `missing_report`. Docs 07 and
 09 add `git_failed`, `not_a_repository`, `git_mutex_timeout`, `merge_in_progress`,

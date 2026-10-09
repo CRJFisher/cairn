@@ -68,6 +68,14 @@ ASSERTION_INTERRUPTED = "assertion_interrupted"
 # limit and could not be resumed. The work is not wrong and was not judged; the step's own
 # report names the window and the moment it reopens ([headroom.py]).
 QUOTA_HELD = "quota_held"
+# The step's session ended on a fault of the provider's process — a crash, a launch that
+# failed, a limit on turns — before it gave any verdict of its own. Never `reported_failure`:
+# the runtime writes `failed` because a report has no other status for "nothing was said".
+PROVIDER_FAILED = "provider_failed"
+# The step's session lost the model provider — no connection, an edge or server error, a
+# credential refused — and the provider did not answer again within the time the step may
+# wait for it. The work is not wrong and was not judged ([headroom.py]).
+PROVIDER_UNREACHABLE = "provider_unreachable"
 EXCLUSION_CAUSES: tuple[str, ...] = (
     VERIFY_FAILED,
     REPORTED_FAILURE,
@@ -80,6 +88,8 @@ EXCLUSION_CAUSES: tuple[str, ...] = (
     ORCHESTRATOR_DIED,
     ASSERTION_INTERRUPTED,
     QUOTA_HELD,
+    PROVIDER_FAILED,
+    PROVIDER_UNREACHABLE,
 )
 
 # How a failure routes onward. The engine spells a chain halt and a branch exclusion both
@@ -120,14 +130,38 @@ REPORTED_KILLED = "killed"
 # needs to know the step is waiting on the account rather than on the task.
 REPORTED_HELD = "held"
 
-# The causes of a step that stopped before it reported without ever saying its work failed,
-# with the reading its divergence carries and the words its verdict says it in.
-_STOPPED_BEFORE_REPORTING: dict[str, tuple[str, str]] = {
-    TIMED_OUT: (REPORTED_KILLED, "the step was stopped at its own bound before it reported"),
+# The report causes of a step that stopped before it reported without ever saying its work
+# failed, with the exclusion cause the gate records, the reading its divergence carries, and
+# the words its verdict says it in. Only `reported_failure` is the session's own veto; every
+# cause here is the runtime's account of a session that gave none.
+_PROVIDER_FAULT = (
+    PROVIDER_FAILED,
+    REPORTED_NOTHING,
+    "the step's session ended on a provider fault before it reported",
+)
+_STOPPED_BEFORE_REPORTING: dict[str, tuple[str, str, str]] = {
+    TIMED_OUT: (
+        TIMED_OUT,
+        REPORTED_KILLED,
+        "the step was stopped at its own bound before it reported",
+    ),
     QUOTA_HELD: (
+        QUOTA_HELD,
         REPORTED_HELD,
         "the step was held at the subscription's allowance before it reported",
     ),
+    PROVIDER_UNREACHABLE: (
+        PROVIDER_UNREACHABLE,
+        REPORTED_NOTHING,
+        (
+            "the step's session lost the model provider, which did not answer again in time, "
+            "before it reported"
+        ),
+    ),
+    PROVIDER_FAILED: _PROVIDER_FAULT,
+    "turn_limit": _PROVIDER_FAULT,
+    "process_launch_failed": _PROVIDER_FAULT,
+    "provider_unavailable": _PROVIDER_FAULT,
 }
 
 
@@ -302,14 +336,14 @@ def judge(verify_exit: int | None, report: dict[str, Any] | None) -> Verdict:
     cause = report.get("cause")
     stopped = _STOPPED_BEFORE_REPORTING.get(cause) if isinstance(cause, str) else None
     if reported == "failed" and stopped is not None:
-        # Stopped at the step's own bound, or held at the allowance: either way the step
-        # never said its work failed. That is not a veto, so the divergence weighs the
-        # assertion against a session nobody heard from, as the engine's own kill does in
-        # the run record ([22 B]).
-        reading, said = stopped
+        # Stopped at the step's own bound, held at the allowance, or cut off by the provider:
+        # either way the step never said its work failed. That is not a veto, so the
+        # divergence weighs the assertion against a session nobody heard from, as the
+        # engine's own kill does in the run record ([22 B]).
+        excluded, reading, said = stopped
         return Verdict(
             record=False,
-            cause=cause,
+            cause=excluded,
             divergence=Divergence(reported=reading, asserted=True) if asserted else None,
             summary=f"{said}, over an assertion that passed" if asserted else said,
         )
@@ -561,7 +595,9 @@ __all__ = [
     "GATE_RECORD_IT",
     "ORCHESTRATOR_DIED",
     "POSITIONS",
+    "PROVIDER_FAILED",
     "PROVIDER_PROTOCOL",
+    "PROVIDER_UNREACHABLE",
     "REPORTED_KILLED",
     "REPORTED_NOTHING",
     "REPORTED_UNREADABLE",

@@ -40,7 +40,9 @@ And start a run of the definition that would execute, handing the engine exactly
 Every agent session runs within the subscription's allowance: a step holds where the 5-hour
 or weekly window is closed or nearly so, resumes a session that met the limit once the window
 reopens, and ends `quota_held`, naming the moment, only where the wait is longer than a step
-may make ([docs/supervision.md](docs/supervision.md)).
+may make. A session that loses the model provider mid-turn is held the same way, probing for
+up to 4 hours, and resumed where it left off once the provider answers
+([docs/supervision.md](docs/supervision.md)).
 
 What is built is the plan contract, the execution core, the step protocol, the verify gate
 and its authoring conversation, the branch topology, the merge step, the locks and repairs

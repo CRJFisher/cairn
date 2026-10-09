@@ -40,8 +40,14 @@ from cairn.protocol import (
     STEP_REPORT_SCHEMA,
     StepPrompt,
     compose_prompt,
+    compose_refile,
 )
-from cairn.verify import PROVIDER_PROTOCOL, TIMED_OUT
+from cairn.verify import (
+    PROVIDER_FAILED,
+    PROVIDER_PROTOCOL,
+    PROVIDER_UNREACHABLE,
+    TIMED_OUT,
+)
 
 PROMPT_WRITER_JOIN_SECONDS = 5.0
 PROVIDER_EXIT_GRACE_SECONDS = 30.0
@@ -50,6 +56,11 @@ PROVIDER_EXIT_GRACE_SECONDS = 30.0
 # session; whether the step holds and resumes it is decided above the provider ([headroom.py]).
 RATE_LIMITED = "rate_limited"
 HTTP_RATE_LIMITED = 429
+API_ERROR = "api_error"
+UNREACHABLE_STATUSES: frozenset[int] = frozenset({401, 403, 408})
+# Enough of the provider's own error to say what met the session, and no more: a
+# Cloudflare error page is a JSON document several hundred bytes long.
+API_ERROR_TEXT_LIMIT = 400
 
 # Handed each stream message that speaks about the account — a `rate_limit_event`, and the
 # `system` message naming how the session is funded — as it arrives, so a concurrent step
@@ -94,6 +105,9 @@ def _required(record: dict[str, Any], names: tuple[str, ...]) -> None:
 # The tool a session files its report through. Its calls are in the stream, which is where
 # the report is read from ([_parse_lines]).
 REPORT_TOOL = "StructuredOutput"
+# How many reports the session filed, and the structured output refused, before the one it
+# accepted. Carried on the result beside the report it qualifies.
+REFUSED_REPORTS = "refused_reports"
 
 
 def _report_fault(output: object) -> str | None:
@@ -212,8 +226,13 @@ def _parse_lines(
             "permission_denials",
         ),
     )
-    result["structured_output"] = next(
-        (report for report in reversed(filed) if _report_fault(report) is None), None
+    accepted = next(
+        (index for index in reversed(range(len(filed))) if _report_fault(filed[index]) is None),
+        None,
+    )
+    result["structured_output"] = None if accepted is None else filed[accepted]
+    result[REFUSED_REPORTS] = (
+        0 if accepted is None else sum(_report_fault(report) is not None for report in filed[:accepted])
     )
     return result, rate_limits
 
@@ -246,6 +265,32 @@ def _latest_reset(rate_limits: list[dict[str, Any]]) -> str | None:
     """
     moments = [moment for event in rate_limits if (moment := reset_epoch(event)) is not None]
     return iso_moment(max(moments)) if moments else None
+
+
+def _api_error_cause(status: object) -> str:
+    """What a session that ended on an `api_error` met, read off its HTTP status.
+
+    The provider's client has already retried whatever it judged transient — measured, up to
+    ten times with backoff — so a session ending here met something it gave up on. A 429 is
+    the account refusing work: the monthly spend limit ends a session this way, never as
+    `blocking_limit`, and both are held and resumed at the allowance. No status at all is a
+    connection that never completed. A 401, 403 or 408, or any 5xx, is the provider
+    unreachable or refusing to serve — measured, a Cloudflare edge answering 403 "Edge IP
+    Restricted" fifteen turns into a session — which a wait can outlast. Anything else is
+    the request itself, which no wait changes.
+    """
+    if status == HTTP_RATE_LIMITED:
+        return RATE_LIMITED
+    if status is None or status in UNREACHABLE_STATUSES:
+        return PROVIDER_UNREACHABLE
+    if isinstance(status, int) and not isinstance(status, bool) and status >= 500:
+        return PROVIDER_UNREACHABLE
+    return PROVIDER_FAILED
+
+
+def _api_error_text(result: dict[str, Any]) -> str | None:
+    text: object = result.get("result")
+    return text[:API_ERROR_TEXT_LIMIT] if isinstance(text, str) and text else None
 
 
 def _translate_result(
@@ -281,6 +326,9 @@ def _translate_result(
             "result session_id does not match requested session",
             detail=detail,
         )
+    if terminal_reason == API_ERROR:
+        detail["api_error_status"] = result.get("api_error_status")
+        detail["api_error"] = _api_error_text(result)
     if process_exit != 0:
         causes: dict[str, str] = {
             "blocking_limit": RATE_LIMITED,
@@ -288,15 +336,12 @@ def _translate_result(
             "structured_output_retry_exhausted": "provider_protocol",
         }
         cause = (
-            causes.get(terminal_reason, "provider_failed")
+            causes.get(terminal_reason, PROVIDER_FAILED)
             if terminal_reason is not None
-            else "provider_failed"
+            else PROVIDER_FAILED
         )
-        # A limit the account met outside the window the stream meters — the monthly spend
-        # limit — ends the session as an `api_error` carrying HTTP 429, never as
-        # `blocking_limit`. Both are the account refusing work, and both are held and resumed.
-        if terminal_reason == "api_error" and result.get("api_error_status") == HTTP_RATE_LIMITED:
-            cause = RATE_LIMITED
+        if terminal_reason == API_ERROR:
+            cause = _api_error_cause(result.get("api_error_status"))
         return CommandResult(
             EXIT_RATE_LIMITED if cause == RATE_LIMITED else EXIT_FAILED,
             "failed",
@@ -526,6 +571,7 @@ def ended_without_reporting(process_exit: int, result: dict[str, Any]) -> bool:
 RESUME_ATTEMPTED = "attempted"
 RESUME_FAILED = "resume_failed"
 RESUME_STILL_SILENT = "still_silent"
+REFILE_ANSWERED = "refiled"
 
 
 def _as_float(value: object) -> float:
@@ -800,6 +846,41 @@ def run_claude(
             resumed["permission_denials"] = both_denials
             return_code, result = resumed_code, resumed
 
+    refusals = int(_as_float(result.get(REFUSED_REPORTS)))
+    accepted: object = result.get("structured_output")
+    if return_code == 0 and isinstance(accepted, dict) and refusals:
+        # A report accepted after refused ones may be the probe a session filed to find out
+        # what would pass, and accepting it ended the session ([protocol.REFILE_REPORT]).
+        # Asked once, bounded like every other resume for a report; whatever it does, the
+        # report already accepted stands unless a new one replaces it.
+        rescue = {**rescue, "report_refusals": refusals, "refiled": RESUME_ATTEMPTED}
+        try:
+            refile_code, refile, refile_limits, refile_exited = _session_in(
+                invocation(resuming=True),
+                compose_refile(refusals, cast(dict[str, Any], accepted)),
+                working_directory,
+                popen_factory,
+                deadline_seconds=resume_bound_seconds(),
+                observe=observe,
+            )
+        except (Deadline, CairnError):
+            rescue["refiled"] = RESUME_FAILED
+        else:
+            exited_on_its_own = exited_on_its_own and refile_exited
+            rate_limits = [*rate_limits, *refile_limits]
+            if refile_code != 0 or refile.get("structured_output") is None:
+                rescue["refiled"] = RESUME_STILL_SILENT
+            else:
+                refile["num_turns"] = int(_as_float(result.get("num_turns"))) + int(
+                    _as_float(refile.get("num_turns"))
+                )
+                refile["permission_denials"] = [
+                    *_as_list(result.get("permission_denials")),
+                    *_as_list(refile.get("permission_denials")),
+                ]
+                return_code, result = refile_code, refile
+                rescue["refiled"] = REFILE_ANSWERED
+
     try:
         translated = _translate_result(
             return_code,
@@ -978,6 +1059,20 @@ def run_probe(timeout: float) -> list[dict[str, Any]]:
         if isinstance(parsed, dict):
             messages.append(cast(dict[str, Any], parsed))
     return messages
+
+
+def provider_answered(messages: list[dict[str, Any]]) -> bool:
+    """Whether a probe's stream reached the model provider and was served.
+
+    A `rate_limit_event` is read off the provider's own answer, so it arrives only over a
+    request that got through; a result that is not an error is a turn the provider served.
+    A probe stopped at an edge, refused a credential, or never connected has neither.
+    """
+    return any(
+        message.get("type") == "rate_limit_event"
+        or (message.get("type") == "result" and message.get("is_error") is False)
+        for message in messages
+    )
 
 
 def _credential_text() -> str | None:

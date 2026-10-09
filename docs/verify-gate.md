@@ -175,28 +175,37 @@ actually there could never be told from one that did nothing.
 
 The gate reads two things and opens only when both agree:
 
-| The assertion  | The step's report                        | The gate | Cause                    | Divergence                                                                   |
-| -------------- | ---------------------------------------- | -------- | ------------------------ | ---------------------------------------------------------------------------- |
-| exit 0         | `done` or `noop`                         | opens    | —                        | —                                                                            |
-| either         | `failed` with `cause: provider_protocol` | closes   | `provider_protocol`      | **yes** where the assertion passed — verified true, reported nothing         |
-| either         | `failed` with `cause: timed_out`         | closes   | `timed_out`              | **yes** where the assertion passed — verified true, stopped before reporting |
-| either         | `failed` with `cause: quota_held`        | closes   | `quota_held`             | **yes** where the assertion passed — verified true, held before reporting    |
-| exit 0         | `failed`                                 | closes   | `reported_failure`       | **yes** — verified true, reported failed                                     |
-| nonzero        | `done` or `noop`                         | closes   | `verify_failed`          | **yes** — reported done, verified false                                      |
-| nonzero        | `failed`                                 | closes   | `reported_failure`       | — they agree                                                                 |
-| either         | `needs_user_decision`                    | closes   | `user_decision_required` | —                                                                            |
-| either         | none from this run                       | closes   | `not_reached`            | —                                                                            |
-| unreadable     | any                                      | closes   | `gate_indeterminate`     | —                                                                            |
-| any            | unreadable                               | closes   | `gate_indeterminate`     | —                                                                            |
-| _(unverified)_ | `done` or `noop`                         | opens    | —                        | —                                                                            |
+| The assertion  | The step's report                           | The gate | Cause                    | Divergence                                                                   |
+| -------------- | ------------------------------------------- | -------- | ------------------------ | ---------------------------------------------------------------------------- |
+| exit 0         | `done` or `noop`                            | opens    | —                        | —                                                                            |
+| either         | `failed` with `cause: provider_protocol`    | closes   | `provider_protocol`      | **yes** where the assertion passed — verified true, reported nothing         |
+| either         | `failed` with `cause: timed_out`            | closes   | `timed_out`              | **yes** where the assertion passed — verified true, stopped before reporting |
+| either         | `failed` with `cause: quota_held`           | closes   | `quota_held`             | **yes** where the assertion passed — verified true, held before reporting    |
+| either         | `failed` with `cause: provider_unreachable` | closes   | `provider_unreachable`   | **yes** where the assertion passed — verified true, reported nothing         |
+| either         | `failed` with a provider fault              | closes   | `provider_failed`        | **yes** where the assertion passed — verified true, reported nothing         |
+| exit 0         | `failed`                                    | closes   | `reported_failure`       | **yes** — verified true, reported failed                                     |
+| nonzero        | `done` or `noop`                            | closes   | `verify_failed`          | **yes** — reported done, verified false                                      |
+| nonzero        | `failed`                                    | closes   | `reported_failure`       | — they agree                                                                 |
+| either         | `needs_user_decision`                       | closes   | `user_decision_required` | —                                                                            |
+| either         | none from this run                          | closes   | `not_reached`            | —                                                                            |
+| unreadable     | any                                         | closes   | `gate_indeterminate`     | —                                                                            |
+| any            | unreadable                                  | closes   | `gate_indeterminate`     | —                                                                            |
+| _(unverified)_ | `done` or `noop`                            | opens    | —                        | —                                                                            |
 
-A report can carry `failed` **and** `cause: provider_protocol`, `timed_out` or
-`quota_held`; the cause is the narrower fact, so those rows are judged before the plain
-`failed` rows below them. `timed_out` is the wrapper's own account of a session it stopped at
-the step's bound and could not get a report from ([step-kinds.md](step-kinds.md)), and
-`quota_held` its account of a step that stopped at the subscription's allowance
-([supervision.md](supervision.md)): in both the step said nothing about its work, so reading
-`failed` as a veto would put a verdict in its mouth.
+A report can carry `failed` **and** a cause that is the runtime's account of a session that
+gave none — `provider_protocol`, `timed_out`, `quota_held`, `provider_unreachable`, or a
+provider fault (`provider_failed`, `turn_limit`, `process_launch_failed`,
+`provider_unavailable`); the cause is the narrower fact, so those rows are judged before the
+plain `failed` rows below them. `timed_out` is the wrapper's own account of a session it
+stopped at the step's bound and could not get a report from ([step-kinds.md](step-kinds.md)),
+`quota_held` its account of a step that stopped at the subscription's allowance, and
+`provider_unreachable` its account of a step whose session lost the model provider and could
+not wait long enough for it to answer again ([supervision.md](supervision.md)). A provider
+fault is a session whose process ended before it gave any verdict: measured, a session cut
+off by a Cloudflare edge answering 403 was recorded as having _"reported 'failed' while its
+assertion passed"_. In every one of these the step said nothing about its work, so reading
+`failed` as a veto would put a verdict in its mouth. Only `reported_failure` — a report the
+session filed, or a command that exited nonzero — is a step's own veto.
 
 **Every fault closes it.** This is the exact inverse of the marker gate, which opens on every
 fault it meets. Both are the safe direction, and the asymmetry is the design: redoing
@@ -239,11 +248,19 @@ never reached from one killed before it could write.
 | `orchestrator_died`      | the run's own process was killed under the step      | the run record              |
 | `assertion_interrupted`  | a signal ended the assertion before it exited        | the gate                    |
 | `quota_held`             | the step stopped at the subscription's allowance     | the gate                    |
+| `provider_failed`        | the session ended on a provider fault, unreported    | the gate                    |
+| `provider_unreachable`   | the session lost the provider, which did not return  | the gate                    |
 
 `quota_held` is a step held longer than it may wait at the subscription's allowance, or one
 whose session met the limit and could not be resumed. Its work was not judged; its own report
 names the window and the moment it reopens, and the run's next action is `await_allowance`
 ([run-model.md](run-model.md)).
+
+`provider_unreachable` is a step whose session lost the model provider — no connection, an
+edge or server error, a credential refused — and which held, probing, for the 4 hours it may
+wait without the provider answering again. Its work was not judged; its summary quotes what
+the provider answered. `provider_failed` is every other way a session's process ends before
+it reports: a crash, a launch that failed, a limit on turns. Both are re-run remedies.
 
 `assertion_interrupted` is never `verify_failed`: an assertion the engine killed at its
 `verify_timeout`, or that anything else signalled, decided nothing about the work. Its own

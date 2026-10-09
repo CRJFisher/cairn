@@ -73,6 +73,8 @@ from cairn.record.vocabulary import (
     VERDICT_PRECEDENCE,
     VERDICT_RUNNING,
 )
+from cairn.report.compose import document
+from cairn.report.terminal import render
 from cairn.supervise import STATUS_RUNNING, last_record
 from cairn.text import (
     LINE_LIMIT,
@@ -1481,6 +1483,25 @@ class ANoOpNamesWhoDidTheWork(unittest.TestCase):
         self.assertNotIn(
             "follow_up", {item["kind"] for item in record["attention"]}
         )
+
+    def test_a_session_that_ran_and_said_noop_is_not_a_step_already_complete(self) -> None:
+        """Measured: a review whose session ran for a minute and reported `noop` was listed
+        as "already complete", done by a run nobody could name. Only the marker gate's own
+        no-op — the report naming the marker it matched — is a step that never started."""
+        state, reports, run_id = load("green")
+        ran = {name: dict(report) for name, report in reports.items()}
+        ran["work_alpha"] = {
+            **ran["work_alpha"],
+            "status": "noop",
+            "summary": "the diff held nothing to fix",
+            "detail": {"session_id": "d088c910-1822-4209-9643-117a14928159", "turn_count": 4},
+        }
+        record = extract(state, ran, run_id=run_id)
+        step = record["steps"][0]
+        self.assertEqual(step["outcome"], OUTCOME_VERIFIED)
+        self.assertIsNone(step["freshness"])
+        text = " ".join(render(document(record), as_mapping(record)).text.split())
+        self.assertNotIn("alpha was already complete", text)
 
     def test_a_run_with_no_lineage_still_extracts(self) -> None:
         """A missing or corrupt lineage never changes what a run does."""
