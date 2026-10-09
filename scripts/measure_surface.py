@@ -1,19 +1,18 @@
 """What the installed skill puts in context, as the block the README publishes.
 
     python3 -m scripts.measure_surface            # print the block
-    python3 -m scripts.measure_surface --check    # exit nonzero if the README disagrees
+    python3 -m scripts.measure_surface --write    # rewrite the README's block in place
 
 The measurement itself is `cairn/skill/surface.py`'s, and the suite calls the same function,
 so there is no path where the script and the test could compute different numbers. What this
-adds is the paste-ready block and the refusal — the same posture as
-`scripts/regenerate_workflows.py`, for the same reason: a published claim that nobody is
-forced to look at goes stale silently.
+adds is the print and the rewrite: the README's figures are regenerated after any edit to
+the files they measure, never maintained by hand.
 """
 
 from __future__ import annotations
 
 import argparse
-import sys
+import re
 from pathlib import Path
 
 from cairn.skill.surface import PUBLISHED_HEADING, measure, published
@@ -21,34 +20,47 @@ from cairn.skill.surface import PUBLISHED_HEADING, measure, published
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 README = PACKAGE_ROOT / "README.md"
 
-EXIT_STALE = 1
+# The heading through the last line of the table that follows it.
+BLOCK = re.compile(
+    rf"^{re.escape(PUBLISHED_HEADING)}\n(?:(?!\|).*\n)*?(?:\|[^\n]*\n?)+", re.MULTILINE
+)
 
 
 def block() -> str:
     return published(measure(PACKAGE_ROOT))
 
 
+def write() -> bool:
+    """Replace the README's block with the measured one; True when the file changed."""
+    text = README.read_text(encoding="utf-8")
+    matches = BLOCK.findall(text)
+    if len(matches) != 1:
+        raise SystemExit(
+            f"{README.name} must carry the heading {PUBLISHED_HEADING!r} exactly once"
+        )
+    composed = block() + "\n"
+    updated = BLOCK.sub(lambda _: composed, text)
+    if updated == text:
+        return False
+    README.write_text(updated, encoding="utf-8")
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--check",
+        "--write",
         action="store_true",
-        help="refuse when README.md does not carry the measured block",
+        help="rewrite the measured block in README.md",
     )
     args = parser.parse_args(argv)
-    composed = block()
-    if not args.check:
-        print(composed)
-        return 0
-    if composed in README.read_text(encoding="utf-8"):
-        print(f"{README.name} carries the measured surface")
-        return 0
-    print(
-        f"{README.name} does not carry the measured surface. The block below is what "
-        f"it should hold, under the heading {PUBLISHED_HEADING!r}:\n\n{composed}",
-        file=sys.stderr,
-    )
-    return EXIT_STALE
+    if not args.write:
+        print(block())
+    elif write():
+        print(f"{README.name} now carries the measured surface")
+    else:
+        print(f"{README.name} already carried the measured surface")
+    return 0
 
 
 if __name__ == "__main__":

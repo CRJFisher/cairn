@@ -236,10 +236,12 @@ the engine's exit status in line.
 
 A run started at the view and a run started by Cairn are the same record but for one field:
 the view records `triggerActor` as the authenticated username, and Cairn's own trigger
-leaves it absent. That difference is free provenance and is kept rather than closed — an
-absent actor means Cairn started it, and is never rendered as unknown
-([run-model.md](run-model.md)). It rests on the spike that measured it rather than on a test
-here: re-proving it needs an authenticated browser session against a running server.
+leaves it absent. That difference is free provenance and is kept rather than closed. What an
+absent actor means is the trigger kind's to say — Cairn's own skill for a manual start, the
+scheduler for a firing, the retry scanner for a retry — and the record carries that
+attribution beside the actor ([run-model.md](run-model.md)). The actor itself rests on the
+spike that measured it rather than on a test here: re-proving it needs an authenticated
+browser session against a running server.
 
 ## The human gate
 

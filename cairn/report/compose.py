@@ -98,6 +98,24 @@ def _verdict(record: RunRecord) -> list[Block]:
             (Chrome(HEADLINE_BY_VERDICT[verdict]),),
         )
     ]
+    if record["integrity"]:
+        # Said directly under the headline, because every line below it was read off the
+        # same evidence: a reader who does not know a piece of it was refused cannot tell
+        # which of the facts beneath are missing rather than absent. One line and a count
+        # here; each refusal is a line of its own in the attention section.
+        blocks.append(
+            Statement(
+                "statement",
+                (
+                    Chrome("This run's own evidence is damaged:"),
+                    Fact(("run.integrity_count",)),
+                    Chrome(
+                        "facts were refused rather than read, and are listed under what "
+                        "needs attention. Nothing refused raised anything."
+                    ),
+                ),
+            )
+        )
     if any(step["outcome"] == OUTCOME_EXCLUDED for step in record["steps"]):
         blocks.append(
             Statement(
@@ -458,7 +476,7 @@ def _shape(record: RunRecord) -> list[Block]:
                 ("waves", Fact(("run.wave_count",))),
                 ("attempts", Fact(("run.attempts",))),
                 ("trigger", Fact(("run.trigger",))),
-                ("started by", Fact(("run.actor", "run.started_by_cairn"), RULE_ACTOR)),
+                ("started by", Fact(("run.actor", "run.attribution"), RULE_ACTOR)),
             ),
         )
     ]

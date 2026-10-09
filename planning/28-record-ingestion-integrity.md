@@ -68,3 +68,55 @@ Cairn, a named user, scheduler, webhook, retry scanner, and unknown.
 `cairn/record/model.py`, `cairn/record/store.py`, `cairn/record/facts.py`,
 `cairn/report/compose.py`, `cairn/report/phrases.py`, run-model and report documentation,
 malformed fixtures, and their tests.
+
+## Close-out
+
+Done. All five sections hold and every criterion above holds.
+
+**A record now accounts for what it could not read.** `integrity` is a section of the run
+record: one entry per piece of this run's own evidence the record refused, naming the node
+it was found under, one of nine frozen faults, and a bounded sentence saying what
+disagreed. Each raises an attention item, placed above every failure and exclusion because
+those lines were read off the same evidence, and the count is on the first screen of all
+three renderings with the sentence that nothing refused raised anything.
+
+One validator serves the runtime gates and the record. A report is the account of a node of
+a run only where the filename, the internal `step_id` and the `run_id` agree, its status is
+one of the frozen three, and every field a reader turns on is present and of its type. A
+document that fails contributes no summary, no session, no freshness and no outcome, and
+the step reads as having left no account.
+
+A report status stands beside only the engine node statuses it can. `noop` stands beside a
+`skipped` node and nothing else, and it is the only report status that can raise an
+outcome; no status at all stands beside a node the engine never started or aborted, because
+such a node evaluated no precondition and ran nothing. `verified` is now the marker gate's
+word **and** the engine's together. Where the two contradict, the step keeps the outcome
+its own node supports and the contradiction is recorded as it stands.
+
+The engine's own run status is read once, and a missing, Boolean, string or unmapped one is
+a refusal of that one field rather than the death of the reading: the rest of the walk
+stands, the status reads as absent, and the verdict cannot be `green`, `all_no_op` or
+`green_with_exclusions` — fail-closed, because without that field nothing says whether the
+run even finished.
+
+A node name the engine recorded twice is one identity with two claims about it. The record
+keeps it once, reading the worst of what the occurrences claim by a total order over their
+own content, so the two orders of one pair produce the same record, verdict and rendering,
+and no projected key can ever hold two nodes' facts.
+
+A stored record is validated whole at `read_record` against the model's own declarations —
+every required section, scalar type, frozen word, the run id it was filed under, the exit
+code its verdict carries, and the uniqueness of every step id and node name — and a field
+the model does not declare is refused rather than ignored. Because the record is
+regenerable, every refusal names `cairn record build`.
+
+Attribution is derived from the trigger kind together with the actor. A named actor speaks
+for itself; an absent one means Cairn's own skill for a manual start, the scheduler for a
+firing or its catchup, the retry scanner for a retry, the run above for a sub-run, and
+nothing at all for a kind the engine recorded as unknown. `started_by_cairn` is gone.
+
+The corpus carries a tenth shape, `damaged`: a run the engine and the gates recorded as
+entirely verified, broken afterwards in five declared ways. It is the one fixture whose
+evidence is not a measurement, because nothing Cairn or the engine does produces those
+documents — and it is where the renderer oracle checks that every refusal reaches every
+rendering.

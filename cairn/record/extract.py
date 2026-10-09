@@ -23,11 +23,12 @@ from __future__ import annotations
 import json
 import os
 import shlex
-from collections.abc import Container, Mapping
+from collections.abc import Container, Mapping, Sequence
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 
 from cairn.assertions import ASSERTION_SOURCES, BACKED_BY_KEY, EXIT_KEY, SOURCE_KEY
+from cairn.core import ReportFault, validate_step_report
 from cairn.layout import view_url
 from cairn.providers import resume_command
 from cairn.record import engine
@@ -44,6 +45,7 @@ from cairn.record.model import (
     GitFacts,
     Headroom,
     Infrastructure,
+    Integrity,
     Lineage,
     NextAction,
     Remedy,
@@ -59,10 +61,23 @@ from cairn.record.vocabulary import (
     ATTENTION_FAILURE,
     ATTENTION_FOLLOW_UP,
     ATTENTION_HOUSEKEEPING_FAILURE,
+    ATTENTION_INTEGRITY,
+    ATTRIBUTION_CAIRN,
+    ATTRIBUTION_PARENT_RUN,
+    ATTRIBUTION_RETRY_SCANNER,
+    ATTRIBUTION_SCHEDULER,
+    ATTRIBUTION_UNKNOWN,
+    ATTRIBUTION_USER,
+    ATTRIBUTION_WEBHOOK,
     EDGE_DEPENDENCY,
     EDGE_RUN,
     EDGE_STEP,
     EDGE_WAVE,
+    INTEGRITY_DUPLICATE_NODE,
+    INTEGRITY_ENGINE_RUN_STATUS,
+    INTEGRITY_GATE_CONTRADICTS_WORK,
+    INTEGRITY_REPORT_CONTRADICTS_ENGINE,
+    INTEGRITY_REPORT_UNREADABLE,
     NEXT_AWAIT_ALLOWANCE,
     NEXT_DECIDE,
     NEXT_FIX_ASSERTION,
@@ -97,6 +112,7 @@ from cairn.skill.vocabulary import TRIGGER_RECOVERY
 from cairn.supervise import owner_liveness
 from cairn.text import (
     LINE_LIMIT,
+    LIST_LIMIT,
     TEXT_LIMIT,
     as_count,
     flatten,
@@ -185,30 +201,66 @@ def _detail(report: dict[str, Any] | None) -> dict[str, Any]:
     return cast(dict[str, Any], found) if isinstance(found, dict) else {}
 
 
-def read_reports(directory: Path, run_id: str) -> dict[str, dict[str, Any]]:
-    """Every account this run's steps left, by the engine node name that wrote it.
+class ReportSet(NamedTuple):
+    """Every account this run's steps left, and every document that was not one.
 
-    A report from another run is skipped rather than read: reports outlive the run that
-    wrote them, and one left by yesterday's run would speak for a step this run never
-    started. A report that cannot be parsed is skipped the same way — the extraction of a
-    whole run must not die on one damaged file, and the step it belonged to reads as having
-    left no account, which is itself an outcome.
+    The two travel together because a reader that took the accounts alone would be back to
+    discarding damaged evidence silently, which is the one reading this module may not
+    offer: a report refused is a fact the record does not have, and the refusal is the only
+    account of it there is.
+    """
+
+    reports: dict[str, dict[str, Any]]
+    integrity: list[Integrity]
+
+
+def _refused(subject: str, fault: ReportFault) -> Integrity:
+    """One refusal, bounded before it enters the record.
+
+    The text names a filename and a damaged file's own bytes, both of which are as long as
+    whatever wrote them chose, so it is capped like every other untrusted value.
+    """
+    return Integrity(
+        subject=subject, fault=fault.fault, detail=flatten(fault.detail, limit=LINE_LIMIT)
+    )
+
+
+def read_reports(directory: Path, run_id: str) -> ReportSet:
+    """Every account this run's steps left, by the engine node name it was found under.
+
+    Each document is held to the same validation the runtime gates hold it to
+    ([core.validate_step_report]), and one that fails contributes nothing at all — no
+    summary, no session, no freshness, no outcome. It is not discarded either: the step it
+    was found under reads as having left no account, and the refusal is kept beside the
+    accounts so the record can say which of the two happened. The extraction of a whole run
+    never dies on one damaged file.
     """
     if not directory.is_dir():
-        return {}
+        return ReportSet({}, [])
     found: dict[str, dict[str, Any]] = {}
+    refused: list[Integrity] = []
     for path in sorted(directory.glob("*.json")):
         try:
             raw: Any = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
+            refused.append(
+                _refused(
+                    path.stem,
+                    ReportFault(INTEGRITY_REPORT_UNREADABLE, f"{path.name}: {exc}"),
+                )
+            )
             continue
-        if not isinstance(raw, dict):
+        fault = validate_step_report(raw, node_name=path.stem, run_id=run_id)
+        if fault is not None:
+            refused.append(
+                _refused(
+                    path.stem,
+                    ReportFault(fault.fault, f"{path.name}: {fault.detail}"),
+                )
+            )
             continue
-        report = cast(dict[str, Any], raw)
-        if report.get("run_id") != run_id or not isinstance(report.get("status"), str):
-            continue
-        found[path.stem] = report
-    return found
+        found[path.stem] = cast(dict[str, Any], raw)
+    return ReportSet(found, refused[:LIST_LIMIT])
 
 
 def read_holds(directory: Path, run_id: str) -> dict[str, dict[str, Any]]:
@@ -376,6 +428,82 @@ def _cause(report: dict[str, Any] | None) -> str | None:
     return found if isinstance(found, str) and found in EXCLUSION_CAUSES else GATE_INDETERMINATE
 
 
+# Which engine node statuses each report status can stand beside. A report is written
+# either by the node it names or by the gate that is that node's own precondition, so a
+# `skipped` node with a gate's `failed` or `noop` report beside it is the ordinary shape of
+# a gate that closed. A node the engine never started, and one it aborted because an
+# upstream node failed, evaluated no precondition and ran nothing — so any report of this
+# run under such a name is evidence that disagrees with itself.
+#
+# `noop` is the load-bearing row, because it is the only report status that can raise a
+# step's outcome: it is the marker gate's word that the work was already done, and it is
+# that only where the engine says the gate skipped the work. Beside a node that ran, failed
+# or completed, it is a claim the work never started over an engine record saying it did.
+COMPATIBLE_NODE_STATUS: dict[str, frozenset[int]] = {
+    "done": frozenset(
+        {
+            engine.NODE_STATUS_RUNNING,
+            engine.NODE_STATUS_FAILED,
+            engine.NODE_STATUS_SUCCEEDED,
+        }
+    ),
+    "failed": frozenset(
+        {
+            engine.NODE_STATUS_RUNNING,
+            engine.NODE_STATUS_FAILED,
+            engine.NODE_STATUS_SUCCEEDED,
+            engine.NODE_STATUS_SKIPPED,
+        }
+    ),
+    "noop": frozenset({engine.NODE_STATUS_SKIPPED}),
+}
+
+
+class Classification(NamedTuple):
+    """What one node's evidence came to, and what of it could not be read at all.
+
+    `integrity` carries the contradictions found while classifying, without a subject: the
+    caller knows which node it asked about, and attaching the name here would let one
+    reading of one node be recorded under two names.
+    """
+
+    outcome: str
+    overlays: list[str]
+    cause: str | None
+    integrity: tuple[ReportFault, ...]
+
+
+def _contradictions(
+    work_report: dict[str, Any] | None, work_status: int | None, mark_status: int | None
+) -> tuple[ReportFault, ...]:
+    """Where this node's own evidence disagrees with itself, in the engine's words and its own."""
+    found: list[ReportFault] = []
+    reported = None if work_report is None else work_report.get("status")
+    if isinstance(reported, str) and reported in COMPATIBLE_NODE_STATUS:
+        status = engine.NODE_STATUS.get(work_status) if work_status is not None else None
+        if work_status not in COMPATIBLE_NODE_STATUS[reported]:
+            found.append(
+                ReportFault(
+                    INTEGRITY_REPORT_CONTRADICTS_ENGINE,
+                    f"the report says {reported!r} and the engine says the node "
+                    f"{status or 'has no readable status'}",
+                )
+            )
+    if (
+        mark_status == engine.NODE_STATUS_SUCCEEDED
+        and work_status is not None
+        and work_status != engine.NODE_STATUS_SUCCEEDED
+    ):
+        found.append(
+            ReportFault(
+                INTEGRITY_GATE_CONTRADICTS_WORK,
+                "the marker gate recorded the work and the engine says the work node "
+                f"{engine.NODE_STATUS.get(work_status) or 'has no readable status'}",
+            )
+        )
+    return tuple(found)
+
+
 def classify_step(
     *,
     work_status: int | None,
@@ -386,12 +514,14 @@ def classify_step(
     run_settled: bool,
     orchestrator_gone: bool,
     engine_killed: bool = False,
-) -> tuple[str, list[str], str | None]:
+) -> Classification:
     """One step's outcome, its overlays and its cause, from the engine and the reports together.
 
     Read top to bottom; the first case that matches decides. The engine says whether the
     step ran, and Cairn's own reports say what came of it — neither can raise what the other
-    lowered, which is the same rule the verify gate itself is built on.
+    lowered, which is the same rule the verify gate itself is built on. Where the two
+    contradict each other, neither raises: the step keeps the outcome its engine node
+    supports and the contradiction is recorded as it stands ([28 B]).
 
     `engine_killed` is the one fact the gate cannot see: the engine stopped the step at its
     bound, spelled only in the node's own error. It decides exactly one cell — a failed work
@@ -400,6 +530,7 @@ def classify_step(
     was killed ([22 A]). It never outranks a cause the gate established on evidence of its
     own, and it never touches a step that did report.
     """
+    integrity = _contradictions(work_report, work_status, mark_status)
     overlays: list[str] = []
     if not has_assertion:
         overlays.append(OVERLAY_UNVERIFIED)
@@ -409,22 +540,31 @@ def classify_step(
         reported = status if isinstance(status, str) else None
 
     # The marker gate skipped the step and left the one report that says so — the one that
-    # names the marker it matched. This outranks every node status because a no-op is the
-    # only outcome the engine spells `skipped` and Cairn can prove was correct. A session that
-    # ran and said `noop` of itself is not one: it ran, and the gate judges it below.
-    if reported == "noop" and _freshness(work_report) is not None:
-        return OUTCOME_NO_OP, overlays, None
+    # names the marker it matched. It outranks the node statuses below because a no-op is
+    # the only outcome the engine spells `skipped` and Cairn can prove was correct, and it
+    # requires that `skipped`: a session that ran and said `noop` of itself has not been
+    # skipped by anything, and neither has one whose node failed, so the gate judges it
+    # below instead.
+    if (
+        reported == "noop"
+        and work_status == engine.NODE_STATUS_SKIPPED
+        and _freshness(work_report) is not None
+    ):
+        return Classification(OUTCOME_NO_OP, overlays, None, integrity)
 
     if work_status == engine.NODE_STATUS_ABORTED:
-        return OUTCOME_NOT_REACHED, overlays, None
+        return Classification(OUTCOME_NOT_REACHED, overlays, None, integrity)
     if work_status is None or work_status == engine.NODE_STATUS_NOT_STARTED:
-        return (
-            OUTCOME_NOT_REACHED if run_settled else OUTCOME_PENDING
-        ), overlays, None
+        return Classification(
+            OUTCOME_NOT_REACHED if run_settled else OUTCOME_PENDING,
+            overlays,
+            None,
+            integrity,
+        )
     if work_status == engine.NODE_STATUS_RUNNING:
         if orchestrator_gone:
-            return OUTCOME_FAILED, overlays, ORCHESTRATOR_DIED
-        return OUTCOME_RUNNING, overlays, None
+            return Classification(OUTCOME_FAILED, overlays, ORCHESTRATOR_DIED, integrity)
+        return Classification(OUTCOME_RUNNING, overlays, None, integrity)
     if work_status == engine.NODE_STATUS_SKIPPED:
         if _cause(mark_report) == NOT_REACHED:
             # The engine spells a chain halt and a marker no-op both `skipped`; the gate
@@ -432,40 +572,50 @@ def classify_step(
             # behind a halt leaves none, so its gate closed `not_reached` — and that is a
             # step that never ran and never will, not one excluded on its own account
             # ([23 B]). Reading it as excluded made a halted chain a near-clean success.
-            return OUTCOME_NOT_REACHED, overlays, NOT_REACHED
-        # Skipped with no no-op report and no gate account of a halt: the step's fate is
-        # unestablished rather than fresh.
-        return OUTCOME_EXCLUDED, overlays, GATE_INDETERMINATE
+            return Classification(OUTCOME_NOT_REACHED, overlays, NOT_REACHED, integrity)
+        # Skipped with no readable no-op report and no gate account of a halt: the step's
+        # fate is unestablished rather than fresh.
+        return Classification(OUTCOME_EXCLUDED, overlays, GATE_INDETERMINATE, integrity)
 
     # The step ran. What came of it is the gate's to say.
     if _divergence(mark_report) is not None:
         overlays.append(OVERLAY_DIVERGENCE)
     if work_report is not None and work_report.get("needs_user_decision") is True:
         overlays.append(OVERLAY_BLOCKED)
-        return OUTCOME_EXCLUDED, _ordered(overlays), USER_DECISION_REQUIRED
+        return Classification(
+            OUTCOME_EXCLUDED, _ordered(overlays), USER_DECISION_REQUIRED, integrity
+        )
 
     cause = _cause(mark_report)
     if cause == USER_DECISION_REQUIRED:
         overlays.append(OVERLAY_BLOCKED)
-        return OUTCOME_EXCLUDED, _ordered(overlays), cause
+        return Classification(OUTCOME_EXCLUDED, _ordered(overlays), cause, integrity)
     if (
         engine_killed
         and work_report is None
         and work_status == engine.NODE_STATUS_FAILED
         and cause in (None, NOT_REACHED, GATE_INDETERMINATE)
     ):
-        return OUTCOME_FAILED, _ordered(overlays), TIMED_OUT
-    if mark_status == engine.NODE_STATUS_SUCCEEDED:
-        return OUTCOME_VERIFIED, _ordered(overlays), None
+        return Classification(OUTCOME_FAILED, _ordered(overlays), TIMED_OUT, integrity)
+    # Verified is the marker gate's word and the engine's together. The gate records a step
+    # whose work node succeeded; over one the engine says failed, the gate's word is the
+    # half of a contradiction that would raise an outcome, so it does not.
+    if (
+        mark_status == engine.NODE_STATUS_SUCCEEDED
+        and work_status == engine.NODE_STATUS_SUCCEEDED
+    ):
+        return Classification(OUTCOME_VERIFIED, _ordered(overlays), None, integrity)
     if cause is not None:
-        return OUTCOME_EXCLUDED, _ordered(overlays), cause
+        return Classification(OUTCOME_EXCLUDED, _ordered(overlays), cause, integrity)
     if work_status == engine.NODE_STATUS_FAILED:
-        return OUTCOME_FAILED, _ordered(overlays), None
+        return Classification(OUTCOME_FAILED, _ordered(overlays), None, integrity)
     # The work node succeeded and nothing recorded it as verified — no marker step, or one
     # that ran and said nothing. Either way the step's own end state was never asserted, and
     # a record that called that verified would be the marker-over-unverified-work failure the
     # gate itself fails closed to prevent.
-    return OUTCOME_EXCLUDED, _ordered(overlays), GATE_INDETERMINATE
+    return Classification(
+        OUTCOME_EXCLUDED, _ordered(overlays), GATE_INDETERMINATE, integrity
+    )
 
 
 def _ordered(overlays: list[str]) -> list[str]:
@@ -501,12 +651,20 @@ def derive_verdict(
     infrastructure: list[Infrastructure],
     engine_state: str,
     waves: list[WaveCensus],
+    *,
+    engine_status_readable: bool,
 ) -> str:
     """The run's own verdict, from every node it has and never from the engine's word for the run.
 
     A queued run reads as running rather than as an outcome: anything triggered externally
     arrives that way and may sit there indefinitely if no scheduler is up, and every one of
     its nodes is at not-started.
+
+    `engine_status_readable` is false where the engine's own status for this run is missing
+    or outside the pinned table. The status is read as a verdict nowhere, but it is what
+    says whether the run is still going — so a reading without it cannot tell a finished
+    run from one mid-step, and calling such a run clean would be the stronger outcome
+    damaged evidence may never produce.
     """
     outcomes = {step["outcome"] for step in steps}
     # Everything of Cairn's own that stands between the plan and its result. A prune is
@@ -536,6 +694,8 @@ def derive_verdict(
         # This sits above the exclusion clause rather than below it: a run whose steps all
         # vanished and whose join report survived would otherwise read as green-with-
         # exclusions, which is a near-clean verdict over a run that recorded nothing at all.
+        return VERDICT_FAILED
+    if not engine_status_readable:
         return VERDICT_FAILED
     if OUTCOME_EXCLUDED in outcomes or census_exclusions(waves):
         return VERDICT_GREEN_WITH_EXCLUSIONS
@@ -619,6 +779,7 @@ def derive_attention(
     infrastructure: list[Infrastructure],
     waves: list[WaveCensus],
     order: list[str],
+    integrity: Sequence[Integrity],
 ) -> list[Attention]:
     """Everything a reader has to act on, assembled in the frozen order rather than sorted into it.
 
@@ -627,6 +788,10 @@ def derive_attention(
     that names the fault, and none of the fourteen is a thing a person can act on. Every
     such step keeps its own outcome in `steps`; the collapse is what the attention list is
     for, which is action ([23 B]).
+
+    An integrity refusal is an item of its own, above every failure, because the lines
+    below it were read off the same evidence: a reader who does not know a report was
+    refused cannot know which of the facts beneath it are missing rather than false.
     """
     items: list[Attention] = []
     by_id = {step["step_id"]: step for step in steps}
@@ -640,6 +805,15 @@ def derive_attention(
                     cause=step["cause"],
                 )
             )
+    for refusal in integrity:
+        items.append(
+            Attention(
+                kind=ATTENTION_INTEGRITY,
+                subject=refusal["subject"],
+                summary=refusal["detail"],
+                cause=refusal["fault"],
+            )
+        )
     for step_id in order:
         step = by_id[step_id]
         if step["outcome"] == OUTCOME_FAILED:
@@ -880,8 +1054,13 @@ def _step_record(
     holds: dict[str, dict[str, Any]],
     run_settled: bool,
     orchestrator_gone: bool,
-) -> StepRecord:
-    """One step, assembled from the nodes it became and the accounts they left."""
+) -> tuple[StepRecord, list[Integrity]]:
+    """One step, assembled from the nodes it became and the accounts they left.
+
+    The refusals come back beside it rather than inside it: a contradiction between a
+    step's report and its node is a fact about this run's evidence, and the record accounts
+    for all of them in one place a reader can find.
+    """
     work = nodes.get(f"{WORK_ROLE}_{step_id}")
     mark = nodes.get(f"{MARK_ROLE}_{step_id}")
     assertion = nodes.get(f"verify_{step_id}")
@@ -905,7 +1084,7 @@ def _step_record(
         assertion_tail_node = nodes.get(f"recheck_{step_id}")
 
     killed = None if work is None else engine.parse_timeout(work.get("error"))
-    outcome, overlays, cause = classify_step(
+    outcome, overlays, cause, refusals = classify_step(
         work_status=None if work is None else _status(work),
         mark_status=None if mark is None else _status(mark),
         work_report=work_report,
@@ -982,7 +1161,7 @@ def _step_record(
         "divergence": divergence,
         "headroom": _headroom(work_report, _holding(step_id, outcome, nodes, holds, orchestrator_gone)),
     }
-    return StepRecord(
+    record = StepRecord(
         step_id=step_id,
         outcome=outcome,
         overlays=overlays,
@@ -1006,6 +1185,9 @@ def _step_record(
         ),
         **cast(Any, fields),
     )
+    return record, [
+        _refused(f"{WORK_ROLE}_{step_id}", fault) for fault in refusals
+    ]
 
 
 def _remedy(
@@ -1105,7 +1287,7 @@ def _infrastructure(
     orchestrator_gone: bool,
     in_flight: bool = False,
     in_flight_cause: str | None = None,
-) -> Infrastructure:
+) -> tuple[Infrastructure, list[Integrity]]:
     naming = engine.classify(name)
     if in_flight:
         # The one node a record cannot judge is the node building it. The engine records
@@ -1128,8 +1310,8 @@ def _infrastructure(
             outcome=OUTCOME_RUNNING if in_flight_cause is None else OUTCOME_FAILED,
             provenance=_provenance(fields),
             **cast(Any, fields),
-        )
-    outcome, _, cause = classify_step(
+        ), []
+    outcome, _, cause, refusals = classify_step(
         work_status=_status(node),
         mark_status=None,
         work_report=report,
@@ -1157,7 +1339,9 @@ def _infrastructure(
         "finished_at": engine.moment(node.get("finishedAt")),
         **resolution_field,
     }
-    return Infrastructure(name=name, outcome=outcome, provenance=_provenance(fields), **cast(Any, fields))
+    return Infrastructure(
+        name=name, outcome=outcome, provenance=_provenance(fields), **cast(Any, fields)
+    ), [_refused(name, fault) for fault in refusals]
 
 
 def _report_cause(report: dict[str, Any] | None) -> str | None:
@@ -1239,30 +1423,43 @@ def extract(
     in_flight_node: str | None = None,
     in_flight_cause: str | None = None,
     holds: dict[str, dict[str, Any]] | None = None,
+    integrity: Sequence[Integrity] = (),
 ) -> RunRecord:
     """One run's whole record, from the engine's last snapshot and this run's own reports.
 
     `in_flight_node` names the one node a record cannot judge, which is the node building
     it: the run's own release writes a record for the run it is still finishing
     ([triggers.md]), and nothing else passes it. `holds` is what running steps are
-    announcing about their wait at the allowance ([read_holds]).
+    announcing about their wait at the allowance ([read_holds]). `integrity` is what the
+    reading of the reports already refused ([read_reports]); everything this derivation
+    refuses is added to it.
     """
     record = status_record if status_record is not None else {}
-    # Two views of the same nodes. `recorded` is the engine's own list, in its own order,
-    # and everything the record carries is built from it — a node dropped for being
-    # unnameable is a node whose failure nothing can report, which is the whole of what
-    # "every node, never silently dropped" is protecting against. `nodes` is a lookup for
-    # assembling a step from the five nodes it became, and may collapse a duplicate name
-    # without costing the record anything, because the record does not read it.
-    recorded = engine.nodes_of(record)
-    nodes: dict[str, dict[str, Any]] = {}
-    for node in recorded:
-        name = engine.node_name(node)
-        if name:
-            nodes.setdefault(name, node)
+    refused: list[Integrity] = list(integrity)
+    # One entry per node identity, because every projection downstream is keyed on a node's
+    # name: two occurrences of one name would put two rows and one key into the record, so
+    # the detailed rows would show both using whichever the mapping kept while the verdict
+    # used the other. The identity is kept and the second claim about it is refused, named
+    # here rather than dropped — a node whose failure nothing can report is the one thing
+    # this walk exists to prevent.
+    recorded, duplicates = _one_node_per_identity(engine.nodes_of(record))
+    refused.extend(duplicates)
+    nodes = {
+        name: node
+        for node in recorded
+        if (name := engine.node_name(node))
+    }
 
-    engine_status = record.get("status")
-    engine_state = engine.run_status_name(engine_status) if engine_status is not None else ""
+    reading = engine.run_reading(record) if status_record is not None else engine.RunReading(None, "", None)
+    engine_state = reading.name
+    if reading.why is not None:
+        refused.append(
+            Integrity(
+                subject=run_id,
+                fault=INTEGRITY_ENGINE_RUN_STATUS,
+                detail=flatten(reading.why, limit=LINE_LIMIT),
+            )
+        )
     alive = owner_liveness(record) if record else None
     # After a crash the record lies: a killed run stays `running` with no finish time
     # forever, so liveness is decided from the recorded process and its start time and the
@@ -1275,8 +1472,9 @@ def extract(
         for name in nodes
         if (naming := engine.classify(name)) is not None and naming.role == WORK_ROLE
     )
-    steps = [
-        _step_record(
+    steps: list[StepRecord] = []
+    for step_id in step_ids:
+        step, step_refusals = _step_record(
             step_id,
             nodes=nodes,
             reports=reports,
@@ -1284,22 +1482,25 @@ def extract(
             run_settled=run_settled,
             orchestrator_gone=orchestrator_gone,
         )
-        for step_id in step_ids
-    ]
+        steps.append(step)
+        refused.extend(step_refusals)
 
-    infrastructure = [
-        _infrastructure(
-            engine.node_name(node),
+    infrastructure: list[Infrastructure] = []
+    for node in recorded:
+        name = engine.node_name(node)
+        if not _is_infrastructure(name, step_ids):
+            continue
+        item, item_refusals = _infrastructure(
+            name,
             node,
-            reports.get(engine.node_name(node)),
+            reports.get(name),
             run_settled=run_settled,
             orchestrator_gone=orchestrator_gone,
-            in_flight=engine.node_name(node) == in_flight_node,
+            in_flight=name == in_flight_node,
             in_flight_cause=in_flight_cause,
         )
-        for node in recorded
-        if _is_infrastructure(engine.node_name(node), step_ids)
-    ]
+        infrastructure.append(item)
+        refused.extend(item_refusals)
 
     engine_nodes = [
         _engine_node(engine.node_name(node), node, step_ids) for node in recorded
@@ -1307,8 +1508,15 @@ def extract(
     edges = _edges(nodes)
     waves = _census(reports)
     order = step_order(nodes, step_ids)
-    verdict = derive_verdict(steps, infrastructure, engine_state, waves)
-    attention = derive_attention(steps, infrastructure, waves, order)
+    refused = refused[:LIST_LIMIT]
+    verdict = derive_verdict(
+        steps,
+        infrastructure,
+        engine_state,
+        waves,
+        engine_status_readable=reading.why is None,
+    )
+    attention = derive_attention(steps, infrastructure, waves, order, refused)
 
     parameters = _parameters(record)
     lock_detail = _detail(reports.get("lock_acquire"))
@@ -1333,7 +1541,7 @@ def extract(
         run_id=run_id,
         attempts=attempt_count,
         engine_version=ENGINE_VERSION,
-        engine_run_status=engine_status if isinstance(engine_status, int) else -1,
+        engine_run_status=reading.status if reading.status is not None else -1,
         engine_run_status_name=engine_state,
         # The engine calls this run clean and Cairn does not. It is a fact about two
         # readings rather than a judgement, and it is I5's whole point made checkable.
@@ -1352,6 +1560,7 @@ def extract(
         edges=edges,
         waves=waves,
         attention=attention,
+        integrity=refused,
         git=git,
         next_action=derive_next_action(
             verdict,
@@ -1367,6 +1576,67 @@ def extract(
         provenance=_provenance(fields, derived=("owner_alive", "view_url")),
         **cast(Any, fields),
     )
+
+
+# Worst first. A name the engine recorded twice is read as the worst of what its
+# occurrences claim, so the reading of a run cannot be improved by whichever copy happened
+# to be written last — and so the two orders of the same pair read identically.
+_WORST_FIRST: tuple[int, ...] = (
+    engine.NODE_STATUS_FAILED,
+    engine.NODE_STATUS_ABORTED,
+    engine.NODE_STATUS_RUNNING,
+    engine.NODE_STATUS_NOT_STARTED,
+    engine.NODE_STATUS_SKIPPED,
+    engine.NODE_STATUS_SUCCEEDED,
+)
+
+
+def _severity(node: dict[str, Any]) -> tuple[int, str]:
+    """How bad one occurrence of a name claims to be, and a tie-break that reads the same
+    whichever order the occurrences arrived in."""
+    status = node.get("status")
+    rank = _WORST_FIRST.index(status) if status in _WORST_FIRST else -1
+    return rank, json.dumps(node, sort_keys=True, default=str)
+
+
+def _one_node_per_identity(
+    recorded: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[Integrity]]:
+    """The engine's nodes with one entry per name, in the order the engine first named each.
+
+    A name recorded twice is one identity with two claims about it. Keeping both would give
+    the record two rows and the projection one key, so a surface would show one occurrence's
+    outcome under the other's name; keeping the last would let input order decide the
+    verdict. So the identity keeps the worst of what its occurrences claim, by a total order
+    over their own content, and the refusal of the rest is recorded against the name.
+    """
+    occurrences: dict[str, list[dict[str, Any]]] = {}
+    for node in recorded:
+        occurrences.setdefault(engine.node_name(node), []).append(node)
+    kept: list[dict[str, Any]] = []
+    refused: list[Integrity] = []
+    for name, found in occurrences.items():
+        kept.append(found[0] if len(found) == 1 else min(found, key=_severity))
+        if len(found) > 1:
+            statuses = ", ".join(
+                sorted(
+                    engine.NODE_STATUS.get(cast(int, node.get("status")), "unreadable")
+                    for node in found
+                )
+            )
+            refused.append(
+                Integrity(
+                    subject=name,
+                    fault=INTEGRITY_DUPLICATE_NODE,
+                    detail=flatten(
+                        f"the engine recorded {len(found)} nodes under this one name "
+                        f"({statuses}); the record reads the worst of them and attributes "
+                        "nothing to the others",
+                        limit=LINE_LIMIT,
+                    ),
+                )
+            )
+    return kept, refused
 
 
 def _is_infrastructure(name: str, step_ids: list[str]) -> bool:
@@ -1422,6 +1692,23 @@ def _edges(nodes: dict[str, dict[str, Any]]) -> list[Edge]:
     return found
 
 
+# Who an absent actor means, per trigger kind. The engine names an authenticated user only
+# for a run started through its own view, so every other start arrives with no actor at all
+# — and what that absence means is the kind's to say: Cairn's own skill for a manual start,
+# which is what a `dagu start` from the CLI is recorded as, the scheduler for a firing and
+# for the catch-up it performs, the retry scanner for a retry, and the run above for a
+# sub-run. Total over the trigger vocabulary, which a test asserts.
+ATTRIBUTION_BY_TRIGGER: dict[str, str] = {
+    engine.TRIGGER_UNKNOWN: ATTRIBUTION_UNKNOWN,
+    engine.TRIGGER_SCHEDULER: ATTRIBUTION_SCHEDULER,
+    engine.TRIGGER_MANUAL: ATTRIBUTION_CAIRN,
+    engine.TRIGGER_WEBHOOK: ATTRIBUTION_WEBHOOK,
+    engine.TRIGGER_SUBDAG: ATTRIBUTION_PARENT_RUN,
+    engine.TRIGGER_RETRY: ATTRIBUTION_RETRY_SCANNER,
+    engine.TRIGGER_CATCHUP: ATTRIBUTION_SCHEDULER,
+}
+
+
 def _trigger(record: dict[str, Any]) -> Trigger:
     raw = record.get("triggerType")
     kind = engine.trigger_name(raw) if raw is not None else engine.TRIGGER_UNKNOWN
@@ -1430,10 +1717,12 @@ def _trigger(record: dict[str, Any]) -> Trigger:
     return Trigger(
         kind=kind,
         actor=actor,
-        # An absent actor means Cairn started it. The engine names the authenticated user
-        # only for a run started through its own view, so a run a person began and a run the
-        # skill began are the same record but for this one field.
-        started_by_cairn=actor is None,
+        # A named actor is the one thing that speaks for itself. Everything else is the
+        # kind's to attribute, because an absent actor is the ordinary case for every kind
+        # and means something different in each.
+        attribution=ATTRIBUTION_USER
+        if actor is not None
+        else ATTRIBUTION_BY_TRIGGER[kind],
         provenance=_provenance(fields),
     )
 
@@ -1506,6 +1795,10 @@ def _git(
 
 
 __all__ = [
+    "ATTRIBUTION_BY_TRIGGER",
+    "COMPATIBLE_NODE_STATUS",
+    "Classification",
+    "ReportSet",
     "census_exclusions",
     "classify_step",
     "derive_attention",

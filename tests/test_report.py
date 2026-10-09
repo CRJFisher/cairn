@@ -29,7 +29,7 @@ from xml.etree import ElementTree
 
 from cairn.__main__ import main as cairn_main
 from cairn.gitio import runs_root
-from cairn.record.extract import extract
+from cairn.record.extract import extract, read_reports
 from cairn.record.facts import ABSENT, NONE, as_mapping, canonical_facts
 from cairn.record.model import RunRecord
 from cairn.record.vocabulary import (
@@ -502,6 +502,210 @@ class AnExclusionIsUnmissable(unittest.TestCase):
             with self.subTest(shape=shape):
                 lines = self._first_section(record_of(shape), "terminal").splitlines()
                 self.assertLessEqual(len(lines), 24)
+
+
+# One engine record whose nodes are whole, so that what a rendering says about damaged
+# evidence rests on the reports rather than on a missing node.
+DAMAGED_STATE: dict[str, Any] = {
+    "dagRunId": "run-one",
+    "name": "plan",
+    "status": 4,
+    "nodes": [
+        {"step": {"name": "work_alpha"}, "status": 4},
+        {"step": {"name": "mark_alpha", "depends": ["work_alpha"]}, "status": 4},
+    ],
+}
+
+# One document per way a report can fail to be the account of the node it was found under.
+DAMAGED_EVIDENCE: dict[str, Any] = {
+    "work_alpha": {
+        "step_id": "work_beta",
+        "run_id": "run-one",
+        "status": "done",
+        "summary": "another node's account",
+        "needs_user_decision": False,
+    },
+    "mark_alpha": {
+        "step_id": "mark_alpha",
+        "run_id": "yesterdays-run",
+        "status": "done",
+        "summary": "another run's account",
+        "needs_user_decision": False,
+    },
+    "commit_alpha": {
+        "step_id": "commit_alpha",
+        "run_id": "run-one",
+        "status": "cancelled",
+        "summary": "a status no gate can read",
+        "needs_user_decision": False,
+    },
+    "verify_alpha": {
+        "step_id": "verify_alpha",
+        "run_id": "run-one",
+        "status": "done",
+        "needs_user_decision": False,
+    },
+    "prune_w1": '{"step_id": "prune',
+}
+
+
+class DamagedEvidenceIsUnmissableToo(unittest.TestCase):
+    """[28]: a report read off evidence that was refused says so before anything else."""
+
+    def _first_section(self, record: RunRecord, sink: str) -> str:
+        text = rendered(record, sink).text
+        if sink == "markdown":
+            return text.split("<!-- cairn:section:next -->")[0]
+        if sink == "html":
+            return text.split('<section id="cairn-next">')[0]
+        return text.split("== WHAT TO DO NEXT ==")[0]
+
+    def test_the_first_screen_says_the_evidence_is_damaged_and_counts_it(self) -> None:
+        record = record_of("damaged")
+        self.assertEqual(len(record["integrity"]), 5)
+        for sink in SINKS:
+            with self.subTest(sink=sink):
+                opening = loose(self._first_section(record, sink))
+                self.assertIn("evidence is damaged", opening)
+                self.assertIn("5", opening)
+                self.assertIn("Nothing refused raised anything", opening)
+
+    def test_a_run_whose_evidence_is_whole_says_none_of_it(self) -> None:
+        for sink in SINKS:
+            with self.subTest(sink=sink):
+                self.assertNotIn(
+                    "evidence is damaged",
+                    loose(self._first_section(record_of("green"), sink)),
+                )
+
+    def test_every_refusal_is_a_row_naming_its_node_and_its_fault(self) -> None:
+        record = record_of("damaged")
+        for sink in SINKS:
+            text = loose(rendered(record, sink).text)
+            for refusal in record["integrity"]:
+                with self.subTest(sink=sink, fault=refusal["fault"]):
+                    self.assertIn(loose(refusal["subject"]), text)
+                    self.assertIn(loose(refusal["fault"]), text)
+                    self.assertIn(loose(refusal["detail"]), text)
+
+    def test_every_kind_of_refused_report_reaches_every_rendering(self) -> None:
+        """One run whose reports fail every way a document can fail to be a step's own
+        account: each refusal is named in all three renderings, under its own fault."""
+        with tempfile.TemporaryDirectory() as temporary:
+            reports = Path(temporary)
+            for name, document in DAMAGED_EVIDENCE.items():
+                (reports / f"{name}.json").write_text(
+                    document if isinstance(document, str) else json.dumps(document),
+                    encoding="utf-8",
+                )
+            found = read_reports(reports, "run-one")
+            record = extract(
+                DAMAGED_STATE, found.reports, run_id="run-one", integrity=found.integrity
+            )
+        self.assertEqual(
+            {refusal["fault"] for refusal in record["integrity"]},
+            {
+                "report_renamed",
+                "report_wrong_run",
+                "report_status",
+                "report_field",
+                "report_unreadable",
+            },
+        )
+        for sink in SINKS:
+            text = loose(rendered(record, sink).text)
+            for refusal in record["integrity"]:
+                with self.subTest(sink=sink, fault=refusal["fault"]):
+                    self.assertIn(loose(refusal["fault"]), text)
+                    self.assertIn(loose(refusal["detail"]), text)
+
+    def test_a_duplicated_node_renders_identically_in_either_order(self) -> None:
+        """Input order decides nothing a reader sees, in any of the three."""
+        first = {"step": {"name": "prune_w1"}, "status": 4}
+        second = {"step": {"name": "prune_w1"}, "status": 2, "error": "exit status 3"}
+        one = extract(
+            {**DAMAGED_STATE, "nodes": [*DAMAGED_STATE["nodes"], first, second]},
+            {},
+            run_id="run-one",
+        )
+        other = extract(
+            {**DAMAGED_STATE, "nodes": [*DAMAGED_STATE["nodes"], second, first]},
+            {},
+            run_id="run-one",
+        )
+        for sink in SINKS:
+            with self.subTest(sink=sink):
+                self.assertEqual(
+                    rendered(one, sink).text, rendered(other, sink).text
+                )
+
+    def test_a_run_the_engine_and_the_gates_called_verified_is_not_a_clean_success(
+        self,
+    ) -> None:
+        """Every step of the `damaged` fixture verified. Its evidence did not."""
+        record = record_of("damaged")
+        self.assertEqual(
+            {step["outcome"] for step in record["steps"]}, {"verified"}
+        )
+        self.assertNotEqual(record["exit_code"], 0)
+        for sink in SINKS:
+            with self.subTest(sink=sink):
+                self.assertNotIn(
+                    "This run worked.", loose(self._first_section(record, sink))
+                )
+
+
+class WhoStartedItIsSaidAccurately(unittest.TestCase):
+    """[28 E]: every trigger kind, with an actor and without, said as what it was."""
+
+    def _started_by(self, record: RunRecord, sink: str) -> str:
+        item = next(
+            entry
+            for entry in rendered(record, sink).stated
+            if entry.keys == ("run.actor", "run.attribution")
+        )
+        self.assertEqual(item.label, "started by")
+        return item.shown
+
+    def test_every_attribution_is_said_as_itself(self) -> None:
+        said = {
+            "cairn": "Cairn",
+            "scheduler": "the scheduler",
+            "webhook": "a webhook",
+            "retry_scanner": "the retry scanner",
+            "parent_run": "the run above this one",
+            "unknown": phrases.NOT_RECORDED,
+        }
+        for attribution, phrase in said.items():
+            record = poke(
+                "green",
+                trigger={"kind": "manual", "actor": None,
+                         "attribution": attribution, "provenance": {"actor": "absent"}},
+            )
+            for sink in SINKS:
+                with self.subTest(attribution=attribution, sink=sink):
+                    self.assertEqual(self._started_by(record, sink), phrase)
+                    self.assertIn(loose(phrase), loose(rendered(record, sink).text))
+
+    def test_a_named_user_is_said_by_name(self) -> None:
+        record = poke(
+            "green",
+            trigger={"kind": "manual", "actor": "ada", "attribution": "user",
+                     "provenance": {}},
+        )
+        for sink in SINKS:
+            with self.subTest(sink=sink):
+                self.assertEqual(self._started_by(record, sink), "ada")
+
+    def test_a_scheduled_run_is_never_said_to_be_cairns(self) -> None:
+        record = poke(
+            "green",
+            trigger={"kind": "scheduler", "actor": None, "attribution": "scheduler",
+                     "provenance": {"actor": "absent"}},
+        )
+        for sink in SINKS:
+            with self.subTest(sink=sink):
+                self.assertNotEqual(self._started_by(record, sink), "Cairn")
 
 
 class ANoOpRunReadsAsANoOp(unittest.TestCase):

@@ -105,7 +105,7 @@ def canonical_facts(record: RunRecord) -> list[tuple[str, str]]:
         ("run.owner_alive", _value(record["owner_alive"])),
         ("run.trigger", _value(record["trigger"]["kind"])),
         ("run.actor", _value(record["trigger"]["actor"])),
-        ("run.started_by_cairn", _value(record["trigger"]["started_by_cairn"])),
+        ("run.attribution", _value(record["trigger"]["attribution"])),
         ("run.started_at", _value(record["started_at"])),
         ("run.finished_at", _value(record["finished_at"])),
         ("run.occasion", _value(record["lineage"]["occasion"])),
@@ -115,6 +115,10 @@ def canonical_facts(record: RunRecord) -> list[tuple[str, str]]:
         ("run.edge_count", _value(len(record["edges"]))),
         ("run.wave_count", _value(len(record["waves"]))),
         ("run.attention_count", _value(len(record["attention"]))),
+        # How much of this run's own evidence the record refused. One count rather than the
+        # refusals themselves: each one is an attention item carrying its subject, its
+        # fault and what it refused, and projecting both would be the same fact twice.
+        ("run.integrity_count", _value(len(record["integrity"]))),
         ("run.next_action", _value(record["next_action"]["action"])),
         ("run.next_subject", _value(record["next_action"]["subject"])),
         ("run.next_command", _value(record["next_action"]["command"])),

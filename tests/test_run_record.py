@@ -22,7 +22,7 @@ from typing import Any, cast
 from unittest.mock import patch
 
 from cairn.__main__ import main as cairn_main
-from cairn.core import CairnError, RuntimeContext
+from cairn.core import STATUSES, CairnError, RuntimeContext, read_step_report
 from cairn.layout import (
     ENGINE_HOST_ENV,
     ENGINE_PORT_ENV,
@@ -36,16 +36,43 @@ from cairn.layout import (
 )
 from cairn.liveness import self_start_time
 from cairn.record import engine
-from cairn.record.engine import Attempt, began
-from cairn.record.extract import classify_step, extract, read_reports, step_order
+from cairn.record.engine import RUN_STATUS, Attempt, began
+from cairn.record.extract import (
+    ATTRIBUTION_BY_TRIGGER,
+    COMPATIBLE_NODE_STATUS,
+    ReportSet,
+    classify_step,
+    extract,
+    read_reports,
+    step_order,
+)
 from cairn.record.facts import ABSENT, as_mapping, canonical_facts
-from cairn.record.model import RunRecord
+from cairn.record.model import RunRecord, Trigger
 from cairn.record.store import read_record, write_record
 from cairn.record.vocabulary import (
+    ATTENTION_INTEGRITY,
     ATTENTION_ORDER,
+    ATTRIBUTION_CAIRN,
+    ATTRIBUTION_PARENT_RUN,
+    ATTRIBUTION_RETRY_SCANNER,
+    ATTRIBUTION_SCHEDULER,
+    ATTRIBUTION_UNKNOWN,
+    ATTRIBUTION_USER,
+    ATTRIBUTION_WEBHOOK,
+    ATTRIBUTIONS,
     EDGE_KINDS,
     EXIT_GREEN,
     EXIT_NO_RECORD,
+    INTEGRITY_DUPLICATE_NODE,
+    INTEGRITY_ENGINE_RUN_STATUS,
+    INTEGRITY_FAULTS,
+    INTEGRITY_GATE_CONTRADICTS_WORK,
+    INTEGRITY_REPORT_CONTRADICTS_ENGINE,
+    INTEGRITY_REPORT_FIELD,
+    INTEGRITY_REPORT_RENAMED,
+    INTEGRITY_REPORT_STATUS,
+    INTEGRITY_REPORT_UNREADABLE,
+    INTEGRITY_REPORT_WRONG_RUN,
     NEXT_ACTIONS,
     NEXT_FIX_ASSERTION,
     NEXT_RERUN,
@@ -63,6 +90,7 @@ from cairn.record.vocabulary import (
     OVERLAYS,
     PROVENANCE_ABSENT,
     PROVENANCES,
+    RECORD_VERSION,
     STEP_OUTCOMES,
     VERDICT_ALL_NO_OP,
     VERDICT_BLOCKED,
@@ -110,11 +138,16 @@ SHAPES = (
     "crashed",
     "timed-out",
     "agent",
+    "damaged",
 )
 
 
-def load(shape: str) -> tuple[dict[str, Any], dict[str, dict[str, Any]], str]:
-    """One recorded run: the engine's last snapshot, this run's reports, and its identity."""
+def reports_of(shape: str) -> tuple[dict[str, Any], ReportSet, str]:
+    """One recorded run: the engine's last snapshot, what its reports came to, its identity.
+
+    The accounts and the refusals both, because a shape recorded to carry damage is read
+    the way the record's own builder reads one.
+    """
     directory = CORPUS / shape
     recording: Any = json.loads((directory / "recording.json").read_text(encoding="utf-8"))
     run_id = str(cast(dict[str, Any], recording)["run_id"])
@@ -123,10 +156,18 @@ def load(shape: str) -> tuple[dict[str, Any], dict[str, dict[str, Any]], str]:
     return state, read_reports(directory / "reports", run_id), run_id
 
 
+def load(shape: str) -> tuple[dict[str, Any], dict[str, dict[str, Any]], str]:
+    """The same run, for a test that goes on to add a report of its own by hand."""
+    state, found, run_id = reports_of(shape)
+    return state, found.reports, run_id
+
+
 def record_of(shape: str) -> RunRecord:
     """One recorded run, as the corpus recorded it."""
-    state, reports, run_id = load(shape)
-    return extract(state, reports, run_id=run_id)
+    state, found, run_id = reports_of(shape)
+    return extract(
+        state, found.reports, run_id=run_id, integrity=found.integrity
+    )
 
 
 def alive_copy(state: dict[str, Any]) -> dict[str, Any]:
@@ -178,11 +219,42 @@ class TheVocabularyIsFrozen(unittest.TestCase):
             ATTENTION_ORDER,
             (
                 "blocked",
+                "integrity",
                 "failure",
                 "excluded",
                 "housekeeping_failure",
                 "divergence",
                 "follow_up",
+            ),
+        )
+
+    def test_the_integrity_faults_are_exactly_these_nine(self) -> None:
+        self.assertEqual(
+            INTEGRITY_FAULTS,
+            (
+                "engine_run_status",
+                "duplicate_node",
+                "gate_contradicts_work",
+                "report_contradicts_engine",
+                "report_unreadable",
+                "report_renamed",
+                "report_wrong_run",
+                "report_field",
+                "report_status",
+            ),
+        )
+
+    def test_the_attributions_are_exactly_these_seven(self) -> None:
+        self.assertEqual(
+            ATTRIBUTIONS,
+            (
+                "cairn",
+                "user",
+                "scheduler",
+                "webhook",
+                "retry_scanner",
+                "parent_run",
+                "unknown",
             ),
         )
 
@@ -221,6 +293,8 @@ class TheDocumentStatesTheWholeVocabulary(unittest.TestCase):
             EDGE_KINDS,
             PROVENANCES,
             NEXT_ACTIONS,
+            INTEGRITY_FAULTS,
+            ATTRIBUTIONS,
         ):
             for value in group:
                 with self.subTest(value=value):
@@ -255,7 +329,8 @@ class TheDocumentStatesTheWholeVocabulary(unittest.TestCase):
     def test_the_vocabulary_is_minted_in_one_module_only(self) -> None:
         """A second module naming a verdict is the synonym this document exists to forbid."""
         pattern = re.compile(
-            r"^(VERDICT|OUTCOME|OVERLAY|ATTENTION|PROVENANCE|NEXT|EDGE)_[A-Z0-9_]+ = ",
+            r"^(VERDICT|OUTCOME|OVERLAY|ATTENTION|PROVENANCE|NEXT|EDGE|INTEGRITY"
+            r"|ATTRIBUTION)_[A-Z0-9_]+ = ",
             re.MULTILINE,
         )
         holders = {
@@ -364,12 +439,21 @@ class TheCorpusCoversTheStateSpace(unittest.TestCase):
         self.assertEqual(reached, set(STEP_OUTCOMES))
 
     def test_every_engine_node_reaches_the_record(self) -> None:
-        """A node dropped for being unrecognisable is one whose failure nothing reports."""
+        """A node dropped for being unrecognisable is one whose failure nothing reports.
+
+        One entry per identity rather than per occurrence: a name the engine recorded twice
+        is one node with two claims about it, and the second is refused by name instead of
+        being carried as a node of its own ([28 C]).
+        """
         for shape in SHAPES:
             with self.subTest(shape=shape):
                 state, _, _ = load(shape)
+                identities = dict.fromkeys(
+                    engine.node_name(node) for node in engine.nodes_of(state)
+                )
                 self.assertEqual(
-                    len(record_of(shape)["nodes"]), len(engine.nodes_of(state))
+                    [node["name"] for node in record_of(shape)["nodes"]],
+                    list(identities),
                 )
 
 
@@ -613,7 +697,7 @@ class AStepTheEngineKilledIsTimedOut(unittest.TestCase):
     that never ran, beside an engine node saying it timed out after 2h30m."""
 
     def test_the_engines_kill_outranks_the_gates_absent_report_reading(self) -> None:
-        outcome, overlays, cause = classify_step(
+        outcome, overlays, cause, _ = classify_step(
             work_status=engine.NODE_STATUS_FAILED,
             mark_status=engine.NODE_STATUS_SKIPPED,
             work_report=None,
@@ -629,7 +713,7 @@ class AStepTheEngineKilledIsTimedOut(unittest.TestCase):
     def test_a_cause_the_gate_established_on_its_own_evidence_is_never_overridden(self) -> None:
         for own_cause in (VERIFY_FAILED, REPORTED_FAILURE):
             with self.subTest(cause=own_cause):
-                _, _, cause = classify_step(
+                _, _, cause, _ = classify_step(
                     work_status=engine.NODE_STATUS_FAILED,
                     mark_status=engine.NODE_STATUS_SKIPPED,
                     work_report=None,
@@ -644,7 +728,7 @@ class AStepTheEngineKilledIsTimedOut(unittest.TestCase):
     def test_a_step_that_reported_is_read_from_its_report_however_the_engine_ended_it(
         self,
     ) -> None:
-        _, _, cause = classify_step(
+        _, _, cause, _ = classify_step(
             work_status=engine.NODE_STATUS_FAILED,
             mark_status=engine.NODE_STATUS_SKIPPED,
             work_report={"status": "failed", "needs_user_decision": False},
@@ -874,10 +958,10 @@ class EveryAbsentFieldCarriesProvenance(unittest.TestCase):
                         ("derived", PROVENANCE_ABSENT),
                     )
 
-    def test_an_absent_actor_means_cairn_started_it_and_is_never_unknown(self) -> None:
+    def test_a_run_cairns_own_skill_started_is_attributed_to_cairn(self) -> None:
         trigger = record_of("green")["trigger"]
         self.assertIsNone(trigger["actor"])
-        self.assertTrue(trigger["started_by_cairn"])
+        self.assertEqual(trigger["attribution"], ATTRIBUTION_CAIRN)
         self.assertEqual(trigger["provenance"]["actor"], PROVENANCE_ABSENT)
         self.assertNotEqual(trigger["kind"], "unknown")
 
@@ -1532,6 +1616,27 @@ class AttentionComesInOneOrder(unittest.TestCase):
             for item in record_of(shape)["attention"]:
                 self.assertIn(item["kind"], ATTENTION_ORDER)
 
+    def test_every_refusal_is_an_item_a_reader_is_told_about(self) -> None:
+        """Nothing refused is only logged: the lines below it were read off the same
+        evidence, so a reader who does not know is reading facts that may be missing."""
+        record = record_of("damaged")
+        items = [
+            item for item in record["attention"] if item["kind"] == ATTENTION_INTEGRITY
+        ]
+        self.assertEqual(
+            [(item["subject"], item["cause"], item["summary"]) for item in items],
+            [
+                (refusal["subject"], refusal["fault"], refusal["detail"])
+                for refusal in record["integrity"]
+            ],
+        )
+
+    def test_a_refusal_outranks_every_failure_and_exclusion_below_it(self) -> None:
+        self.assertLess(
+            ATTENTION_ORDER.index(ATTENTION_INTEGRITY),
+            ATTENTION_ORDER.index("failure"),
+        )
+
 
 class UntrustedTextIsNormalisedOnceAndEscapedNowhere(unittest.TestCase):
     """Task 10: one pass here, context-specific escaping at each sink."""
@@ -1812,6 +1917,102 @@ class TheRecordLivesInCairnsOwnState(unittest.TestCase):
         write_record(self.root, record)
         self.assertFalse(fragment.exists())
 
+    def _stored(self, **fields: Any) -> CairnError:
+        """One damaged record on disk, and the refusal reading it produced."""
+        record = record_of("green")
+        write_record(self.root, record)
+        path = record_path(self.root, record["run_id"])
+        damaged = {**json.loads(path.read_text(encoding="utf-8")), **fields}
+        path.write_text(json.dumps(damaged), encoding="utf-8")
+        with self.assertRaises(CairnError) as caught:
+            read_record(self.root, record["run_id"])
+        self.assertEqual(caught.exception.cause, "run_record_unreadable")
+        self.assertIn("record build", str(caught.exception))
+        return caught.exception
+
+    def test_a_current_version_record_missing_any_section_is_refused(self) -> None:
+        """`{"record_version": current}` is a current record the way a stub is a building."""
+        record = record_of("green")
+        write_record(self.root, record)
+        path = record_path(self.root, record["run_id"])
+        whole = cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
+        for name in RunRecord.__annotations__:
+            if name == "record_version":
+                continue
+            with self.subTest(section=name):
+                path.write_text(
+                    json.dumps({key: whole[key] for key in whole if key != name}),
+                    encoding="utf-8",
+                )
+                with self.assertRaises(CairnError) as caught:
+                    read_record(self.root, record["run_id"])
+                self.assertEqual(caught.exception.cause, "run_record_unreadable")
+                self.assertIn(name, str(caught.exception))
+                self.assertIn("record build", str(caught.exception))
+
+    def test_a_record_carrying_only_its_version_is_refused_rather_than_returned(self) -> None:
+        path = record_path(self.root, "run-one")
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            json.dumps({"record_version": RECORD_VERSION}), encoding="utf-8"
+        )
+        with self.assertRaises(CairnError) as caught:
+            read_record(self.root, "run-one")
+        self.assertEqual(caught.exception.cause, "run_record_unreadable")
+        self.assertIn("record build", str(caught.exception))
+
+    def test_a_scalar_of_the_wrong_type_is_refused(self) -> None:
+        wrong: tuple[tuple[str, Any], ...] = (
+            ("run_id", 7),
+            ("attempts", "two"),
+            ("attempts", True),
+            ("engine_contradicted", "yes"),
+            ("owner_alive", "maybe"),
+            ("steps", {}),
+            ("plan", 3),
+        )
+        for field, value in wrong:
+            with self.subTest(field=field, value=value):
+                self.assertIn(field, str(self._stored(**{field: value})))
+
+    def test_a_word_outside_a_frozen_vocabulary_is_refused(self) -> None:
+        record = record_of("green")
+        for fields in (
+            {"verdict": "mostly_fine"},
+            {"verdict": VERDICT_FAILED},
+            {"next_action": {**record["next_action"], "action": "panic"}},
+            {"trigger": {**record["trigger"], "attribution": "the cat"}},
+            {"trigger": {**record["trigger"], "kind": "telepathy"}},
+            {"engine_run_status": 4, "engine_run_status_name": "failed"},
+        ):
+            with self.subTest(**{key: str(value) for key, value in fields.items()}):
+                self._stored(**fields)
+
+    def test_a_step_whose_outcome_and_claims_disagree_is_refused(self) -> None:
+        record = record_of("green")
+        first = record["steps"][0]
+        for step in (
+            {**first, "outcome": "fine"},
+            {**first, "outcome": OUTCOME_EXCLUDED, "verified": True},
+            {**first, "cause": "something_went_wrong"},
+            {**first, "overlays": [OVERLAY_DIVERGENCE, OVERLAY_BLOCKED]},
+        ):
+            with self.subTest(step=step["outcome"]):
+                self._stored(steps=[step, *record["steps"][1:]])
+
+    def test_a_record_filed_under_another_runs_identity_is_refused(self) -> None:
+        self.assertIn("fixture-green", str(self._stored(run_id="somebody-else")))
+
+    def test_two_steps_of_one_name_are_refused_rather_than_aliased(self) -> None:
+        record = record_of("green")
+        self.assertIn(
+            "more than once",
+            str(self._stored(steps=[record["steps"][0], record["steps"][0]])),
+        )
+
+    def test_a_field_the_model_does_not_declare_is_refused(self) -> None:
+        self.assertIn("total_cost_usd", str(self._stored(total_cost_usd=12.5)))
+
     def test_a_step_composes_its_report_path_from_the_runs_root_and_the_run_id(self) -> None:
         environment = {
             "DAG_RUN_ID": "run-one",
@@ -1835,6 +2036,430 @@ class TheRecordLivesInCairnsOwnState(unittest.TestCase):
                     "DAG_RUN_WORK_DIR": str(self.root),
                 }
             )
+
+
+def whole_report(**fields: Any) -> dict[str, Any]:
+    """One work report of `run-one`'s `work_alpha`, as the runtime writes one."""
+    return {
+        "step_id": "work_alpha",
+        "run_id": "run-one",
+        "status": "done",
+        "duration": 1.5,
+        "working_directory": "/srv/work",
+        "summary": "the step did its work",
+        "follow_up_work": [],
+        "needs_user_decision": False,
+        "cause": None,
+        "detail": {"session_id": "abc"},
+        **fields,
+    }
+
+
+# Every way one document can fail to be `work_alpha`'s own account of `run-one`, with the
+# fault it is refused for. The renamed row is the one the record used to accept: the file is
+# whole, and it is another node's account.
+DAMAGED_REPORTS: tuple[tuple[dict[str, Any], str], ...] = (
+    (whole_report(step_id="work_beta"), INTEGRITY_REPORT_RENAMED),
+    (whole_report(run_id="yesterdays-run"), INTEGRITY_REPORT_WRONG_RUN),
+    (whole_report(status="cancelled"), INTEGRITY_REPORT_STATUS),
+    (whole_report(status=4), INTEGRITY_REPORT_FIELD),
+    (whole_report(needs_user_decision="no"), INTEGRITY_REPORT_FIELD),
+    (whole_report(detail="a sentence"), INTEGRITY_REPORT_FIELD),
+    (whole_report(follow_up_work="one thing"), INTEGRITY_REPORT_FIELD),
+    (whole_report(duration="quick"), INTEGRITY_REPORT_FIELD),
+    ({key: value for key, value in whole_report().items() if key != "summary"},
+     INTEGRITY_REPORT_FIELD),
+    ({key: value for key, value in whole_report().items() if key != "step_id"},
+     INTEGRITY_REPORT_FIELD),
+)
+
+
+class OneValidatorReadsEveryReport(unittest.TestCase):
+    """[28 A]: the runtime gates and the record hold a report to one reading."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.reports = Path(self.temporary.name)
+
+    def _write(self, name: str, body: object) -> None:
+        text = body if isinstance(body, str) else json.dumps(body)
+        (self.reports / f"{name}.json").write_text(text, encoding="utf-8")
+
+    def test_the_gate_and_the_record_refuse_the_same_documents(self) -> None:
+        """Two validators drift, and the half the record was missing is the renamed one."""
+        for damaged, fault in DAMAGED_REPORTS:
+            with self.subTest(fault=fault, document=sorted(damaged)):
+                self._write("work_alpha", damaged)
+                found = read_reports(self.reports, "run-one")
+                self.assertEqual(found.reports, {})
+                self.assertEqual(
+                    [(item["subject"], item["fault"]) for item in found.integrity],
+                    [("work_alpha", fault)],
+                )
+                with self.assertRaises(CairnError):
+                    read_step_report(self.reports, "work_alpha", "run-one")
+
+    def test_a_whole_report_is_read_by_both_and_refused_by_neither(self) -> None:
+        """The control: a reading that refused everything would prove nothing."""
+        self._write("work_alpha", whole_report())
+        found = read_reports(self.reports, "run-one")
+        self.assertEqual(found.integrity, [])
+        self.assertEqual(found.reports["work_alpha"], whole_report())
+        self.assertEqual(
+            read_step_report(self.reports, "work_alpha", "run-one"), whole_report()
+        )
+
+    def test_a_truncated_document_is_refused_as_unreadable_rather_than_as_absent(
+        self,
+    ) -> None:
+        self._write("work_alpha", '{"step_id": "work_al')
+        found = read_reports(self.reports, "run-one")
+        self.assertEqual(found.reports, {})
+        self.assertEqual(found.integrity[0]["fault"], INTEGRITY_REPORT_UNREADABLE)
+        self.assertIn("work_alpha.json", found.integrity[0]["detail"])
+
+    def test_a_refused_report_contributes_no_fact_of_any_kind(self) -> None:
+        """Summary, session, freshness and outcome all come from the report, so a document
+        that is not the step's account contributes none of them."""
+        state = {
+            "dagRunId": "run-one",
+            "name": "plan",
+            "status": 4,
+            "nodes": [
+                {"step": {"name": "work_alpha"}, "status": 5},
+                {"step": {"name": "commit_alpha", "depends": ["work_alpha"]}, "status": 4},
+            ],
+        }
+        renamed = whole_report(
+            step_id="work_beta",
+            status="noop",
+            summary="already complete",
+            detail={
+                "session_id": "abc",
+                "recorded_scope": "once",
+                "recorded_key": "once",
+                "recorded_run": "an-earlier-run",
+            },
+        )
+        self._write("work_alpha", renamed)
+        found = read_reports(self.reports, "run-one")
+        record = extract(
+            state, found.reports, run_id="run-one", integrity=found.integrity
+        )
+        step = record["steps"][0]
+        self.assertNotEqual(step["outcome"], OUTCOME_NO_OP)
+        self.assertIsNone(step["said"])
+        self.assertIsNone(step["session_id"])
+        self.assertIsNone(step["freshness"])
+        self.assertIsNone(step["completed_by_run"])
+        self.assertEqual(
+            [item["fault"] for item in record["integrity"]],
+            [INTEGRITY_REPORT_RENAMED],
+        )
+
+    def test_a_refusal_is_bounded_before_it_enters_the_record(self) -> None:
+        """A damaged file's own bytes reach the diagnostic, so they are capped like every
+        other untrusted value."""
+        self._write("work_alpha", "x" * 10_000)
+        found = read_reports(self.reports, "run-one")
+        self.assertLessEqual(len(found.integrity[0]["detail"]), LINE_LIMIT)
+
+    def test_a_run_whose_only_evidence_was_refused_still_gets_a_record(self) -> None:
+        """A document that was there and could not be read is evidence the run existed."""
+        self._write("work_alpha", '{"step_id": "work_al')
+        found = read_reports(self.reports, "run-one")
+        self.assertEqual(found.reports, {})
+        self.assertEqual(len(found.integrity), 1)
+
+
+class ContradictionsNeverRaiseAnOutcome(unittest.TestCase):
+    """[28 B]: a report and an engine node that disagree leave the lower reading standing."""
+
+    def test_the_compatibility_matrix_is_total_over_the_report_statuses(self) -> None:
+        self.assertEqual(set(COMPATIBLE_NODE_STATUS), set(STATUSES))
+
+    def test_a_noop_report_is_the_marker_gates_word_only_where_the_engine_skipped_the_work(
+        self,
+    ) -> None:
+        fresh = {
+            "step_id": "work_alpha",
+            "run_id": "run-one",
+            "status": "noop",
+            "summary": "already complete",
+            "needs_user_decision": False,
+            "detail": {"recorded_scope": "once", "recorded_key": "once"},
+        }
+        for status in engine.NODE_STATUS:
+            with self.subTest(node=engine.NODE_STATUS[status]):
+                found = classify_step(
+                    work_status=status,
+                    mark_status=None,
+                    work_report=fresh,
+                    mark_report=None,
+                    has_assertion=True,
+                    run_settled=True,
+                    orchestrator_gone=False,
+                )
+                skipped = status == engine.NODE_STATUS_SKIPPED
+                self.assertEqual(found.outcome == OUTCOME_NO_OP, skipped)
+                self.assertEqual(
+                    [fault.fault for fault in found.integrity],
+                    [] if skipped else [INTEGRITY_REPORT_CONTRADICTS_ENGINE],
+                )
+
+    def test_a_noop_report_cannot_raise_a_failed_or_running_execution(self) -> None:
+        """The shape the plan names: a `noop` over an engine record saying the work ran."""
+        state = {
+            "dagRunId": "run-one",
+            "name": "plan",
+            "status": 2,
+            "nodes": [
+                {
+                    "step": {"name": "work_alpha"},
+                    "status": 2,
+                    "error": "exit status 1",
+                }
+            ],
+        }
+        reports = {
+            "work_alpha": {
+                "step_id": "work_alpha",
+                "run_id": "run-one",
+                "status": "noop",
+                "summary": "already complete",
+                "needs_user_decision": False,
+                "detail": {"recorded_scope": "once", "recorded_key": "once"},
+            }
+        }
+        record = extract(state, reports, run_id="run-one")
+        self.assertEqual(record["steps"][0]["outcome"], OUTCOME_FAILED)
+        self.assertEqual(record["verdict"], VERDICT_FAILED)
+        self.assertEqual(
+            [item["fault"] for item in record["integrity"]],
+            [INTEGRITY_REPORT_CONTRADICTS_ENGINE],
+        )
+        self.assertEqual(record["integrity"][0]["subject"], "work_alpha")
+
+    def test_the_marker_gate_cannot_verify_work_the_engine_says_did_not_complete(
+        self,
+    ) -> None:
+        found = classify_step(
+            work_status=engine.NODE_STATUS_FAILED,
+            mark_status=engine.NODE_STATUS_SUCCEEDED,
+            work_report=None,
+            mark_report=None,
+            has_assertion=True,
+            run_settled=True,
+            orchestrator_gone=False,
+        )
+        self.assertEqual(found.outcome, OUTCOME_FAILED)
+        self.assertEqual(
+            [fault.fault for fault in found.integrity],
+            [INTEGRITY_GATE_CONTRADICTS_WORK],
+        )
+
+    def test_a_verified_step_is_the_gates_word_and_the_engines_together(self) -> None:
+        """The control: the pair that really did agree still reads as verified."""
+        found = classify_step(
+            work_status=engine.NODE_STATUS_SUCCEEDED,
+            mark_status=engine.NODE_STATUS_SUCCEEDED,
+            work_report=None,
+            mark_report=None,
+            has_assertion=True,
+            run_settled=True,
+            orchestrator_gone=False,
+        )
+        self.assertEqual((found.outcome, found.integrity), (OUTCOME_VERIFIED, ()))
+
+    def test_an_unreadable_engine_run_status_never_yields_a_green_verdict(self) -> None:
+        state, reports, run_id = load("green")
+        self.assertEqual(record_of("green")["verdict"], VERDICT_GREEN)
+        damaged: tuple[Any, ...] = ({}, {"status": None}, {"status": True},
+                                    {"status": "succeeded"}, {"status": 99})
+        for fields in damaged:
+            with self.subTest(status=fields):
+                found = {
+                    key: value for key, value in state.items() if key != "status"
+                }
+                record = extract({**found, **fields}, reports, run_id=run_id)
+                self.assertEqual(record["verdict"], VERDICT_FAILED)
+                self.assertEqual(record["engine_run_status_name"], "")
+                self.assertEqual(record["engine_run_status"], -1 if "status" not in
+                                 fields or not isinstance(fields.get("status"), int)
+                                 or isinstance(fields.get("status"), bool) else 99)
+                self.assertFalse(record["engine_contradicted"])
+                self.assertEqual(
+                    [item["fault"] for item in record["integrity"]],
+                    [INTEGRITY_ENGINE_RUN_STATUS],
+                )
+                self.assertEqual(record["integrity"][0]["subject"], run_id)
+
+    def test_an_unreadable_run_status_is_a_refusal_rather_than_a_dead_extraction(
+        self,
+    ) -> None:
+        """A node's unmapped status is a hard error; the run's own costs one field, so the
+        rest of the reading survives it."""
+        state, reports, run_id = load("green")
+        record = extract({**state, "status": 99}, reports, run_id=run_id)
+        self.assertEqual(
+            [step["outcome"] for step in record["steps"]],
+            [OUTCOME_VERIFIED, OUTCOME_VERIFIED],
+        )
+
+    def test_a_readable_run_status_leaves_the_verdict_alone(self) -> None:
+        """The control: the clause fires on the refusal and not on the walk."""
+        state, reports, run_id = load("green")
+        for status in RUN_STATUS:
+            with self.subTest(status=status):
+                record = extract({**state, "status": status}, reports, run_id=run_id)
+                self.assertEqual(record["integrity"], [])
+
+
+class DuplicateIdentitiesNeverAliasAFact(unittest.TestCase):
+    """[28 C]: one name the engine recorded twice reads the same in either order."""
+
+    def _state(self, *nodes: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "dagRunId": "run-one",
+            "name": "plan",
+            "status": 6,
+            "nodes": [
+                {"step": {"name": "work_alpha"}, "status": 4},
+                {"step": {"name": "mark_alpha", "depends": ["work_alpha"]}, "status": 4},
+                *nodes,
+            ],
+        }
+
+    def test_the_two_orders_of_one_duplicated_name_extract_identically(self) -> None:
+        first = {"step": {"name": "prune_w1"}, "status": 4}
+        second = {"step": {"name": "prune_w1"}, "status": 2, "error": "exit status 3"}
+        one = extract(self._state(first, second), {}, run_id="run-one")
+        other = extract(self._state(second, first), {}, run_id="run-one")
+        self.assertEqual(one, other)
+
+    def test_a_duplicated_name_is_read_as_the_worst_of_its_occurrences(self) -> None:
+        """Fail-closed: a reading cannot be improved by whichever copy was written last."""
+        record = extract(
+            self._state(
+                {"step": {"name": "prune_w1"}, "status": 4},
+                {"step": {"name": "prune_w1"}, "status": 2, "error": "exit status 3"},
+            ),
+            {},
+            run_id="run-one",
+        )
+        prune = next(item for item in record["infrastructure"] if item["name"] == "prune_w1")
+        self.assertEqual(prune["outcome"], OUTCOME_FAILED)
+
+    def test_a_duplicated_name_reaches_the_record_once_and_is_named_as_refused(
+        self,
+    ) -> None:
+        record = extract(
+            self._state(
+                {"step": {"name": "prune_w1"}, "status": 4},
+                {"step": {"name": "prune_w1"}, "status": 2, "error": "exit status 3"},
+            ),
+            {},
+            run_id="run-one",
+        )
+        self.assertEqual(
+            [node["name"] for node in record["nodes"]].count("prune_w1"), 1
+        )
+        self.assertEqual(
+            [item["name"] for item in record["infrastructure"]].count("prune_w1"), 1
+        )
+        self.assertEqual(
+            [(item["subject"], item["fault"]) for item in record["integrity"]],
+            [("prune_w1", INTEGRITY_DUPLICATE_NODE)],
+        )
+
+    def test_one_projected_key_can_never_hold_two_nodes_facts(self) -> None:
+        """The failure this exists for: two rows and one key, so the detailed rows show one
+        occurrence's outcome under the other's name."""
+        record = extract(
+            self._state(
+                {"step": {"name": "prune_w1"}, "status": 4},
+                {"step": {"name": "prune_w1"}, "status": 2, "error": "exit status 3"},
+            ),
+            {},
+            run_id="run-one",
+        )
+        keys = [key for key, _ in canonical_facts(record)]
+        self.assertEqual(len(keys), len(set(keys)))
+        self.assertEqual(
+            as_mapping(record)["infrastructure.prune_w1.outcome"], OUTCOME_FAILED
+        )
+
+    def test_a_duplicated_step_identity_yields_one_step(self) -> None:
+        record = extract(
+            self._state({"step": {"name": "work_alpha"}, "status": 2}),
+            {},
+            run_id="run-one",
+        )
+        self.assertEqual([step["step_id"] for step in record["steps"]], ["alpha"])
+        self.assertEqual(record["steps"][0]["outcome"], OUTCOME_FAILED)
+
+
+class EveryTriggerIsAttributedFromItsOwnEvidence(unittest.TestCase):
+    """[28 E]: an absent actor means something different for every trigger kind."""
+
+    def _trigger(self, kind: int, actor: str | None) -> Trigger:
+        state: dict[str, Any] = {
+            "dagRunId": "run-one",
+            "name": "plan",
+            "status": 4,
+            "triggerType": kind,
+            "nodes": [{"step": {"name": "work_alpha"}, "status": 4}],
+        }
+        if actor is not None:
+            state["triggerActor"] = actor
+        return extract(state, {}, run_id="run-one")["trigger"]
+
+    def test_the_attribution_table_is_total_over_the_trigger_vocabulary(self) -> None:
+        self.assertEqual(
+            set(ATTRIBUTION_BY_TRIGGER), set(engine.TRIGGER_TYPE.values())
+        )
+
+    def test_an_unattended_start_is_attributed_to_what_the_kind_names(self) -> None:
+        self.assertEqual(
+            {
+                kind: self._trigger(kind, None)["attribution"]
+                for kind in engine.TRIGGER_TYPE
+            },
+            {
+                0: ATTRIBUTION_UNKNOWN,
+                1: ATTRIBUTION_SCHEDULER,
+                2: ATTRIBUTION_CAIRN,
+                3: ATTRIBUTION_WEBHOOK,
+                4: ATTRIBUTION_PARENT_RUN,
+                5: ATTRIBUTION_RETRY_SCANNER,
+                6: ATTRIBUTION_SCHEDULER,
+            },
+        )
+
+    def test_a_named_actor_speaks_for_itself_whatever_the_kind(self) -> None:
+        for kind in engine.TRIGGER_TYPE:
+            with self.subTest(kind=engine.TRIGGER_TYPE[kind]):
+                trigger = self._trigger(kind, "ada")
+                self.assertEqual(trigger["attribution"], ATTRIBUTION_USER)
+                self.assertEqual(trigger["actor"], "ada")
+
+    def test_the_scheduler_is_never_credited_to_cairn(self) -> None:
+        """The fault: an absent actor meant Cairn for every kind, including the ones no
+        person and no skill was present for."""
+        for kind in (1, 3, 5, 6):
+            with self.subTest(kind=engine.TRIGGER_TYPE[kind]):
+                self.assertNotEqual(
+                    self._trigger(kind, None)["attribution"], ATTRIBUTION_CAIRN
+                )
+
+    def test_every_attribution_is_one_of_the_frozen_words(self) -> None:
+        for kind in engine.TRIGGER_TYPE:
+            for actor in (None, "ada"):
+                with self.subTest(kind=kind, actor=actor):
+                    self.assertIn(
+                        self._trigger(kind, actor)["attribution"], ATTRIBUTIONS
+                    )
 
 
 class TheCommandReportsTheRunsVerdict(unittest.TestCase):
@@ -1882,9 +2507,13 @@ class TheStepsOwnAccountIsTheRicherSource(unittest.TestCase):
 
     def test_a_report_from_another_run_is_never_read(self) -> None:
         """Reports outlive the run that wrote them, and one would speak for a step this run
-        never started."""
-        directory = CORPUS / "green" / "reports"
-        self.assertEqual(read_reports(directory, "some-other-run"), {})
+        never started. In this run's own directory it is damage, so it is also named."""
+        found = read_reports(CORPUS / "green" / "reports", "some-other-run")
+        self.assertEqual(found.reports, {})
+        self.assertEqual(
+            {refusal["fault"] for refusal in found.integrity},
+            {INTEGRITY_REPORT_WRONG_RUN},
+        )
 
     def test_a_report_that_cannot_be_parsed_fails_its_own_step_and_nothing_more(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1895,9 +2524,13 @@ class TheStepsOwnAccountIsTheRicherSource(unittest.TestCase):
                 )
             (directory / "work_alpha.json").write_text("{ truncated", encoding="utf-8")
             _, _, run_id = load("green")
-            reports = read_reports(directory, run_id)
-            self.assertNotIn("work_alpha", reports)
-            self.assertIn("work_beta", reports)
+            found = read_reports(directory, run_id)
+            self.assertNotIn("work_alpha", found.reports)
+            self.assertIn("work_beta", found.reports)
+            self.assertEqual(
+                [(item["subject"], item["fault"]) for item in found.integrity],
+                [("work_alpha", INTEGRITY_REPORT_UNREADABLE)],
+            )
 
     def test_a_node_the_grammar_does_not_cover_is_carried_rather_than_dropped(self) -> None:
         state, reports, run_id = load("green")
@@ -1982,8 +2615,10 @@ class AKilledRunIsReadForReal(unittest.TestCase):
         self.assertFalse(state.get("finishedAt"))
 
         # No reconciliation first. The record must be honest without the repair.
-        record = extract(state, read_reports(self.runs / run_id / "reports", run_id),
-                         run_id=run_id)
+        found = read_reports(self.runs / run_id / "reports", run_id)
+        record = extract(
+            state, found.reports, run_id=run_id, integrity=found.integrity
+        )
         self.assertEqual(record["verdict"], VERDICT_FAILED)
         self.assertIs(record["owner_alive"], False)
         self.assertNotIn(

@@ -22,7 +22,16 @@ from cairn.record.vocabulary import (
     ATTENTION_FAILURE,
     ATTENTION_FOLLOW_UP,
     ATTENTION_HOUSEKEEPING_FAILURE,
+    ATTENTION_INTEGRITY,
     ATTENTION_ORDER,
+    ATTRIBUTION_CAIRN,
+    ATTRIBUTION_PARENT_RUN,
+    ATTRIBUTION_RETRY_SCANNER,
+    ATTRIBUTION_SCHEDULER,
+    ATTRIBUTION_UNKNOWN,
+    ATTRIBUTION_USER,
+    ATTRIBUTION_WEBHOOK,
+    ATTRIBUTIONS,
     NEXT_ACTIONS,
     NEXT_AWAIT_ALLOWANCE,
     NEXT_DECIDE,
@@ -148,6 +157,7 @@ SENTENCE_BY_ACTION: dict[str, str] = {
 
 LABEL_BY_ATTENTION: dict[str, str] = {
     ATTENTION_BLOCKED: "Blocked on a decision",
+    ATTENTION_INTEGRITY: "Evidence this report could not read",
     ATTENTION_FAILURE: "Failed",
     ATTENTION_EXCLUDED: "Excluded",
     ATTENTION_HOUSEKEEPING_FAILURE: "Housekeeping failed",
@@ -250,16 +260,31 @@ def value(shown: str) -> str:
     return shown
 
 
-def actor(name: str, started_by_cairn: str) -> str:
-    """Who started the run — and an absent name is never rendered as unknown.
+# Who started a run, said for each attribution the record can carry. The engine names an
+# authenticated user only for a run started through its own view, so most runs arrive with
+# no actor at all and the attribution is what says who that absence means — which is a
+# different answer for a cron firing, a retry and Cairn's own skill ([run-model.md]).
+PHRASE_BY_ATTRIBUTION: dict[str, str] = {
+    ATTRIBUTION_CAIRN: "Cairn",
+    ATTRIBUTION_USER: "a named user",
+    ATTRIBUTION_SCHEDULER: "the scheduler",
+    ATTRIBUTION_WEBHOOK: "a webhook",
+    ATTRIBUTION_RETRY_SCANNER: "the retry scanner",
+    ATTRIBUTION_PARENT_RUN: "the run above this one",
+    ATTRIBUTION_UNKNOWN: NOT_RECORDED,
+}
 
-    The engine names the authenticated user only for a run started through its own view, so
-    an absent actor means Cairn's own skill started it. `unknown` is a trigger kind the
-    engine can record, and one word for those two facts is one word too few ([run-model.md]).
+
+def actor(name: str, attribution: str) -> str:
+    """Who started the run: the person the engine named, or what the trigger attributes it to.
+
+    An absent name is never rendered as unknown. `unknown` is a trigger kind the engine can
+    record, and it is also what a run nothing attributes reads as, so the name's absence
+    gets the attribution's own word instead of either of them.
     """
-    if started_by_cairn == "yes":
-        return "Cairn"
-    return value(name)
+    if attribution == ATTRIBUTION_USER and not _absent(name):
+        return value(name)
+    return PHRASE_BY_ATTRIBUTION[attribution]
 
 
 RULE_TEXT: dict[str, Callable[[tuple[str, ...]], str]] = {}
@@ -297,6 +322,7 @@ TOTAL_MAPS: tuple[tuple[Mapping[str, object], tuple[str, ...]], ...] = (
     (LABEL_BY_ATTENTION, ATTENTION_ORDER),
     (LABEL_BY_OUTCOME, STEP_OUTCOMES),
     (SENTENCE_BY_CAUSE, EXCLUSION_CAUSES),
+    (PHRASE_BY_ATTRIBUTION, ATTRIBUTIONS),
     (RULE_TEXT, RULES),
 )
 
@@ -317,6 +343,7 @@ __all__ = [
     "LABEL_BY_OUTCOME",
     "NOTHING_AT_ALL",
     "NOT_RECORDED",
+    "PHRASE_BY_ATTRIBUTION",
     "RULE_TEXT",
     "SENTENCE_BY_ACTION",
     "TONE_BY_VERDICT",

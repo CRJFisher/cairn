@@ -79,8 +79,9 @@ A leaf is either `Chrome` — Cairn's own words — or a `Fact`, which names pro
 a display rule rather than carrying text. The rules are `value`, `actor`, `link`
 and `assertion`.
 
-`actor` exists because an absent actor
-means Cairn started the run and is never rendered as unknown. `link` exists because a value
+`actor` exists because who started a run rests on two facts rather than one: the actor the
+engine named, where it named one, and otherwise the attribution the trigger kind carries —
+so the rule is handed both and a rendering cannot show one without the other. `link` exists because a value
 that merely looks like a URL is not one a document may follow: a repository path, a
 transcript location and a plan's name are all record strings, and linking on shape alone
 would let any of them put an outbound link into a page whose contract is that it needs none.
@@ -112,6 +113,20 @@ Where the engine calls a run a success and Cairn does not, the report says so in
 the engine's own status, and states that the verdict was derived by walking every node. The
 regression fixture is the run where the engine reported `Succeeded` with exit 0 over a step
 that contributed nothing.
+
+## A run whose evidence is damaged
+
+Where the record refused a piece of this run's own evidence, the first section says so
+directly under the headline, counts what was refused, and says that nothing refused raised
+anything. It is above the exclusion count and the no-op count because every line below it
+was read off the same evidence: a reader who does not know a report was refused cannot tell
+which of the facts beneath are missing rather than absent.
+
+Each refusal is then a row of its own in the attention section, under the heading for
+evidence the report could not read, naming the node it was found under, what disagreed, and
+the frozen fault word ([run-model.md](run-model.md)). The regression fixture is the run
+whose every step the engine and the gates recorded as verified and whose evidence was then
+broken on purpose.
 
 ## A no-op run
 

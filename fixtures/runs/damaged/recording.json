@@ -1,0 +1,28 @@
+{
+  "shape": "damaged",
+  "run_id": "fixture-damaged",
+  "engine": "2.11.0",
+  "why": "a run every step of which the engine and the gates recorded as verified, whose evidence was then damaged in five declared ways: the engine's own run status is gone, one node name is recorded twice, one work report claims the marker gate skipped work the engine says ran, one is the account of another node under this one's filename, and one is truncated. Nothing refused raises anything, every refusal is named, and the run is not a clean success",
+  "hand_set_fields": {},
+  "damage": {
+    "state": {
+      "drop": [
+        "status"
+      ],
+      "duplicate_node": [
+        "commit_beta"
+      ]
+    },
+    "reports": {
+      "work_alpha": {
+        "status": "noop"
+      },
+      "work_beta": {
+        "step_id": "work_alpha"
+      }
+    },
+    "truncate": [
+      "commit_alpha"
+    ]
+  }
+}

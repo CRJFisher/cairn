@@ -12,7 +12,7 @@ Two structures — an enumeration and a separate ranking — drift.
 
 from __future__ import annotations
 
-RECORD_VERSION = 5
+RECORD_VERSION = 6
 
 # --- the run verdict -----------------------------------------------------------------
 #
@@ -69,8 +69,10 @@ OVERLAYS: tuple[str, ...] = (OVERLAY_BLOCKED, OVERLAY_DIVERGENCE, OVERLAY_UNVERI
 #
 # Highest concern first. Naming the order here is what makes every renderer conform to one
 # definition rather than inventing a subset, and it is deliberately not the verdict's
-# order: a block outranks a failure for a reader, because a person can act on it now.
+# order: a block outranks a failure for a reader, because a person can act on it now, and
+# damaged evidence outranks every line below it because those lines were read off it.
 ATTENTION_BLOCKED = "blocked"
+ATTENTION_INTEGRITY = "integrity"
 ATTENTION_FAILURE = "failure"
 ATTENTION_EXCLUDED = "excluded"
 ATTENTION_HOUSEKEEPING_FAILURE = "housekeeping_failure"
@@ -78,11 +80,63 @@ ATTENTION_DIVERGENCE = "divergence"
 ATTENTION_FOLLOW_UP = "follow_up"
 ATTENTION_ORDER: tuple[str, ...] = (
     ATTENTION_BLOCKED,
+    ATTENTION_INTEGRITY,
     ATTENTION_FAILURE,
     ATTENTION_EXCLUDED,
     ATTENTION_HOUSEKEEPING_FAILURE,
     ATTENTION_DIVERGENCE,
     ATTENTION_FOLLOW_UP,
+)
+
+# --- evidence the record refused to read ---------------------------------------------
+#
+# One word per fault, highest concern first, and every one of them is a refusal rather than
+# a judgement: the evidence contradicted itself or could not be read, so the fact it carried
+# is not in the record at all. Nothing here can raise an outcome — that is the whole point
+# of naming them. The report's gates raise on the report faults as they read a report; the
+# extraction records them against the node the evidence was found under.
+INTEGRITY_ENGINE_RUN_STATUS = "engine_run_status"
+INTEGRITY_DUPLICATE_NODE = "duplicate_node"
+INTEGRITY_GATE_CONTRADICTS_WORK = "gate_contradicts_work"
+INTEGRITY_REPORT_CONTRADICTS_ENGINE = "report_contradicts_engine"
+INTEGRITY_REPORT_UNREADABLE = "report_unreadable"
+INTEGRITY_REPORT_RENAMED = "report_renamed"
+INTEGRITY_REPORT_WRONG_RUN = "report_wrong_run"
+INTEGRITY_REPORT_FIELD = "report_field"
+INTEGRITY_REPORT_STATUS = "report_status"
+INTEGRITY_FAULTS: tuple[str, ...] = (
+    INTEGRITY_ENGINE_RUN_STATUS,
+    INTEGRITY_DUPLICATE_NODE,
+    INTEGRITY_GATE_CONTRADICTS_WORK,
+    INTEGRITY_REPORT_CONTRADICTS_ENGINE,
+    INTEGRITY_REPORT_UNREADABLE,
+    INTEGRITY_REPORT_RENAMED,
+    INTEGRITY_REPORT_WRONG_RUN,
+    INTEGRITY_REPORT_FIELD,
+    INTEGRITY_REPORT_STATUS,
+)
+
+# --- who started the run -------------------------------------------------------------
+#
+# Derived from the trigger kind together with the actor, because an absent actor means
+# something different for every kind: Cairn's own skill for a manual start, the scheduler
+# for a cron firing or its catchup, the retry scanner for a retry. One word for all of them
+# would credit Cairn with every run the machine started on its own.
+ATTRIBUTION_CAIRN = "cairn"
+ATTRIBUTION_USER = "user"
+ATTRIBUTION_SCHEDULER = "scheduler"
+ATTRIBUTION_WEBHOOK = "webhook"
+ATTRIBUTION_RETRY_SCANNER = "retry_scanner"
+ATTRIBUTION_PARENT_RUN = "parent_run"
+ATTRIBUTION_UNKNOWN = "unknown"
+ATTRIBUTIONS: tuple[str, ...] = (
+    ATTRIBUTION_CAIRN,
+    ATTRIBUTION_USER,
+    ATTRIBUTION_SCHEDULER,
+    ATTRIBUTION_WEBHOOK,
+    ATTRIBUTION_RETRY_SCANNER,
+    ATTRIBUTION_PARENT_RUN,
+    ATTRIBUTION_UNKNOWN,
 )
 
 # --- the exit-code contract ----------------------------------------------------------
@@ -161,7 +215,16 @@ __all__ = [
     "ATTENTION_FAILURE",
     "ATTENTION_FOLLOW_UP",
     "ATTENTION_HOUSEKEEPING_FAILURE",
+    "ATTENTION_INTEGRITY",
     "ATTENTION_ORDER",
+    "ATTRIBUTIONS",
+    "ATTRIBUTION_CAIRN",
+    "ATTRIBUTION_PARENT_RUN",
+    "ATTRIBUTION_RETRY_SCANNER",
+    "ATTRIBUTION_SCHEDULER",
+    "ATTRIBUTION_UNKNOWN",
+    "ATTRIBUTION_USER",
+    "ATTRIBUTION_WEBHOOK",
     "EDGE_DEPENDENCY",
     "EDGE_KINDS",
     "EDGE_RUN",
@@ -173,6 +236,16 @@ __all__ = [
     "EXIT_GREEN",
     "EXIT_NO_RECORD",
     "EXIT_UNFINISHED",
+    "INTEGRITY_DUPLICATE_NODE",
+    "INTEGRITY_ENGINE_RUN_STATUS",
+    "INTEGRITY_FAULTS",
+    "INTEGRITY_GATE_CONTRADICTS_WORK",
+    "INTEGRITY_REPORT_CONTRADICTS_ENGINE",
+    "INTEGRITY_REPORT_FIELD",
+    "INTEGRITY_REPORT_RENAMED",
+    "INTEGRITY_REPORT_STATUS",
+    "INTEGRITY_REPORT_UNREADABLE",
+    "INTEGRITY_REPORT_WRONG_RUN",
     "NEXT_ACTIONS",
     "NEXT_AWAIT_ALLOWANCE",
     "NEXT_DECIDE",

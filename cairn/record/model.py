@@ -220,6 +220,20 @@ class Attention(TypedDict):
     cause: str | None
 
 
+class Integrity(TypedDict):
+    """One piece of this run's evidence the record refused, and what it refused about it.
+
+    `subject` is the engine node the evidence was found under, or the run id where the fault
+    is the run's own. A refused fact is absent from the record rather than approximated, so
+    this list is the only place it is accounted for — which is why the list is carried in
+    the record and raised into attention rather than logged and dropped.
+    """
+
+    subject: str
+    fault: str
+    detail: str
+
+
 class GitFacts(TypedDict):
     """What the run left in the repository, as its own steps recorded it."""
 
@@ -232,15 +246,17 @@ class GitFacts(TypedDict):
 
 
 class Trigger(TypedDict):
-    """How the run was started, and by whom where the engine knows.
+    """How the run was started, and by whom.
 
-    An absent actor means Cairn started it, and is never rendered as unknown — `unknown` is
-    a trigger kind the engine can record, and one word for two facts is one word too few.
+    `attribution` is derived from the kind together with the actor, because an absent actor
+    means something different for each kind — Cairn's own skill for a manual start, the
+    scheduler for a cron firing, the retry scanner for a retry. The actor is kept beside it
+    and is absent for every start that did not come through the engine's own view.
     """
 
     kind: str
     actor: str | None
-    started_by_cairn: bool
+    attribution: str
     provenance: dict[str, str]
 
 
@@ -301,6 +317,9 @@ class RunRecord(TypedDict):
     edges: list[Edge]
     waves: list[WaveCensus]
     attention: list[Attention]
+    # Every fact this run's evidence could not establish because the evidence contradicted
+    # itself or could not be read. Empty on a run whose evidence is whole.
+    integrity: list[Integrity]
     git: GitFacts
     next_action: NextAction
     provenance: dict[str, str]
@@ -319,6 +338,7 @@ __all__ = [
     "GitFacts",
     "Headroom",
     "Infrastructure",
+    "Integrity",
     "Lineage",
     "NextAction",
     "Remedy",

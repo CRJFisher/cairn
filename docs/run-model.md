@@ -47,6 +47,12 @@ queued and may sit there indefinitely if no scheduler is up, with every node at 
 It reads as `running`, its engine reading is kept verbatim, and its next action is to start
 a scheduler.
 
+**A run whose own engine status cannot be read is `failed`.** The status is read as a
+verdict nowhere, but it is what says whether the run is still going — so a reading without
+it cannot tell a finished run from one mid-step, and `green` over that is the stronger
+outcome damaged evidence may never produce. Fail-closed is the same move the verify gate
+makes, and the report says in its first lines which piece of evidence was refused.
+
 ## The step outcome
 
 Seven values, and three overlays that ride beside them.
@@ -103,13 +109,17 @@ in the record, so the causes are named there and quoted here.
 
 ## What needs a person's attention
 
-Six kinds, in one fixed order, highest concern first:
+Seven kinds, in one fixed order, highest concern first:
 
-`blocked`, `failure`, `excluded`, `housekeeping_failure`, `divergence`, `follow_up`.
+`blocked`, `integrity`, `failure`, `excluded`, `housekeeping_failure`, `divergence`,
+`follow_up`.
 
 Naming the order here is what makes every renderer conform to one definition rather than
 inventing a subset. It is deliberately **not** the verdict's order: a block outranks a
-failure for a reader, because a person can act on it now.
+failure for a reader, because a person can act on it now, and an `integrity` item outranks
+every line below it because those lines were read off the same evidence — a reader who does
+not know a report was refused cannot tell which of the facts beneath it are missing rather
+than absent.
 
 A `failure` item is one step, in dependency order — except the steps a halt left behind,
 which come as **one** item: its subject is the first of them, its summary names the step
@@ -126,6 +136,73 @@ the same thing seen twice, and two lines would make the run's own count disagree
 Follow-up work is a per-run snapshot rather than a standing backlog. A no-op re-run re-emits
 none, because no-op steps do not redo work — so a re-run showing none reads as correct
 rather than as lost signal.
+
+## Evidence the record refused
+
+**Incomplete observability may produce an absence or a refusal, never a stronger outcome.**
+A run's evidence is the engine's state file and the step reports, both written by processes
+that can be killed mid-write and neither covered by a schema. Where a piece of it cannot be
+read, or contradicts another piece, the fact it carried is not in the record at all — and
+the refusal is, under `integrity`, so that a fact that is missing is never read as a fact
+that is absent.
+
+Nine faults, highest concern first:
+
+| Fault                       | What was refused                                                                   |
+| --------------------------- | ---------------------------------------------------------------------------------- |
+| `engine_run_status`         | the engine's own status for the run is missing, not a number, or outside the table |
+| `duplicate_node`            | one node name is recorded more than once                                           |
+| `gate_contradicts_work`     | the marker gate recorded work the engine says its work node did not complete       |
+| `report_contradicts_engine` | a report's status is one the engine's status for that node cannot stand beside     |
+| `report_unreadable`         | the document is not readable JSON, or is not an object                             |
+| `report_renamed`            | the document is the account of another node, under this one's filename             |
+| `report_wrong_run`          | the document was written by another run                                            |
+| `report_field`              | a field every reader turns on is missing, or is of the wrong type                  |
+| `report_status`             | the status is outside the frozen report vocabulary                                 |
+
+Each entry names the node the evidence was found under — or the run, where the fault is the
+run's own — the fault, and one bounded sentence saying what disagreed. Each raises an
+`integrity` attention item carrying the same three, and the count is on the first screen of
+every rendering.
+
+**One validator serves the runtime gates and the extraction.** A step report is held to the
+same reading whether a gate is deciding whether work may be recorded or the record is
+collecting what a run left: the filename, the internal `step_id` and the run id must all
+agree, the status must be one of the frozen three, and every field a reader turns on must be
+present and of its type. Two validators drift, and the half the extraction was missing is
+how a report renamed to another node's filename came to speak for a step that never wrote
+it. **A refused report contributes no summary, no session, no freshness and no outcome** —
+the step reads as having left no account, which is itself an outcome the gate's own causes
+describe.
+
+**Where a report and the engine contradict each other, neither raises.** A report's status
+can stand beside some of the engine's node statuses and not others: a report is written
+either by the node it names or by the gate that is that node's own precondition, so a
+`skipped` node beside a gate's `failed` or `noop` report is the ordinary shape of a gate
+that closed, while a node the engine never started or aborted ran nothing at all.
+
+| Report status | Stands beside a node that is        |
+| ------------- | ----------------------------------- |
+| `done`        | running, failed, succeeded          |
+| `failed`      | running, failed, succeeded, skipped |
+| `noop`        | skipped                             |
+
+`noop` is the load-bearing row, because it is the only report status that can raise a step's
+outcome: it is the marker gate's word that the work was already done, and it is that only
+where the engine says the gate skipped the work. Beside a node that ran, failed or
+completed, it is a claim the work never started over an engine record saying it did — so the
+step keeps the outcome its own node supports and the contradiction is recorded as it stands.
+The same rule decides `verified`, which is the marker gate's word **and** the engine's: a
+gate that recorded a step whose work node the engine says failed is half of a contradiction,
+and the half that would raise an outcome is the half that does not.
+
+**A duplicate node identity is refused before any projection.** Every projection downstream
+is keyed on a node's name, so two occurrences of one name would put two rows and one key
+into the record — the detailed rows would show both using whichever occurrence the lookup
+kept, while the verdict used the other. The identity is kept once, reading the worst of what
+its occurrences claim by a total order over their own content, so the two orders of the same
+pair produce the same record, the same verdict and the same rendering. The refusal of the
+rest is named rather than dropped.
 
 ## The next action
 
@@ -220,8 +297,11 @@ Declared in `cairn/record/model.py`. The run carries `record_version`, `run_id`,
 `graph_sha256`, `attempt_id`, `attempts`, `engine_version`, `engine_run_status`,
 `engine_run_status_name`, `engine_contradicted`, `owner_alive`, `verdict`, `exit_code`,
 `view_url`, `started_at`, `finished_at`, `allowance`, `trigger`, `lineage`, `steps`,
-`infrastructure`, `nodes`, `edges`, `waves`, `attention`, `git`, `next_action` and
-`provenance`.
+`infrastructure`, `nodes`, `edges`, `waves`, `attention`, `integrity`, `git`, `next_action`
+and `provenance`.
+
+`integrity` is every piece of this run's own evidence the record refused, and is empty on a
+run whose evidence is whole.
 
 `allowance` is the latest measurement of each subscription window that any step's admission
 rested on: how full it was (`used`, a fraction, where the measurement gave one), its
@@ -351,10 +431,26 @@ what a run does.
 `kind` is one of `unknown`, `scheduler`, `manual`, `webhook`, `subdag`, `retry`, `catchup`.
 
 `actor` names the authenticated user when the trigger came through the engine's own view,
-and is absent otherwise — so a run a person started at the view and a run Cairn's own skill
-started are the same record but for that one field. **An absent actor means Cairn started
-it, and is never rendered as unknown**: `unknown` is a trigger kind the engine can record,
-and one word for two facts is one word too few.
+and is absent otherwise — which is every start the engine did not serve itself, including
+Cairn's own.
+
+**Attribution is derived from the kind together with the actor**, because an absent actor
+means something different for every kind. `attribution` is one of:
+
+| Attribution     | Reached when                                                          |
+| --------------- | --------------------------------------------------------------------- |
+| `user`          | the engine named an actor, whatever the kind                          |
+| `cairn`         | a `manual` start with no actor, which is what a start from the CLI is |
+| `scheduler`     | a `scheduler` firing, or the `catchup` the scheduler performs         |
+| `webhook`       | a `webhook` start                                                     |
+| `retry_scanner` | a `retry`                                                             |
+| `parent_run`    | a `subdag`, started by the run above this one                         |
+| `unknown`       | a kind the engine recorded as `unknown`                               |
+
+One word for all of them would credit Cairn with every run the machine started on its own,
+which is what reading the absence of an actor as "Cairn" did. `unknown` as an attribution
+and `unknown` as a trigger kind are deliberately the same word for the same fact: nothing
+attributes this run, and nothing recorded what triggered it.
 
 ## The engine-status mapping
 
@@ -498,6 +594,16 @@ python3 -m cairn record build --run <run-id> --repository <path>   # write it, p
 python3 -m cairn record facts --run <run-id> --repository <path>   # print the projection
 ```
 
+**A stored record is validated whole before anything acts on it.** A record on disk has met
+no normaliser: it may have been hand-edited or truncated by something outside Cairn's reach,
+and every caller treats what comes back as the model. So the read boundary checks every
+required section and scalar type against the model's own declarations, every frozen word
+against its vocabulary, the run id against the run that was asked for, the exit code against
+the verdict that carries it, and the uniqueness of every step id and node name. A field the
+model does not declare is refused rather than ignored. Because the record is derived from
+state that outlives it, the remedy for every one of those faults is the same and the error
+names it: `cairn record build`.
+
 Both run outside any run, take no runtime identity and leave no step report, like
 `cairn plan`, `cairn supervise` and `cairn workflow` ([cli-contract.md](cli-contract.md)).
 Both find the engine's own state by the run id inside it rather than by its path, so
@@ -571,6 +677,15 @@ and not a plan.
 | `crashed`               | the orchestrator was killed; the engine's record still says `running` with no finish time                                                                                                                                                   |
 | `timed-out`             | the engine killed a step at its bound with no report written, its assertion passed over what it left, and the step behind it was skipped: the record reads the kill over the gate's `not_reached`, and the halt over the engine's `skipped` |
 | `agent`                 | one real agent step, so a step's receipts — turns, session identity, transcript, resume command — are carried populated rather than only absent                                                                                             |
+| `damaged`               | a run the engine and the gates recorded as entirely verified, whose evidence was then broken in five declared ways: nothing refused raises anything, every refusal is named, and the run is not a clean success                             |
 
 `green`, `all-no-op` and `blocked` all carry engine run status `4`. That they extract to
 `green`, `all_no_op` and `blocked` is what proves the verdict is not read off the engine.
+
+`damaged` is the one shape whose evidence was broken on purpose, because none of these
+documents can be recorded: the engine and Cairn's own gates are built so that nothing
+produces them. Its `recording.json` carries every edit — which field was dropped from the
+state file, which node was duplicated, which reports were altered and which truncated — so
+no reader has to guess which half of the fixture is a measurement.
+`scripts/record_runs.py` applies exactly that list after running the same workflow `green`
+is recorded from.

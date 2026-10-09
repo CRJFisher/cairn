@@ -505,8 +505,8 @@ class RepositoryCase(unittest.TestCase):
         """The report `mark_<step>` leaves when the gate opened and recorded the work."""
         (self.reports / f"{mark_name(step)}.json").write_text(
             json.dumps(
-                {"step_id": step, "run_id": "run-1", "status": "done", "cause": None,
-                 "summary": "recorded", "needs_user_decision": False}
+                {"step_id": mark_name(step), "run_id": "run-1", "status": "done",
+                 "cause": None, "summary": "recorded", "needs_user_decision": False}
             ),
             encoding="utf-8",
         )
@@ -514,8 +514,8 @@ class RepositoryCase(unittest.TestCase):
     def gate_report(self, step: str, cause: str, summary: str = "the assertion failed") -> None:
         (self.reports / f"{mark_name(step)}.json").write_text(
             json.dumps(
-                {"step_id": step, "run_id": "run-1", "status": "failed", "cause": cause,
-                 "summary": summary, "needs_user_decision": False}
+                {"step_id": mark_name(step), "run_id": "run-1", "status": "failed",
+                 "cause": cause, "summary": summary, "needs_user_decision": False}
             ),
             encoding="utf-8",
         )
@@ -1087,7 +1087,8 @@ class TheEngineStopsAChainThatHalts(RepositoryCase):
             "for step in sys.argv[2:]:\n"
             "    path = os.path.join(sys.argv[1], 'mark_' + step + '.json')\n"
             "    with open(path, 'w', encoding='utf-8') as handle:\n"
-            "        json.dump({'step_id': step, 'run_id': os.environ['DAG_RUN_ID'],\n"
+            "        json.dump({'step_id': 'mark_' + step,\n"
+            "                   'run_id': os.environ['DAG_RUN_ID'],\n"
             "                   'status': 'done', 'cause': None, 'summary': 'recorded',\n"
             "                   'needs_user_decision': False}, handle)\n",
             encoding="utf-8",

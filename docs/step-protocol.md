@@ -141,6 +141,14 @@ goes fails loudly rather than writing one somewhere nothing will look
 | `cause`               | an enum value from the closed vocabulary, or null               |
 | `detail`              | everything kind-specific: model, session, turns, scope, key     |
 
+**Every reader holds a report to the same reading, and the three identities must agree:**
+the filename, the `step_id` inside it and the `run_id` it claims. One validator serves the
+runtime gates, which refuse to act on a document that fails it, and the record, which keeps
+the refusal as an integrity diagnostic against the node the document was found under
+([run-model.md](run-model.md)). A document that fails contributes nothing — no summary, no
+session, no freshness, no outcome — and the step reads as having left no account, which is
+itself an outcome.
+
 **`failed` means the step could not reach its end state on this attempt** — a crash, an
 unrecoverable error, a bounded resource exhausted, or a timeout. It never means "not
 finished yet": there is no such status, because a step that is still running has not

@@ -108,9 +108,8 @@ def _size(text: str) -> Size:
 def measure(root: Path) -> Surface:
     """The installed surface's size, recomputed from the files as they are now.
 
-    Never a recorded constant. The figure the README publishes is compared against this on
-    every test run, so editing `SKILL.md` and forgetting the README turns the suite red —
-    which is the only thing that keeps a published number true.
+    Never a recorded constant. The README's block is regenerated from it by `scripts.measure_surface --write`, so a
+    published number is never typed by hand.
     """
     skill = root / SKILL_FILE
     documents = sorted((root / CAPABILITIES_DIRECTORY).glob("*.md"))

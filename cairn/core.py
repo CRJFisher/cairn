@@ -16,6 +16,13 @@ from types import FrameType
 from typing import Any, NamedTuple, Protocol, TypeAlias, cast
 
 from cairn.layout import RUNS_ROOT_ENV, reports_directory
+from cairn.record.vocabulary import (
+    INTEGRITY_REPORT_FIELD,
+    INTEGRITY_REPORT_RENAMED,
+    INTEGRITY_REPORT_STATUS,
+    INTEGRITY_REPORT_UNREADABLE,
+    INTEGRITY_REPORT_WRONG_RUN,
+)
 
 EXIT_OK = 0
 EXIT_FAILED = 1
@@ -339,6 +346,79 @@ def write_report(
     return write_report_for(context, context.step_id, result, duration_seconds)
 
 
+class ReportFault(NamedTuple):
+    """Why one document cannot be read as a step's account of itself."""
+
+    fault: str
+    detail: str
+
+
+# What every reader of a report turns on, and the type each one must have. A reader whose
+# only question is "did this fail" and that was handed a report missing one of these would
+# answer it from a default, and every such caller reads anything but `failed` as a green
+# light. The second group is optional in a report and is refused only when it is present
+# and of the wrong shape, because a reader of each of them already treats absence as an
+# absence.
+_REQUIRED_REPORT_FIELDS: tuple[tuple[str, type, str], ...] = (
+    ("step_id", str, "a string"),
+    ("run_id", str, "a string"),
+    ("status", str, "a string"),
+    ("summary", str, "a string"),
+    ("needs_user_decision", bool, "a boolean"),
+)
+_OPTIONAL_REPORT_FIELDS: tuple[tuple[str, tuple[type, ...], str], ...] = (
+    ("cause", (str, type(None)), "a string"),
+    ("detail", (dict,), "an object"),
+    ("follow_up_work", (list,), "an array"),
+    ("duration", (int, float), "a number"),
+    ("working_directory", (str,), "a string"),
+)
+
+
+def validate_step_report(
+    raw: object, *, node_name: str, run_id: str
+) -> ReportFault | None:
+    """Whether one document is this node's own account of this run, and why it is not.
+
+    One validator for both readers of a report — the runtime gates, which refuse to act on
+    a document that fails here, and the record extraction, which keeps the refusal as an
+    integrity diagnostic against the node the document was found under. Two validators
+    drift, and the half the extraction was missing is how a report renamed to another
+    node's filename came to speak for a step that never wrote it.
+    """
+    if not isinstance(raw, dict):
+        return ReportFault(INTEGRITY_REPORT_UNREADABLE, "expected an object")
+    report = cast(dict[str, Any], raw)
+    for name, required, said in _REQUIRED_REPORT_FIELDS:
+        if not isinstance(report.get(name), required):
+            return ReportFault(
+                INTEGRITY_REPORT_FIELD, f"{name!r} is missing or not {said}"
+            )
+    for name, allowed, said in _OPTIONAL_REPORT_FIELDS:
+        if name not in report:
+            continue
+        found: Any = report[name]
+        if not isinstance(found, allowed) or (
+            isinstance(found, bool) and bool not in allowed
+        ):
+            return ReportFault(INTEGRITY_REPORT_FIELD, f"{name!r} is not {said}")
+    if report["status"] not in STATUSES:
+        return ReportFault(
+            INTEGRITY_REPORT_STATUS, f"unknown status {report['status']!r}"
+        )
+    if report["step_id"] != node_name:
+        return ReportFault(
+            INTEGRITY_REPORT_RENAMED,
+            f"the account of {report['step_id']!r}, found under the name {node_name!r}",
+        )
+    if report["run_id"] != run_id:
+        return ReportFault(
+            INTEGRITY_REPORT_WRONG_RUN,
+            f"written by run {report['run_id']!r}, not {run_id!r}",
+        )
+    return None
+
+
 def read_step_report(directory: Path, step_id: str, run_id: str) -> dict[str, Any]:
     """The account a step of *this* run left of itself.
 
@@ -355,27 +435,18 @@ def read_step_report(directory: Path, step_id: str, run_id: str) -> dict[str, An
         ) from exc
     except (OSError, ValueError) as exc:
         raise CairnError("invalid_report", f"{path}: {exc}") from exc
-    if not isinstance(raw, dict):
-        raise CairnError("invalid_report", f"{path}: expected an object")
-    report = cast(dict[str, Any], raw)
-    for name, expected in (("status", str), ("run_id", str), ("summary", str)):
-        if not isinstance(report.get(name), expected):
-            raise CairnError(
-                "invalid_report", f"{path}: {name!r} is missing or not a string"
-            )
-    if not isinstance(report.get("needs_user_decision"), bool):
-        raise CairnError("invalid_report", f"{path}: 'needs_user_decision' is not a boolean")
-    # A reader that accepted an unknown status would hand it to a caller whose only
-    # question is "did this fail", and every such caller reads anything that is not
-    # `failed` as a green light.
-    if report["status"] not in STATUSES:
-        raise CairnError("invalid_report", f"{path}: unknown status {report['status']!r}")
-    if report["run_id"] != run_id:
+    fault = validate_step_report(raw, node_name=step_id, run_id=run_id)
+    if fault is not None:
+        # A report another run wrote leaves this run's step with no account of itself,
+        # which is an absence rather than damage: the callers that fall back on one do so
+        # only for `missing_report`, and a document that is here and wrong is not that.
         raise CairnError(
-            "missing_report",
-            f"{path} was written by run {report['run_id']!r}, not {run_id!r}",
+            "missing_report"
+            if fault.fault == INTEGRITY_REPORT_WRONG_RUN
+            else "invalid_report",
+            f"{path}: {fault.detail}",
         )
-    return report
+    return cast(dict[str, Any], raw)
 
 
 def sweep_stale_reports(context: RuntimeContext) -> None:
@@ -401,6 +472,7 @@ __all__ = [
     "Child",
     "CommandResult",
     "PopenFactory",
+    "ReportFault",
     "RuntimeContext",
     "cancel_on_termination",
     "launch",
@@ -409,6 +481,7 @@ __all__ = [
     "stop_orphans",
     "survive_termination",
     "sweep_stale_reports",
+    "validate_step_report",
     "write_json",
     "write_report",
     "write_report_for",

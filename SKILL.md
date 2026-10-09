@@ -139,7 +139,7 @@ repository --session <this conversation's directory> [--subject <path>]…`:
 
 - one **named** in the request — provenance `stated`;
 - the git root holding the request's **subjects**, the plan document or the task documents a
-   plan stated in the request names — `subjects`;
+  plan stated in the request names — `subjects`;
 - the git root of the **session's** directory — `session`.
 
 Name the repository taken and its provenance in the first line of every reply that acts on
@@ -187,5 +187,6 @@ Two things it cannot answer are Cairn's: **divergence**, a workflow no longer ma
 plan that generated it; and the **verdict**, because a run that dropped a branch reports a
 clean success at the engine level.
 Say which is which rather than leaving someone to find the gap. A run started at the view
-records the username that started it and a run Cairn started records no actor, so Report
-accounts for runs the skill did not start.
+records the username that started it; every other start records no actor, and the record
+attributes it from the trigger kind — so Report accounts for runs the skill did not start
+without crediting Cairn with them.

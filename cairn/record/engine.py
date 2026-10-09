@@ -197,6 +197,43 @@ def run_status_name(value: object) -> str:
     return _read(RUN_STATUS, RUN_VOCABULARY, value)
 
 
+class RunReading(NamedTuple):
+    """The engine's own status for one run, or the reason there is none to read.
+
+    `name` is empty exactly when `why` is set, so a reader that only wants the word gets an
+    absence rather than a plausible state. The status is kept as a number only where the
+    table names it; a Boolean, a string and an unmapped integer are all nothing.
+    """
+
+    status: int | None
+    name: str
+    why: str | None
+
+
+def run_reading(record: dict[str, Any]) -> RunReading:
+    """What the engine says this run's own status is, refusing to guess where it cannot say.
+
+    A node's unmapped status is a hard error, because one node is one fact among many and
+    the record is built from all of them. The run's own status is read once per record, so
+    dying on it would cost a person the whole reading of a run whose nodes are every one of
+    them intact — and reading a missing or unmapped one as a state would let a damaged file
+    answer "did this work". It is a refusal to read one field, named in the record.
+    """
+    if "status" not in record or record["status"] is None:
+        return RunReading(None, "", "the engine's record carries no run status")
+    found: object = record["status"]
+    if isinstance(found, bool) or not isinstance(found, int):
+        return RunReading(None, "", f"the engine's run status {found!r} is not a number")
+    if found not in RUN_STATUS:
+        return RunReading(
+            found,
+            "",
+            f"the engine's run status {found} is not in the table measured against Dagu "
+            f"{ENGINE_VERSION}",
+        )
+    return RunReading(found, RUN_STATUS[found], None)
+
+
 def trigger_name(value: object) -> str:
     return _read(TRIGGER_TYPE, TRIGGER_VOCABULARY, value)
 
@@ -356,6 +393,7 @@ __all__ = [
     "TRIGGER_WEBHOOK",
     "Attempt",
     "Naming",
+    "RunReading",
     "Timeout",
     "classify",
     "find_attempts",
@@ -367,6 +405,7 @@ __all__ = [
     "nodes_of",
     "parse_exit_code",
     "parse_timeout",
+    "run_reading",
     "run_status_name",
     "text",
     "trigger_name",

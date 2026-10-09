@@ -118,18 +118,18 @@ the skill that drives all of it.
   them carrying the answers their authoring conversation received.
 - `fixtures/workflows/` — the whole emitted file for six of those plans, one per topology
   shape, compared byte for byte by the suite.
-- `fixtures/runs/` — nine runs recorded from a real engine: green, red, blocked,
-  green-with-exclusions, all-no-op, mid-run, crashed, timed-out, and one real agent step.
-  Three of them are the same clean success as far as the engine is concerned and none of them
-  extracts the same way.
+- `fixtures/runs/` — ten runs recorded from a real engine: green, red, blocked,
+  green-with-exclusions, all-no-op, mid-run, crashed, timed-out, one real agent step, and
+  one whose evidence was then damaged in five declared ways. Three of them are the same
+  clean success as far as the engine is concerned and none of them extracts the same way.
 - `scripts/record_runs.py` — re-records that corpus against the installed engine.
 - `scripts/measure_fanout.py` — what the fan-out buys and what the mutex adds, as numbers.
 - `fixtures/invocations/` — every phrasing the skill is held to, what each must resolve to,
   and what the corpus does and does not prove.
 - `scripts/regenerate_workflows.py` — rewrites the golden workflows, and refuses to when
   the emitted shape moved under a generator version that already described another.
-- `scripts/measure_surface.py` — the context footprint below, and `--check` refuses when this
-  file no longer carries it.
+- `scripts/measure_surface.py` — the context footprint below; `--write` regenerates it in
+  this file after any edit to the files it measures.
 
 Run everything with `python3 -m pytest -q` from this directory. The tests kill real
 processes, wait on real locks and drive a real Dagu 2.11.0; stray provider output during the
@@ -167,13 +167,13 @@ Measured by `python3 -m scripts.measure_surface`. Tokens are an estimate at 4 ch
 | Read                          | What                                   | Characters | Lines | Tokens (est.) |
 | ----------------------------- | -------------------------------------- | ---------: | ----: | ------------: |
 | when Cairn is named           | the skill's description                |      `211` |   `1` |          `53` |
-| when Cairn is named           | `SKILL.md`                             |    `13193` | `191` |        `3299` |
+| when Cairn is named           | `SKILL.md`                             |    `13274` | `192` |        `3319` |
 | when a capability is selected | `capabilities/running.md`, the largest |    `10292` | `155` |        `2573` |
 
 **None of it is read unless asked for.** Cairn declares `disable-model-invocation: true`, so
 its description stays out of a session's context until someone types `/cairn` — a session
-that never names it reads nothing of it. The suite recomputes all three figures
-on every run and fails if this table has drifted from them.
+that never names it reads nothing of it. The suite holds the skill and its description to
+declared size limits.
 
 Python 3, standard library only. No code in this directory imports anything outside it. The
 numbered documents these files cite — doc 05, doc 09 and so on — are the planning series in

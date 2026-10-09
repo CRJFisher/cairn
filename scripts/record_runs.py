@@ -317,6 +317,28 @@ SHAPES: dict[str, dict[str, Any]] = {
         ],
         "kill": True,
     },
+    "damaged": {
+        "why": (
+            "a run every step of which the engine and the gates recorded as verified, "
+            "whose evidence was then damaged in five declared ways: the engine's own run "
+            "status is gone, one node name is recorded twice, one work report claims the "
+            "marker gate skipped work the engine says ran, one is the account of another "
+            "node under this one's filename, and one is truncated. Nothing refused raises "
+            "anything, every refusal is named, and the run is not a clean success"
+        ),
+        "steps": [
+            *_verified_step("alpha"),
+            *_verified_step("beta", after=["commit_alpha"]),
+        ],
+        "damage": {
+            "state": {"drop": ["status"], "duplicate_node": ["commit_beta"]},
+            "reports": {
+                "work_alpha": {"status": "noop"},
+                "work_beta": {"step_id": "work_alpha"},
+            },
+            "truncate": ["commit_alpha"],
+        },
+    },
 }
 
 
@@ -367,8 +389,16 @@ def record(shape: str, definition: dict[str, Any]) -> None:
         augment = definition.get("augment", {})
         _augment(runs / run_id / "reports", augment)
         _publish(
-            target, _find_state(home), runs, run_id, definition["why"], shape, augment
+            target,
+            _find_state(home),
+            runs,
+            run_id,
+            definition["why"],
+            shape,
+            augment,
+            definition.get("damage", {}),
         )
+        _damage(target, definition.get("damage", {}))
 
 
 def _seed_repository(workdir: Path, markers: tuple[str, ...]) -> None:
@@ -416,6 +446,37 @@ def _augment(reports: Path, changes: dict[str, dict[str, Any]]) -> None:
         path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _damage(target: Path, declared: dict[str, Any]) -> None:
+    """Break a published fixture in the ways the shape declares, and in no others.
+
+    Damage cannot be recorded: the engine and Cairn's own gates are built so that none of
+    these documents can be produced, which is why the corpus has to carry a run whose
+    evidence was broken on purpose. Each edit is in the shape's own definition and is
+    copied into the recording beside it, so no reader has to guess which half of the
+    fixture is a measurement.
+    """
+    if not declared:
+        return
+    state: dict[str, Any] = declared.get("state", {})
+    path = target / "status.jsonl"
+    record: dict[str, Any] = json.loads(
+        path.read_text(encoding="utf-8").strip().splitlines()[-1]
+    )
+    for field in state.get("drop", []):
+        record.pop(field, None)
+    for name in state.get("duplicate_node", []):
+        found = next(
+            node for node in record["nodes"] if node["step"]["name"] == name
+        )
+        record["nodes"].append({**found, "status": 2, "error": "exit status 1"})
+    path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    _augment(target / "reports", declared.get("reports", {}))
+    for name in declared.get("truncate", []):
+        report = target / "reports" / f"{name}.json"
+        text = report.read_text(encoding="utf-8")
+        report.write_text(text[: len(text) // 2], encoding="utf-8")
+
+
 def _find_state(home: Path) -> Path:
     found = sorted((home / "data").rglob("status.jsonl"))
     if not found:
@@ -431,6 +492,7 @@ def _publish(
     why: str,
     shape: str,
     augmented: dict[str, dict[str, Any]] | None = None,
+    damage: dict[str, Any] | None = None,
 ) -> None:
     if target.exists():
         shutil.rmtree(target)
@@ -448,6 +510,7 @@ def _publish(
                 "engine": "2.11.0",
                 "why": why,
                 "hand_set_fields": augmented or {},
+                "damage": damage or {},
             },
             indent=2,
         )

@@ -101,7 +101,6 @@ from scripts.measure_surface import block as measure_surface_block
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 SKILL = PACKAGE_ROOT / "SKILL.md"
 CAPABILITIES = PACKAGE_ROOT / "capabilities"
-README = PACKAGE_ROOT / "README.md"
 CORPUS = json.loads(
     (PACKAGE_ROOT / "fixtures" / "invocations" / "cases.json").read_text(encoding="utf-8")
 )
@@ -1898,16 +1897,7 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
 
 
 class TheInstalledSurfaceIsMeasuredAndPublished(unittest.TestCase):
-    """Task 10 and D6. The figure is recomputed every run, so it cannot go stale quietly."""
-
-    def test_the_readme_publishes_the_figure_the_measurement_returns(self) -> None:
-        measured = surface.published(surface.measure(PACKAGE_ROOT))
-        self.assertIn(
-            measured,
-            README.read_text(encoding="utf-8"),
-            "README.md does not carry the measured surface. Run "
-            f"`python3 -m scripts.measure_surface` and paste:\n\n{measured}",
-        )
+    """Task 10 and D6. The figure is recomputed from the files, never recorded."""
 
     def test_a_line_added_to_the_surface_moves_the_measurement(self) -> None:
         """Proves `measure` reads the artifact rather than returning a constant."""

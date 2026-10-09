@@ -37,9 +37,15 @@ its own. Their entry preconditions do differ, and the row above says how.
    `Succeeded` with exit 0. The report's exit status is the run's verdict, not the command's
    health.
 
-5. **Say who started it.** A run with no recorded actor was started by Cairn; one with an
-   actor was started by that person at the engine's view. An absent actor is never rendered
-   as unknown, so Report accounts for runs the skill did not start.
+5. **Say who started it.** A run with an actor was started by that person at the engine's
+   view; a run with none is attributed from its trigger — Cairn's own skill, the scheduler,
+   a webhook, the retry scanner, the run above it, or nothing at all. Report the attribution
+   the record carries, so a run the machine started on its own is not credited to Cairn.
+
+6. **Say what the report could not read.** Where the record refused a piece of the run's own
+   evidence, the first screen counts it and the attention section names each one. Repeat
+   that rather than summarising past it: the facts under a refusal may be missing rather
+   than absent, and nothing refused raised any outcome.
 
 A question about what a run cost is not one Cairn answers; say that in one line and go on
 with what the record does hold.
