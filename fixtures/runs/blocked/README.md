@@ -7,7 +7,7 @@ reports are the primary source.
 ## What is here
 
 - `status.jsonl` — the engine's own state file, copied verbatim from a real Dagu
-  2.11.0 run.
+  2.18.2 run.
 - `reports/` — this run's own step reports: commit_alpha.json, mark_alpha.json, work_alpha.json.
 - `recording.json` — the engine version, the run id, and any field set by hand.
 

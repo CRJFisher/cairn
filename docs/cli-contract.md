@@ -216,7 +216,7 @@ can run as the workflow's exit handler — and it also writes the run's own reco
 which is the only place a run nobody watched can leave one.
 
 **`lock release` exits nonzero for exactly one reason: it could not give the lock back.**
-Measured against Dagu 2.11.0, a lifecycle handler exiting nonzero records the whole run as
+Measured against Dagu 2.18.2, a lifecycle handler exiting nonzero records the whole run as
 `failed` and makes `dagu start` exit 1 even when every step succeeded, and that node is
 load-bearing infrastructure in the run record — so anything else it learns rides in its
 report rather than in its status.
@@ -254,7 +254,7 @@ it across one would turn every contender into a failure rather than a wait.
 subcommands are is not a step.
 
 `cairn supervise reconcile` gives a killed run's record a terminal status; `cairn supervise
-base-config` asserts or writes the engine's disabled DAG retry. Both are described in
+base-config` asserts or writes the engine's disabled DAG retry and catch-up. Both are described in
 [supervision.md](supervision.md).
 
 `cairn schedule install|status|start|remove` owns the recurring trigger and the daemon it

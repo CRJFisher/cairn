@@ -1,9 +1,10 @@
 """Refuse to run a definition Cairn would not stake the run on.
 
 The engine's own validator is strict about shape and blind to content, and every hole is a
-hole that reports success. Measured against Dagu 2.11.0, `dagu validate` exits 0 on a file
-carrying a dependency cycle, on an unresolved `${...}`, on `mark_success`, on a step with no
-timeout, and on a step with no working directory. So this is a first-class component rather
+hole that reports success. Measured against Dagu 2.18.2, `dagu validate` exits 0 on a file
+carrying a dependency cycle, on an unresolved `${...}`, on a step with no timeout, and on a
+step with no working directory. It refuses `mark_success`; the preflight refuses it too, so
+the refusal does not depend on which validator reads the file first. So this is a first-class component rather
 than a lint: Cairn already holds a validated graph ([04]), and the preflight's job is to keep
 that guarantee across a translation the engine will not check.
 
@@ -435,9 +436,9 @@ def _check_triggering(fields: dict[str, Any]) -> list[Fault]:
 def _check_references(document: Any) -> list[Fault]:
     """Every reference must resolve, and must stand where substitution is safe.
 
-    Measured against Dagu 2.11.0: a reference substitutes shell-free in `working_dir`, but in
+    Measured against Dagu 2.18.2: a reference substitutes shell-free in `working_dir`, but in
     a body or a condition it is left to the shell — where single quotes make it inert, a bare
-    token splits on whitespace, and double quotes execute whatever the value holds. A
+    token splits on whitespace under a POSIX `sh`, and double quotes execute whatever the value holds. A
     parameter is an editable field at trigger time ([03]), so the last of those is an
     injection surface.
 

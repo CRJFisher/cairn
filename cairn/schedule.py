@@ -8,18 +8,18 @@ webhook does not execute a run, it enqueues one, and the queue is drained by the
 
 While it is up it does two things unasked. It reconciles crashed runs, which Cairn wants.
 And its retry scanner **re-executes every failed run recorded on the machine inside the
-window `RETRY_SCANNER_HOURS` names** — including runs outside the directory it watches,
-three attempts each, under the engine's own retry policy. For a tool whose failed runs are agent sessions against git
-repositories that is unacceptable, so starting it asserts two machine-wide properties rather
-than assuming them, and names what it found.
+window `RETRY_SCANNER_HOURS` names** — including runs outside the directory it watches —
+wherever a DAG-level retry policy is armed. For a tool whose failed runs are agent sessions
+against git repositories that is unacceptable, so starting it asserts two machine-wide
+properties rather than assuming them, and names what it found.
 
 Both hazards live in one file every DAG on the machine inherits. Retry is closed there
 ([baseconfig.py]); catchup is closed on every file Cairn emits and only *asserted* there,
 because the scanner reaches DAGs Cairn did not write:
 
 - **DAG-level retry**, which replays a failed run ([baseconfig.py]).
-- **Catchup**, which replays every cron slot missed while the machine slept. Measured on
-  this machine the engine ships `catchup_window: "6h"`, and its own comment reads "all
+- **Catchup**, which replays every cron slot missed while the machine slept. The engine
+  writes `catchup_window: "6h"` into a base configuration it creates, and its comment reads "all
   missed cron intervals within this window are executed (max 1000)". Every emitted file
   states the empty window that turns it off ([workflow.md]), so this is a hazard only for
   the DAGs Cairn did not write — which is exactly what the scanner reaches.
@@ -185,38 +185,24 @@ def assert_safe_to_start(
     """
     config = base_config_path() if base_config is None else base_config
     # Judged before the records root is resolved, because resolving it asks the engine — and
-    # invoking the engine creates this very file with retry active ([enginehome.py]). Reading
-    # where things are must not arm the hazard the reader is about to judge.
+    # invoking the engine creates this very file with its catch-up window armed
+    # ([enginehome.py]). Reading where things are must not arm the hazard the reader is
+    # about to judge.
+    assert_catchup_disabled(config)
     try:
         assert_dag_retry_disabled(config)
     except CairnError as exc:
-        # Naming the runs means asking the engine where its history is, and asking creates
-        # the very configuration being refused — so on a machine with no base config yet
-        # the refusal stands alone rather than arming the hazard to describe it.
-        countable = records is not None or config.exists()
-        would = (
-            failed_runs_since(
-                run_records_path() if records is None else records, now=now
-            )
-            if countable
-            else []
-        )
+        would = failed_runs_since(run_records_path() if records is None else records, now=now)
         named = _named(would)
         # The holder's own message already names the file and the command that fixes it, so
         # what is added here is the only thing it cannot know: what starting now would do.
-        counted = (
-            f" Starting a scheduler now would re-execute {len(would)} failed run(s) "
-            f"recorded in the last {RETRY_SCANNER_HOURS} hours"
-            + (f": {named}." if named else ".")
-            if countable
-            else ""
-        )
         raise CairnError(
             exc.cause,
-            f"{exc}.{counted}",
+            f"{exc}. Starting a scheduler now would re-execute {len(would)} failed run(s) "
+            f"recorded in the last {RETRY_SCANNER_HOURS} hours"
+            + (f": {named}." if named else "."),
             detail={**exc.detail, "would_re_execute": [run.run_id for run in would]},
         ) from exc
-    assert_catchup_disabled(config)
     return queued_runs(run_records_path() if records is None else records)
 
 

@@ -15,17 +15,21 @@ told nothing about how — so its own account of itself is the model's, not a sc
 ## What is here
 
 - `status.jsonl` — the engine's own state file, copied verbatim from a real Dagu
-  2.11.0 run.
+  2.18.2 run.
 - `reports/` — this run's own step reports: commit_alpha.json, mark_alpha.json, work_alpha.json.
 - `recording.json` — the engine version, the run id, and any field set by hand.
 
 ## What is not a measurement
 
-The report's `rate_limits` carries the recording machine's own account state — how much of a
-seven-day window it had used, and when that resets. The shape is kept so the fixture still
-looks like a report a real provider writes; the values are replaced with zeroes, because
-they are personal to whoever recorded it and nothing in the record reads them. `cairn record`
-never looks at that field. Everything else here — the session identity, the turn
-count, the agent's own account of what it did — is exactly what the run produced.
+The report carries the recording machine's own account state — how much of each window it had
+used, and when that window resets. The shape is kept so the fixture still looks like a report a
+real provider writes; the provider's `rate_limits` values are zeroed and the reset moments Cairn
+reads are nulled, because they are personal to whoever recorded it. The record states a nulled
+reset as not known. Everything else here — the session identity, the turn count, the agent's
+own account of what it did — is exactly what the run produced.
 
-This recording is kept as it was made. `scripts/record_runs.py` re-records only the command-step shapes, so there is no command that regenerates it.
+Re-record with `python3 -m scripts.record_runs --shape agent`. It opens one real session and
+spends the subscription's allowance, so a plain `python3 -m scripts.record_runs` leaves it
+alone. The step names `sonnet`: under `--permission-mode auto` a `haiku` session asks before
+writing a file, and under `-p` nobody can answer, so the step reports that it was not allowed
+to do the work.

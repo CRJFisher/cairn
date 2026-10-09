@@ -9,8 +9,8 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "fan-out",
-    "cairn_generator": "12",
-    "cairn_engine": "2.11.0",
+    "cairn_generator": "13",
+    "cairn_engine": "2.18.2",
     "cairn_graph_sha256": "b97756700ae22f181a7b7f458f0b42eab757c9ec8565e5e119851362fd5e1a30",
     "cairn_body_sha256": "3d3761db777ccb980bc2a6946fd2c56c973f66122f2196c815400a1d5402bf9a"
   },

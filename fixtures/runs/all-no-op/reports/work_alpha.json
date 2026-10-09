@@ -7,12 +7,12 @@
     "recorded_scope": "once",
     "scope": "once"
   },
-  "duration": 0.0013494279701262712,
+  "duration": 0.001064981974195689,
   "follow_up_work": [],
   "needs_user_decision": false,
   "run_id": "fixture-allnoop",
   "status": "noop",
   "step_id": "work_alpha",
   "summary": "alpha was done by an earlier run",
-  "working_directory": "/private/var/folders/tc/95b1f46j1g3cjktn__xcv6z80000gn/T/tmp7a5lf3fq/work"
+  "working_directory": "/private/var/folders/tc/95b1f46j1g3cjktn__xcv6z80000gn/T/tmpmqz3varh/work"
 }

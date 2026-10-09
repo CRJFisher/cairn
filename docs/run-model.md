@@ -454,7 +454,7 @@ attributes this run, and nothing recorded what triggered it.
 
 ## The engine-status mapping
 
-Measured against **Dagu 2.11.0**, which is the pin `cairn/workflow/schema.py` states and
+Measured against **Dagu 2.18.2**, which is the pin `cairn/workflow/schema.py` states and
 this table imports rather than restating.
 
 **Three vocabularies overlap numerically and mean different things at the same value**, so
@@ -631,7 +631,7 @@ a recovery against the same run id must not delete the evidence of the attempt i
 
 The runs root is resolved once at authoring time and travels to every step in the emitted
 workflow's `env:` block as `CAIRN_RUNS_DIR`; a step composes its own path from that root and
-the run id the engine gave it. Measured against Dagu 2.11.0, an `env:` entry reaches a step,
+the run id the engine gave it. Measured against Dagu 2.18.2, an `env:` entry reaches a step,
 a precondition **and** the lifecycle handler, which is what lets the run's release write the
 one report a failed run always has to leave.
 
@@ -657,7 +657,7 @@ writing one somewhere nothing will look.
 
 ## The fixture corpus
 
-`fixtures/runs/<shape>/` holds `status.jsonl` copied verbatim from a real Dagu 2.11.0 run,
+`fixtures/runs/<shape>/` holds `status.jsonl` copied verbatim from a real Dagu 2.18.2 run,
 that run's own step reports, and a `recording.json` naming the engine version, why the shape
 exists, and any field set by hand. `scripts/record_runs.py` re-records them.
 

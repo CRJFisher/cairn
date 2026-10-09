@@ -49,9 +49,9 @@ EXIT_HANDLER = "exit"
 def disabled_retry() -> RetryPolicy:
     """The DAG-level policy, off, spelled with the interval the schema demands.
 
-    The engine's shipped configuration carries an active `limit: 3`, and its scheduler's
-    retry scanner reaches every failed run on the machine — for Cairn a failed run is an
-    agent session that already changed a repository ([01]).
+    A machine's `base.yaml` may arm a policy every DAG inherits, and the scheduler's retry
+    scanner reaches every failed run on the machine — for Cairn a failed run is an agent
+    session that already changed a repository ([01]).
     """
     return {"limit": 0, "interval_sec": RETRY_INTERVAL}
 
@@ -59,10 +59,12 @@ def disabled_retry() -> RetryPolicy:
 def step_concurrency(nodes: int) -> int:
     """The cap, stated as a number that cannot be read as "unset".
 
-    `max_active_steps: 0` does **not** mean unlimited: measured against Dagu 2.11.0, a file
-    emitting zero alongside a `base.yaml` carrying ten ran ten steps at a time, exactly as a
-    file that omitted the field did. Zero is inheritance wearing the shape of an override,
-    which is the one thing this builder exists to prevent — so the cap is the node count,
+    `max_active_steps: 0` does **not** mean unlimited in a DAG file: measured against Dagu
+    2.18.2, a file emitting zero alongside a `base.yaml` carrying ten ran ten steps at a time,
+    exactly as a file that omitted the field did. The engine documents non-positive as
+    unlimited in the base file and `-1` as the override that clears an inherited value; zero
+    here is inheritance wearing the shape of an override, which is the one thing this
+    builder exists to prevent — so the cap is the node count,
     which no wave can exceed.
     """
     return max(nodes, 1)
@@ -154,7 +156,7 @@ def envelope(
         #
         # The runs root travels the same way, and it is what makes a step's report land in
         # Cairn's own state rather than wherever the engine happened to put its log
-        # ([run-model.md]). Measured against Dagu 2.11.0, an `env:` entry reaches the
+        # ([run-model.md]). Measured against Dagu 2.18.2, an `env:` entry reaches the
         # lifecycle handler as well as every step, so the run's release can write its own
         # report — which is the one report a failed run always has to leave.
         "env": [

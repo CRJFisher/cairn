@@ -1,14 +1,16 @@
 """Record the fixture corpus by running a real engine, one shape per recorded run.
 
-Every fixture's `status.jsonl` is a real Dagu 2.11.0 file, copied verbatim from a run this
-script executed. That is not fastidiousness: the corpus exists to prove things *about the
+Every fixture's `status.jsonl` is a real file written by the pinned engine, copied verbatim
+from a run this script executed, and the script refuses to record against any other version. That is not fastidiousness: the corpus exists to prove things *about the
 engine*, and the one fixture the exit criteria name — a run the engine calls a clean success
 over an excluded step — is a claim only the engine can make. Hand-authoring it would assert
 the author's belief and test nothing.
 
 The step reports are real too, written by real `python3 -m cairn exec` invocations inside
 those runs. What no command step can produce is an agent's own detail — session identity,
-turns — so one shape carries a hand-augmented work report, and its README says so.
+turns — so the `agent` shape opens one real session through `cairn agent run`. It spends the
+subscription's allowance, so it is recorded only when it is named; the corpus test that every
+recording names the pinned engine is what says it is due.
 
 Two shapes cannot come from a Cairn-generated workflow, because Cairn's emitted pattern is
 designed to make them impossible: a real exclusion always leaves a `failed` node behind, so
@@ -17,8 +19,9 @@ hand against the node-name grammar, and the fixture's README names the recipe. T
 extraction is the check that Cairn's own pattern still leaves that failed node; a corpus
 that could only express the safe shape could not perform that check.
 
-    python3 -m scripts.record_runs                  # every shape
+    python3 -m scripts.record_runs                  # every command-step shape
     python3 -m scripts.record_runs --shape green    # one of them
+    python3 -m scripts.record_runs --shape agent    # the one real session
 """
 
 from __future__ import annotations
@@ -36,6 +39,9 @@ from pathlib import Path
 from typing import Any
 
 from cairn.assertions import command_digest
+from cairn.locks import acquire_run_lock
+from cairn.workflow.gate import EngineUnavailable, assert_pinned
+from cairn.workflow.schema import ENGINE_VERSION
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = PACKAGE_ROOT / "fixtures" / "runs"
@@ -173,7 +179,6 @@ SHAPES: dict[str, dict[str, Any]] = {
             "marker gate skipped all of them and each left a no-op report naming the run "
             "that did the work. The engine spells this exactly as it spells a clean green"
         ),
-        "repository": True,
         "markers": ("alpha", "beta"),
         "steps": [
             step(
@@ -339,6 +344,38 @@ SHAPES: dict[str, dict[str, Any]] = {
             "truncate": ["commit_alpha"],
         },
     },
+    "agent": {
+        "why": (
+            "one real agent step, so the corpus carries a step's receipts — its session "
+            "identity, its turn count and its model — rather than only their absence. "
+            "Everything else here is a command step, which can never populate them"
+        ),
+        "spends": True,
+        "redact_account_state": ("work_alpha",),
+        "steps": [
+            step(
+                "work_alpha",
+                cairn(
+                    "agent", "run", "--provider", "claude", "--model", "sonnet",
+                    "--prompt",
+                    "Bring this directory to a state where a file named note.txt exists "
+                    "and contains the single word hello. If it already does, change "
+                    "nothing.",
+                ),
+                timeout=600,
+            ),
+            step("verify_alpha", "test -f note.txt", depends=["work_alpha"]),
+            step(
+                "mark_alpha", cairn("exec", "--command", "true"), depends=["verify_alpha"]
+            ),
+            step(
+                "commit_alpha",
+                cairn("commit", "--step", "alpha", "--message", "cairn(alpha): the note"),
+                depends=["mark_alpha"],
+                continue_on={"skipped": True},
+            ),
+        ],
+    },
 }
 
 
@@ -350,14 +387,26 @@ def _render(document: dict[str, Any], workdir: Path, runs: Path) -> str:
 def record(shape: str, definition: dict[str, Any]) -> None:
     if ENGINE is None:
         raise SystemExit("dagu is not on PATH, and every fixture is a real engine run")
+    try:
+        assert_pinned(ENGINE)
+    except EngineUnavailable as exc:
+        # A fixture stamped with the pin but written by another engine would describe an
+        # engine nothing here runs against.
+        raise SystemExit(str(exc)) from None
     target = FIXTURES / shape
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         home, workdir, runs = root / "home", root / "work", root / "runs"
         for directory in (home, workdir, runs):
             directory.mkdir(parents=True)
-        if definition.get("repository"):
-            _seed_repository(workdir, definition.get("markers", ()))
+        run_id = f"fixture-{shape.replace('-', '')}"
+        # Every runtime step proves it owns the repository it stands in before it writes, so
+        # each shape runs in a real repository holding this run's lock — the state a real
+        # run's own `lock acquire` node leaves before its first step.
+        _seed_repository(workdir, definition.get("markers", ()))
+        acquire_run_lock(
+            workdir, run_id=run_id, plan=f"fixture-{shape}", run_timeout_seconds=HOLD_SECONDS * 4
+        )
         (home / "base.yaml").write_text(
             "retry_policy:\n  limit: 0\n  interval_sec: 1\n", encoding="utf-8"
         )
@@ -365,7 +414,6 @@ def record(shape: str, definition: dict[str, Any]) -> None:
         path.write_text(
             _render(workflow(definition["steps"]), workdir, runs), encoding="utf-8"
         )
-        run_id = f"fixture-{shape.replace('-', '')}"
         environment = {**os.environ, "DAGU_HOME": str(home)}
         command = [ENGINE, "start", "--run-id", run_id, str(path)]
 
@@ -388,6 +436,12 @@ def record(shape: str, definition: dict[str, Any]) -> None:
         subprocess.run(command, env=environment, capture_output=True, check=False)
         augment = definition.get("augment", {})
         _augment(runs / run_id / "reports", augment)
+        redacted = definition.get("redact_account_state", ())
+        _redact_account_state(runs / run_id / "reports", redacted)
+        augment = {
+            **augment,
+            **{name: {"rate_limits": "redacted", "resets_at": "redacted"} for name in redacted},
+        }
         _publish(
             target,
             _find_state(home),
@@ -477,6 +531,35 @@ def _damage(target: Path, declared: dict[str, Any]) -> None:
         report.write_text(text[: len(text) // 2], encoding="utf-8")
 
 
+def _redact_account_state(reports: Path, names: tuple[str, ...]) -> None:
+    """Blank the recording account's own allowance figures, keeping their shape.
+
+    A real session's report carries how much of each window the recording machine had used
+    and when it resets. Those are personal to whoever recorded the fixture. The provider's
+    raw events are zeroed, since nothing in the record reads them; the reset moments Cairn
+    reads are nulled, which the record states as not known rather than as a moment.
+    """
+    for name in names:
+        path = reports / f"{name}.json"
+        if not path.is_file():
+            continue
+        report: Any = json.loads(path.read_text(encoding="utf-8"))
+        detail = report.get("detail", {})
+        for event in detail.get("rate_limits", []):
+            for key in ("session_id", "uuid"):
+                if key in event:
+                    event[key] = "00000000-0000-0000-0000-000000000000"
+            info = event.get("rate_limit_info", {})
+            for key in ("resetsAt", "utilization"):
+                if key in info:
+                    info[key] = 0 if key == "resetsAt" else 0.0
+        if "resets_at" in detail:
+            detail["resets_at"] = None
+        for window in detail.get("headroom", {}).get("reading", {}).values():
+            window["resets_at"] = None
+        path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def _find_state(home: Path) -> Path:
     found = sorted((home / "data").rglob("status.jsonl"))
     if not found:
@@ -494,8 +577,11 @@ def _publish(
     augmented: dict[str, dict[str, Any]] | None = None,
     damage: dict[str, Any] | None = None,
 ) -> None:
-    if target.exists():
-        shutil.rmtree(target)
+    # Only what a recording writes is replaced. The README beside it is a person's account of
+    # the shape, and a re-recording that took it along would leave the fixture unexplained.
+    shutil.rmtree(target / "reports", ignore_errors=True)
+    for recorded in ("status.jsonl", "recording.json"):
+        (target / recorded).unlink(missing_ok=True)
     (target / "reports").mkdir(parents=True)
     shutil.copy2(state, target / "status.jsonl")
     reports = runs / run_id / "reports"
@@ -507,7 +593,7 @@ def _publish(
             {
                 "shape": shape,
                 "run_id": run_id,
-                "engine": "2.11.0",
+                "engine": ENGINE_VERSION,
                 "why": why,
                 "hand_set_fields": augmented or {},
                 "damage": damage or {},
@@ -524,7 +610,11 @@ def main(arguments: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="record_runs", description=__doc__)
     parser.add_argument("--shape", action="append", choices=sorted(SHAPES))
     args = parser.parse_args(arguments)
-    chosen: list[str] = args.shape or sorted(SHAPES)
+    # A shape that opens a real session spends the subscription's allowance, so it is
+    # recorded only when someone names it.
+    chosen: list[str] = args.shape or sorted(
+        shape for shape, definition in SHAPES.items() if not definition.get("spends")
+    )
     for shape in chosen:
         record(shape, SHAPES[shape])
     return 0

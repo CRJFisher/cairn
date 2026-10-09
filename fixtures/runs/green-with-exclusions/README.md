@@ -12,7 +12,7 @@ corpus that could only express the safe shape could not perform it.
 ## What is here
 
 - `status.jsonl` — the engine's own state file, copied verbatim from a real Dagu
-  2.11.0 run.
+  2.18.2 run.
 - `reports/` — this run's own step reports: commit_alpha.json, join_w1.json, mark_alpha.json, work_alpha.json, work_beta.json.
 - `recording.json` — the engine version, the run id, and any field set by hand.
 

@@ -1,9 +1,11 @@
 """The engine's machine-wide base configuration, read and edited without a YAML parser.
 
-Every DAG on the machine inherits this file, and the engine ships it with DAG-level retry
-active — which would re-execute every failed run of the last day, Cairn's or not, and for
-Cairn a failed run is an agent session that mutated a repository. So the policy is
-checked before any run rather than assumed, and written at acquisition.
+Every DAG on the machine inherits this file. A DAG-level retry policy armed in it would
+re-execute every failed run of the last day, Cairn's or not, and for Cairn a failed run is an
+agent session that mutated a repository; a catch-up window armed in it replays every cron slot
+a stopped scheduler missed. The engine writes the file on its first invocation with the window
+armed and retry left commented out. So both are checked rather than assumed — retry before
+any run, the window before any scheduler — and one command writes both off.
 
 Two properties matter more than convenience here, because the file is the user's and Cairn
 is the only thing that edits it unattended:
@@ -64,9 +66,9 @@ def base_config_path(environ: Mapping[str, str] | None = None) -> Path:
     ([enginehome.py]), and the asymmetry is deliberate. This directory is
     `os.UserConfigDir` on every platform the engine supports, so the arithmetic is right
     here where it is wrong for the data directory. And asking the binary would put a
-    subprocess in front of the one check that must pass before a run's first session — a
-    check on a file that **invoking the engine creates**, carrying an active retry policy.
-    Reading where this file is must not arm the hazard the reader is about to judge.
+    subprocess in front of the checks that judge this file — a file that **invoking the
+    engine creates**, carrying an armed catch-up window. Reading where this file is must not
+    arm the hazard the reader is about to judge.
     """
     values = os.environ if environ is None else environ
     home = values.get("DAGU_HOME")
@@ -204,9 +206,9 @@ def read_base_scalar(path: Path, key: str) -> str | None:
     return found
 
 
-# The engine ships this armed: a scheduler restarting after downtime executes every cron
-# slot missed inside the window, up to a thousand of them, and for Cairn each is an
-# agent session. Measured against Dagu 2.11.0, the empty string is the only spelling that
+# The engine ships this armed at `"6h"`: a scheduler restarting after downtime executes every
+# cron slot missed inside the window, up to a thousand of them, and for Cairn each is an
+# agent session. Measured against Dagu 2.18.2, the empty string is the only spelling that
 # turns it off — a zero duration is refused as "duration must be positive" — and the
 # engine's own schema states that an omitted window replays nothing.
 CATCHUP_KEY = "catchup_window"
@@ -216,13 +218,19 @@ CATCHUP_DISABLED_LINE = 'catchup_window: ""\n'
 def assert_catchup_disabled(path: Path) -> None:
     """Refuse a machine whose base configuration would replay missed cron slots.
 
-    Absence is off rather than armed, which is where this parts company with the retry
-    policy beside it: the engine's schema states that an omitted window replays nothing,
-    while an absent *file* is a file the engine is about to write with retry active. So the
-    two hazards read their absences differently because the engine treats them differently.
+    An omitted *key* is off — the engine's schema states that an omitted window replays
+    nothing — but an absent *file* is armed: the engine writes it on its next invocation with
+    a `"6h"` window, and starting a scheduler is an invocation.
     """
     if not path.exists():
-        return
+        raise CairnError(
+            "base_catchup_enabled",
+            f"{path} does not exist. The engine creates it on its next invocation with "
+            f'{CATCHUP_KEY}: "6h", so a scheduler starting after downtime would replay '
+            f"every cron slot missed inside that window. Run `{DISABLE_COMMAND}` once on "
+            "this machine first",
+            detail={"path": str(path)},
+        )
     window = read_base_scalar(path, CATCHUP_KEY)
     if not window:
         return
@@ -239,25 +247,20 @@ def assert_catchup_disabled(path: Path) -> None:
 def assert_dag_retry_disabled(path: Path) -> None:
     """Refuse to start a run on an engine that would re-execute failed runs by itself.
 
-    An absent file is refused rather than trusted: the engine writes `base.yaml` on the
-    first invocation of any of its commands, with `retry_policy: {limit: 3}` active, so
-    "not there yet" means "enabled from the next command onward".
+    Only a declared policy with a positive limit arms it. The engine retries a DAG only when
+    some policy says to, and the file it writes on its first invocation leaves the policy
+    commented out — so an absent file, and a file that declares none, retry nothing. What
+    is refused is a file someone armed.
     """
     if not path.exists():
-        raise CairnError(
-            "base_retry_enabled",
-            f"{path} does not exist. The engine creates it on its next invocation with "
-            f"DAG-level retry enabled, which would re-execute agent work unasked. "
-            f"Run `{DISABLE_COMMAND}` once on this machine first",
-            detail={"path": str(path)},
-        )
-    policy = read_base_retry_policy(path)
-    if policy.limit == 0:
         return
-    held = "no DAG-level retry policy" if policy.limit is None else f"a limit of {policy.limit}"
+    policy = read_base_retry_policy(path)
+    if not policy.limit:
+        return
     raise CairnError(
         "base_retry_enabled",
-        f"{path} declares {held}, so a scheduler would re-execute every failed run on "
+        f"{path} declares a limit of {policy.limit}, so a scheduler would re-execute every "
+        "failed run on "
         f"this machine, Cairn's or not. Run `{DISABLE_COMMAND}` to fix it",
         detail={"path": str(path), "limit": policy.limit},
     )
@@ -346,16 +349,17 @@ def _disable_catchup(path: Path) -> bool:
 
 
 def ensure_dag_retry_disabled(path: Path) -> bool:
-    """Write the disabling policy into the base configuration, reporting whether it changed.
+    """Write retry and catch-up off in the base configuration, reporting whether it changed.
 
-    Acquisition edits rather than creates: the file exists on any machine that has run the
-    engine once, and every other field in it is the user's. The edit is read back before it
-    is accepted, because a splice that produced a duplicate key would leave a file the
-    engine refuses to load — taking every unrelated workflow on the machine with it.
+    It edits rather than creates: the file exists on any machine that has run the engine
+    once, and every other field in it is the user's. The edit is read back before it is
+    accepted, because a splice that produced a duplicate key would leave a file the engine
+    refuses to load — taking every unrelated workflow on the machine with it. A file that
+    declares no retry policy is left without one, because none is already off.
     """
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
-        _write_atomically(path, CATCHUP_DISABLED_LINE + DISABLED_RETRY_POLICY)
+        _write_atomically(path, CATCHUP_DISABLED_LINE)
         return True
     # Read *after* the catchup edit, because the retry splice below works on line indices
     # taken from the file as it now stands. Reading first would splice the new indices into
@@ -364,16 +368,14 @@ def ensure_dag_retry_disabled(path: Path) -> bool:
     catchup = _disable_catchup(path)
     original = _read(path)
     policy = read_base_retry_policy(path)
-    if policy.limit == 0:
+    if not policy.limit:
         return catchup
 
     lines = original.splitlines(keepends=True)
     replacement = DISABLED_RETRY_POLICY.splitlines(keepends=True)
     if policy.first_line is None or policy.last_line is None:
-        prefix = lines if not original or original.endswith("\n") else [*lines, "\n"]
-        updated = [*prefix, *replacement]
-    else:
-        updated = [*lines[: policy.first_line], *replacement, *lines[policy.last_line + 1 :]]
+        raise _unreadable(path, "a retry limit was read with no lines that declare it")
+    updated = [*lines[: policy.first_line], *replacement, *lines[policy.last_line + 1 :]]
     _write_atomically(path, "".join(updated))
 
     try:

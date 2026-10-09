@@ -5,9 +5,9 @@ A workflow is generated from a plan graph and never hand-written. Two components
 table; the **preflight** then refuses to run anything Cairn would not stake the run on.
 
 The preflight is a component rather than a step inside the emitter because the engine's own
-validation has holes, and every one of them reports success. Measured against Dagu 2.11.0,
-`dagu validate` exits 0 on a file carrying a dependency cycle, an unresolved `${...}`,
-`mark_success`, a step with no timeout, and a step with no working directory. Cairn already
+validation has holes, and every one of them reports success. Measured against Dagu 2.18.2,
+`dagu validate` exits 0 on a file carrying a dependency cycle, an unresolved `${...}`, a step
+with no timeout, and a step with no working directory. Cairn already
 holds a validated graph ([plan-contract.md](plan-contract.md)); the preflight's job is to
 carry that guarantee across a translation the engine will not check.
 
@@ -34,17 +34,20 @@ in the engine's own start dialog: `CAIRN_REPOSITORY`, `CAIRN_PARENT_BRANCH`, and
 `CAIRN_OCCASION`.
 
 **A parameter reference stands in `working_dir:` and nowhere else.** Measured against Dagu
-2.11.0, the same reference behaves differently in every position it can occupy:
+2.18.2, the same reference behaves differently in every position it can occupy. A body runs
+under the machine's `$SHELL`, so a bare reference splits under a POSIX `sh` and stays one
+word under zsh, which does not split:
 
-| Position              | Value holding a space      | Value holding `$(…)`          |
-| --------------------- | -------------------------- | ----------------------------- |
-| `working_dir:`        | one path, correctly        | inert — it is never a shell   |
-| `run:`, bare          | **split into three words** | inert                         |
-| `run:`, double-quoted | one word, correctly        | **the substitution executes** |
-| `run:`, single-quoted | **not substituted at all** | inert                         |
+| Position              | Value holding a space                 | Value holding `$(…)`          |
+| --------------------- | ------------------------------------- | ----------------------------- |
+| `working_dir:`        | one path, correctly                   | inert — it is never a shell   |
+| `run:`, bare          | **split into three words** under `sh` | inert                         |
+| `run:`, double-quoted | one word, correctly                   | **the substitution executes** |
+| `run:`, single-quoted | **not substituted at all**            | inert                         |
 
 Single quotes are what `shlex.quote` produces, so a reference routed through the emitters'
-own joiner arrives as its own literal text. A bare token loses any path containing a space.
+own joiner arrives as its own literal text. A bare token loses any path containing a space
+wherever the shell splits.
 A double-quoted one runs whatever the value holds — and a parameter is editable at trigger
 time, so that is a command-injection surface rather than a corner case.
 
@@ -191,18 +194,17 @@ does not resolve skips every step and reports a clean success with nothing done.
 
 `dagu validate` and `dagu dry` both run, in that order, before any run may start, and the
 engine version is checked first. Both run against a scratch data directory: `dagu dry` writes,
-and an engine home the binary has never seen is created carrying `retry_policy: {limit: 3}`
-**active** — arming precisely the scheduler hazard that re-executes every failed run on the
-machine ([supervision.md](supervision.md)). The path handed over is absolute, because a
+and invoking the engine against a home it has never seen fills it with a base configuration
+and example DAGs ([supervision.md](supervision.md)). The path handed over is absolute, because a
 relative path the engine cannot find is silently re-resolved against its own `dags`
 directory.
 
 The gate is mandatory and it is **not** sufficient. Between them the two commands still pass
-an unresolved substitution, a missing working directory, `mark_success`, a body that is not
-one invocation, and a gate command that cannot launch. That is the whole of why the preflight
+an unresolved substitution, a missing working directory, a body that is not one invocation,
+and a gate command that cannot launch. That is the whole of why the preflight
 runs first and refuses on its own authority.
 
-The pin is `2.11.0`, compared exactly. The workflow format carries no version field of its
+The pin is `2.18.2`, compared exactly. The workflow format carries no version field of its
 own, so the pinned engine is the installed binary and nothing else, and a mismatch presents
 as format drift rather than as a load error. A halt names both versions.
 
@@ -351,7 +353,7 @@ the absence of one is never reported as agreement with it.
 
 Every emitted workflow declares `CAIRN_RUNS_DIR` beside `PYTHONPATH`, resolved at authoring
 time, and a step composes its own report path from that root and the run id the engine gave
-it ([run-model.md](run-model.md)). Measured against Dagu 2.11.0, an `env:` entry reaches a
+it ([run-model.md](run-model.md)). Measured against Dagu 2.18.2, an `env:` entry reaches a
 step, a precondition **and** the lifecycle handler, which is what lets the run's release
 write the one report a failed run always has to leave.
 

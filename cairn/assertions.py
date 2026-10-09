@@ -35,7 +35,7 @@ place inside the fail-closed `verify gate` parser ([__main__.py]).
 
 **It always writes its decision** to the assertion node's own report before it exits. The
 mark gate reads that report first, and trusts the engine's exit-status reference only where
-the decision says the assertion ran: measured against Dagu 2.11.0, `${<id>.exit_code}`
+the decision says the assertion ran: measured against Dagu 2.18.2, `${<id>.exit_code}`
 resolves to `0` for a node its precondition skipped, so a gate that read the reference over
 a skipped assertion would record a marker over an assertion that never ran. Where the
 assertion did run, the mark gate completes the same report with the exit it read and
@@ -126,10 +126,15 @@ BOUND_KEY = "bound_seconds"
 # ended it. The engine's kill and the gate's clock are seconds apart, never minutes.
 BOUND_SLACK_SECONDS = 5.0
 
-# The exit status Dagu 2.11.0 hands on for a process a signal ended: Go's `ExitCode()`
+# The exit status the engine hands on for a process a signal ended: Go's `ExitCode()`
 # answers -1 there, and the signal itself does not reach `${<id>.exit_code}`. Read as an
 # exit it says the assertion failed, when it never got to say anything.
 SIGNALLED_EXIT = -1
+# The exit status the engine hands on for a step it stopped at its own `timeout_sec`.
+# Measured against Dagu 2.18.2: `124`, `timeout(1)`'s convention, where a
+# signal from anywhere else reads `-1`. An assertion can also exit `124` by itself — through
+# `timeout(1)`, for one — so the number alone does not say which happened ([engine_exit]).
+ENGINE_TIMEOUT_EXIT = 124
 
 
 def command_digest(command: str) -> str:
@@ -375,7 +380,7 @@ def _remedy_decision(
     elif decision == DECISION_RUN and account is not None:
         exit_code = recorded_exit(account)
         if exit_code is None:
-            exit_code = int(verify_exit_text)
+            exit_code = engine_exit(account, int(verify_exit_text))
             record_executed(context, step_id, account, exit_code)
     else:
         return REMEDY_DECLINE_IT, "the assertion did not run, so there is nothing to remedy"
@@ -547,12 +552,7 @@ def record_executed(
         SOURCE_KEY: ASSERTION_EXECUTED,
         BACKED_BY_KEY: step_id,
     }
-    released = detail.get(RELEASED_AT_KEY)
-    duration = (
-        max(0.0, time.time() - released)
-        if isinstance(released, (int, float)) and not isinstance(released, bool)
-        else 0.0
-    )
+    duration = _ran_for(detail)
     completed = CommandResult(
         exit_code,
         "done" if exit_code == 0 else "failed",
@@ -575,14 +575,43 @@ def record_executed(
         _publish(context, step_id, command, tree, exit_code)
 
 
-def _account(exit_code: int, duration: float, bound: Any) -> str:
-    if exit_code != SIGNALLED_EXIT:
-        return f"the assertion exited {exit_code}"
-    if (
+def _ran_for(detail: dict[str, Any]) -> float:
+    """Seconds since the assertion's gate released it, which is when the assertion began."""
+    released = detail.get(RELEASED_AT_KEY)
+    if isinstance(released, (int, float)) and not isinstance(released, bool):
+        return max(0.0, time.time() - released)
+    return 0.0
+
+
+def _reached_bound(duration: float, bound: Any) -> bool:
+    return (
         isinstance(bound, int)
         and not isinstance(bound, bool)
         and duration >= bound - BOUND_SLACK_SECONDS
-    ):
+    )
+
+
+def engine_exit(report: dict[str, Any] | None, exit_code: int) -> int:
+    """The exit the assertion produced, with the engine's own kill read as the kill it was.
+
+    The engine stops an assertion at its bound and hands on `124`, which reads as an
+    assertion that ran and failed: a remedy would open over it, and its failure would be
+    filed as the proof every later gate quoting the command shares. Where the assertion had
+    run to its bound, `124` is the engine's kill and becomes `SIGNALLED_EXIT`, the status of
+    an assertion that decided nothing. Short of the bound it is the assertion's own exit.
+    """
+    if exit_code != ENGINE_TIMEOUT_EXIT:
+        return exit_code
+    detail = _detail(report)
+    if _reached_bound(_ran_for(detail), detail.get(BOUND_KEY)):
+        return SIGNALLED_EXIT
+    return exit_code
+
+
+def _account(exit_code: int, duration: float, bound: Any) -> str:
+    if exit_code != SIGNALLED_EXIT:
+        return f"the assertion exited {exit_code}"
+    if _reached_bound(duration, bound):
         return (
             f"the assertion was stopped at its {bound} s bound before it exited; "
             "the plan's verify_timeout is smaller than the assertion needs"
@@ -603,6 +632,7 @@ __all__ = [
     "DECISION_RUN",
     "DECISION_SHARED",
     "DECISION_SKIPPED_UPSTREAM",
+    "ENGINE_TIMEOUT_EXIT",
     "EXIT_KEY",
     "NEEDED_RUN_IT",
     "NEEDED_SKIP_IT",
@@ -620,6 +650,7 @@ __all__ = [
     "assertion_report",
     "command_digest",
     "decision_of",
+    "engine_exit",
     "needed_main",
     "record_executed",
     "recorded_exit",

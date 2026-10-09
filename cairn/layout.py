@@ -24,7 +24,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 # The runs root, resolved at authoring time and exported into every step. Measured against
-# Dagu 2.11.0: an `env:` entry reaches a step, a precondition and the lifecycle handler
+# Dagu 2.18.2: an `env:` entry reaches a step, a precondition and the lifecycle handler
 # alike, which is what lets the run's release resolve its own report path.
 RUNS_ROOT_ENV = "CAIRN_RUNS_DIR"
 # The owner's opt-in to reading the subscription's usage endpoint ([headroom.py]). Read where
@@ -124,7 +124,7 @@ def engine_log_path(runs_root: Path, run_id: str) -> Path:
     return run_directory(runs_root, run_id) / ENGINE_LOG_FILE
 
 
-# Where the engine's own view serves one run. Measured against Dagu 2.11.0: the server binds
+# Where the engine's own view serves one run. Measured against Dagu 2.18.2: the server binds
 # `127.0.0.1:8080` unless told otherwise, and `/dag-runs/<name>/<run-id>` renders the run —
 # live and cold alike, which is what makes a finished run readable from the surface that
 # showed it running. A machine that binds the server elsewhere says so here.

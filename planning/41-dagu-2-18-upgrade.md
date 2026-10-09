@@ -5,7 +5,7 @@ while they are away. A pin move is worth making only if nothing a person relies 
 them, and if the new engine gives a better answer to "what is it doing" and "what does it need
 from me".
 
-**Status: research. Nothing was changed, upgraded or started on the machine.** The live run on
+**Status: implemented (see Outcome). The research below changed nothing on the machine.** The live run on
 2.11.0 was untouched (checked after the last probe: its `dagu start` and agent session were still
 running). Measurements used a checksum-verified 2.18.2 binary (darwin_amd64, sha256 matched the
 release's `checksums.txt`) under a throwaway `HOME` and `DAGU_HOME`. `/usr/local/bin/dagu`,
@@ -13,6 +13,70 @@ release's `checksums.txt`) under a throwaway `HOME` and `DAGU_HOME`. `/usr/local
 after showed no write to the first two.
 
 **Serves** Run, Report and Schedule. No invariant moves.
+
+## Outcome
+
+**Implemented on branch `dagu-2-18-upgrade`: the pin is `2.18.2`.** The suite passes against a
+checksum-verified 2.18.2 binary (1439 tests). The installed binary was not replaced; installing
+2.18.2 and merging this branch have to land together, because the gate halts on any other version.
+
+**What a person sees differently once it lands:**
+
+- **A fresh machine runs without a setup step.** On 2.18.2 the engine writes `base.yaml` with
+  DAG-level retry commented out, and the engine retries a DAG only when a policy declares a
+  positive limit (read from source at both tags: an absent policy retries nothing). So
+  `lock acquire` no longer refuses an absent file or one with no policy. It refuses only a file
+  someone armed.
+- **Starting a scheduler on a fresh machine is refused instead.** The same first write arms
+  `catchup_window: "6h"` [M], so `cairn schedule start` refuses an absent `base.yaml` with
+  `base_catchup_enabled`. `cairn supervise base-config --disable` fixes both refusals, as before.
+- **An assertion that outgrows its `verify_timeout` reads as interrupted, not failed.** Both
+  versions hand a step killed at its bound `${<id>.exit_code}` = `124` [M on 2.11.0 and 2.18.2];
+  only other signals give `-1`. Cairn read only `-1` as a kill, so a too-slow assertion was judged
+  `verify_failed`, opened a remedy session that could not help, and filed a failed proof that
+  closed later gates quoting the same command. The gate now reads `124` as the engine's kill
+  wherever the assertion had run to its bound, and as the assertion's own exit short of it
+  (`timeout(1)` exits `124` too). This defect predates the upgrade; B7 surfaced it.
+- **Every other behaviour is unchanged.** The re-recorded corpus differs from the 2.11.0
+  recordings only by `suspendFlagName` (dropped) and `definitionId` (added) in the engine's state
+  file, and every node and run status is identical.
+
+**Native Claude Code steps (`harness.run`, `provider: claude`): evaluated, not adopted.** Read from
+source at v2.18.2 (`internal/runtime/builtin/harness`). It runs `claude -p "<prompt>" [flags]`,
+spools stdout and writes it out when the process exits, and kills with exit `124` at
+`timeout_sec`. It cannot replace `cairn agent run` because it has none of the following:
+
+- **The step report.** Cairn's verdict reads a schema-constrained report filed through the
+  session's own tool call. The harness returns raw stdout and nothing parses it.
+- **The rescue.** A session stopped at the hang guard, or one that ends without reporting, is
+  resumed by session id to collect its account. The harness kills and forgets the session.
+- **The subscription (principle 4).** Cairn admits, holds and resumes a session around the
+  5-hour and weekly windows. The harness knows nothing of limits, and its `fallback` switches
+  provider instead of waiting.
+- **Watching (principle 2).** Cairn tees the stream live. The harness shows nothing until the
+  process ends.
+- **Safe parameters.** The prompt is argv and travels in `with:`, which the engine coerces by
+  YAML type and the preflight refuses.
+
+Managed sessions with in-run questions and permissions exist only for OpenCode. Dagu's own
+`agent` step calls a model API with keys, not Claude Code on the subscription.
+
+**Re-measured on 2.18.2 [M], beyond the table below:** a `continue_on: {skipped: true}` on the
+marker lets the commit run, while one on the commit stops the cascade; `${steps.<id>.exit_code}`
+fails its precondition; `run:` with `shell:` is refused; two preconditions are ANDed; a step's
+environment is curated (neither `PYTHONPATH` nor any other caller variable reaches it); a step
+`id` of 41 characters is refused; `DAG_RUN_STEP_NAME` carries the node's `name`; the macOS paths
+with no `DAGU_HOME` are unchanged. One claim was corrected rather than re-dated: **a bare
+`${P}` splits under `/bin/sh` and stays one word under zsh**, the same on both versions, because a
+body runs under the machine's `$SHELL`.
+
+**The `agent` fixture is now recordable** (`python3 -m scripts.record_runs --shape agent`). It
+opens one real session, so a plain re-record leaves it alone. It names `sonnet`: a `haiku`
+session under `--permission-mode auto` asked before writing `note.txt`, and under `-p` that is a
+refusal. The same holds for any plan step that names `haiku`; that is not addressed here.
+
+**Not done:** U1–U3 (sleep, scheduler-triggered runs, a waiting `human.task`), B6 (the waiting
+statuses, a prerequisite of O1 only), and every opportunity O1–O8.
 
 **Evidence tags.** **[R]** read from release notes of the named tag. **[S]** read from the schema,
 API spec or Go source at a tag. **[M]** measured on 2.18.2 in this session. The 2.11.0 side of

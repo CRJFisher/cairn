@@ -22,6 +22,7 @@ from cairn.assertions import (
     SIGNALLED_EXIT,
     assertion_report,
     decision_of,
+    engine_exit,
     record_executed,
     recorded_exit,
     remedy_ran,
@@ -252,7 +253,7 @@ def _handle(name: str, marker: str, step_id: str) -> str:
 def verify_handle(step_id: str) -> str:
     """The engine id the gate's exit-status reference names.
 
-    Measured against Dagu 2.11.0: a step is reachable as `${<id>.exit_code}` only when it
+    Measured against Dagu 2.18.2: a step is reachable as `${<id>.exit_code}` only when it
     declares an explicit `id`, and an id over the engine's bound is refused at load. A
     digest keeps the handle inside the bound without letting two steps share one.
     """
@@ -267,7 +268,7 @@ def recheck_handle(step_id: str) -> str:
 def exit_status_reference(step_id: str) -> str:
     """The engine's own name for the assertion's exit status.
 
-    Measured against Dagu 2.11.0: `${<id>.exit_code}` resolves in a precondition to the
+    Measured against Dagu 2.18.2: `${<id>.exit_code}` resolves in a precondition to the
     predecessor's exit status, while `${steps.<id>.exit_code}` resolves to nothing at all
     and fails the precondition without ever launching the command it names.
     """
@@ -396,7 +397,7 @@ def _assertion_exit(
 ) -> int | None:
     """The assertion's exit status, read only where the assertion's own gate says it ran.
 
-    Measured against Dagu 2.11.0: `${<id>.exit_code}` resolves to `0` for a node its
+    Measured against Dagu 2.18.2: `${<id>.exit_code}` resolves to `0` for a node its
     precondition skipped, so the reference alone would record a marker over an assertion
     that never ran. The assertion node's report says whether it did, or names the step
     whose proof of the same command against the same tree stands in for it; where it ran,
@@ -425,7 +426,7 @@ def _assertion_exit(
         )
     # A remedied step's remedy gate completes this account before the session opens, and
     # completing it twice would time the assertion across the session that followed it.
-    exit_code = _read_verify_exit(verify_exit_text)
+    exit_code = engine_exit(account, _read_verify_exit(verify_exit_text))
     if recorded_exit(account) != exit_code:
         record_executed(context, step_id, account, exit_code)
     return exit_code
@@ -449,7 +450,7 @@ def _recheck_exit(
         return shared_exit(account)
     if decision != DECISION_RUN or account is None:
         return None
-    exit_code = _read_verify_exit(recheck_exit_text)
+    exit_code = engine_exit(account, _read_verify_exit(recheck_exit_text))
     record_executed(context, step_id, account, exit_code, prefix=RECHECK_PREFIX)
     return exit_code
 

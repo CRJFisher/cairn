@@ -248,7 +248,7 @@ STEP_ID_PATTERN = r"[a-z][a-z0-9_]*"
 # carry the length one — see below, because the filename is the DAG name.
 PLAN_SLUG_PATTERN = r"[a-z0-9][a-z0-9-]*"
 
-# Measured against Dagu 2.11.0: a name of 40 characters loads and 41 is refused at load with
+# Measured against Dagu 2.18.2: a name of 40 characters loads and 41 is refused at load with
 # `- field 'name': name must be less than 40 characters` — the message is off by one against
 # the measurement, so the measurement is what is written here. Stated once because three
 # names are bounded by it and they are one engine rule: a node name ([topology.py]), the

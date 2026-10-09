@@ -2,15 +2,18 @@
   "cause": null,
   "detail": {
     "command": "true",
+    "dirty_before": [
+      "note.txt"
+    ],
     "process_exit": 0,
     "shell": "/bin/sh"
   },
-  "duration": 0.018757815938442945,
+  "duration": 0.030180522007867694,
   "follow_up_work": [],
   "needs_user_decision": false,
   "run_id": "fixture-agent",
   "status": "done",
   "step_id": "mark_alpha",
   "summary": "command completed",
-  "working_directory": "/private/var/folders/tc/95b1f46j1g3cjktn__xcv6z80000gn/T/tmp3n5lmu5t/work"
+  "working_directory": "/private/var/folders/tc/95b1f46j1g3cjktn__xcv6z80000gn/T/tmp5j7l5v8u/work"
 }

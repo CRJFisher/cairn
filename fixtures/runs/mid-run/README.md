@@ -11,7 +11,7 @@ reads it both ways, and the pair is the proof that the status field was never th
 ## What is here
 
 - `status.jsonl` — the engine's own state file, copied verbatim from a real Dagu
-  2.11.0 run.
+  2.18.2 run.
 - `reports/` — this run's own step reports: none.
 - `recording.json` — the engine version, the run id, and any field set by hand.
 

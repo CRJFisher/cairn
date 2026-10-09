@@ -5,14 +5,13 @@ would put the obligation on the combined work ([research-dagu.md]).
 
 **The gate is mandatory and it is not sufficient.** `dagu validate` is strict about shape and
 `dagu dry` builds an execution plan, so between them they catch an unknown key, a bad step
-id, a missing retry interval, a dangling dependency and a cycle. Between them they still pass
-an unresolved substitution, a missing working directory, `mark_success`, and a gate command
+id, a missing retry interval, `mark_success`, a dangling dependency and a cycle. Between them
+they still pass an unresolved substitution, a missing working directory, and a gate command
 that cannot launch — which is why the preflight runs first and refuses on its own authority.
 
-Both run against a scratch engine home rather than the operator's. Two reasons, and the
-second is the one that matters: `dagu dry` writes, and a `--dagu-home` the engine has never
-seen is created carrying `retry_policy: {limit: 3}` **active** — arming precisely the
-scheduler hazard that re-executes every failed run on the machine ([09]).
+Both run against a scratch engine home rather than the operator's, because `dagu dry`
+writes, and invoking the engine against a home it has never seen fills it with a base
+configuration and example DAGs.
 """
 
 from __future__ import annotations
@@ -26,7 +25,6 @@ import tempfile
 from pathlib import Path
 from typing import Any, NamedTuple, cast
 
-from cairn.baseconfig import BASE_CONFIG_NAME, ensure_dag_retry_disabled
 from cairn.emitters import retry_policy
 from cairn.enginehome import ENGINE_BINARY
 from cairn.plan.schema import RETRY_INTERVAL
@@ -144,14 +142,11 @@ def assert_pinned(binary: str | None = None) -> None:
 def scratch_home(root: Path) -> Path:
     """An engine home the run rehearsal and both gate commands can be pointed at.
 
-    Shared rather than copied, because the rule it keeps is the sharp one: a `--dagu-home`
-    the engine has never seen is created carrying `retry_policy: {limit: 3}` **active**,
-    arming the scanner that re-executes every failed run on the machine ([09]). A second
-    copy of this is how the two come to disagree, and the disagreement would arm it.
+    Under the caller's own temporary root, so whatever the engine writes there goes when the
+    root does and nothing reaches the home a run would use.
     """
     home = root / "home"
     home.mkdir(parents=True, exist_ok=True)
-    ensure_dag_retry_disabled(home / BASE_CONFIG_NAME)
     return home
 
 

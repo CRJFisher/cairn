@@ -20,18 +20,20 @@ accepted: the file is generated, never hand-maintained, and an edit to it is a d
 
 ## Where a parameter may stand
 
-Measured against Dagu 2.11.0, a `${...}` reference behaves differently in each position it
-can occupy, and only one of them is safe:
+Measured against Dagu 2.18.2, a `${...}` reference behaves differently in each position it
+can occupy, and only one of them is safe. A body runs under the machine's `$SHELL`, so a
+bare reference splits under a POSIX `sh` and stays one word under zsh, which does not split:
 
-| Position                   | With a value holding a space | With a value holding `$(...)` |
-| -------------------------- | ---------------------------- | ----------------------------- |
-| `working_dir:`             | one path, correctly          | inert — it is never a shell   |
-| `run:`, bare               | **split into three words**   | inert                         |
-| `run:`, double-quoted      | one word, correctly          | **the substitution executes** |
-| `run:`, single-quoted      | **not substituted at all**   | inert                         |
+| Position              | With a value holding a space          | With a value holding `$(...)` |
+| --------------------- | ------------------------------------- | ----------------------------- |
+| `working_dir:`        | one path, correctly                   | inert — it is never a shell   |
+| `run:`, bare          | **split into three words** under `sh` | inert                         |
+| `run:`, double-quoted | one word, correctly                   | **the substitution executes** |
+| `run:`, single-quoted | **not substituted at all**            | inert                         |
 
 Single quotes are what `shlex.quote` produces, so a reference routed through the emitters'
-own joiner would arrive as its own literal text. Bare loses any path containing a space.
+own joiner would arrive as its own literal text. Bare loses any path containing a space
+wherever the shell splits.
 Double quotes run whatever the value holds — and a parameter is an editable field at
 trigger time ([03]), so that is a command-injection surface rather than a corner case.
 
@@ -58,7 +60,7 @@ from cairn.core import read_standard_json
 # The pin. The DAG format carries no version of its own ([01]), so the pinned engine is the
 # installed binary and nothing else, and the comparison is exact: a range would claim
 # knowledge about versions nothing here has run against.
-ENGINE_VERSION = "2.11.0"
+ENGINE_VERSION = "2.18.2"
 
 # Moves whenever the emitted shape changes, so a stamp written by an older generator is
 # recognisable as one. It is not a release version; doc 16 owns that.
@@ -111,7 +113,10 @@ ENGINE_VERSION = "2.11.0"
 # and the step rather than written into the setup body. A setup body written by 11 passes a
 # `--branch` this binary does not accept, and the bare `step/<id>` it names is not a branch
 # this binary will work on at all.
-GENERATOR_VERSION = 12
+# 13: every file is stamped for Dagu 2.18.2. The emitted steps are unchanged, but a file
+# written by 12 names an engine the gate now refuses, so it cannot be told from a current one
+# by its body alone ([41]).
+GENERATOR_VERSION = 13
 
 # The one execution type. The alternative reading serialises the graph, which is the defect
 # Cairn exists to avoid — and `type: chain` without `depends` validates clean and silently
@@ -186,7 +191,7 @@ EngineStep = dict[str, Any]
 
 
 # Replay is off, and the empty string is the only spelling that says so. Measured against
-# Dagu 2.11.0: `catchup_window: "0s"` and `"0"` are both rejected — "duration must be
+# Dagu 2.18.2: `catchup_window: "0s"` and `"0"` are both rejected — "duration must be
 # positive" — while `""` passes both engine checks, and the engine's own shipped comment
 # reads "Empty = no catchup (missed runs discarded)". Omitting the field inherits whatever
 # the machine's `base.yaml` holds, and this machine's holds `"6h"`: every cron slot missed

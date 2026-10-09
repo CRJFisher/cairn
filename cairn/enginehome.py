@@ -1,7 +1,7 @@
 """Where the engine keeps its own files, asked of the engine rather than re-derived.
 
 The engine puts its configuration and its data in **different** places, and only one of
-them is the same on every platform. Measured against Dagu 2.11.0 on macOS with no
+them is the same on every platform. Measured against Dagu 2.18.2 on macOS with no
 `DAGU_HOME`: the base configuration is `~/.config/dagu/base.yaml`, while the run history
 is `~/Library/Application Support/dagu/data/dag-runs`. Deriving the second from the first
 by path arithmetic answers with a directory that does not exist — and every reader of it
@@ -18,9 +18,9 @@ this output is human-readable text with no schema behind it.
 **The base configuration is deliberately *not* resolved this way**, and the asymmetry is the
 point. Its directory is `os.UserConfigDir` on every platform the engine supports, so the
 arithmetic is right where the data directory's is wrong. And asking the binary would put a
-subprocess in front of the one check that must run before a run's first session — a check on
-a file that **invoking the engine creates**, carrying `retry_policy: {limit: 3}` active.
-Reading where things are must not arm the hazard the reader is about to judge.
+subprocess in front of the checks that judge that file — a file that **invoking the engine
+creates**, carrying `catchup_window: "6h"` armed. Reading where things are must not arm the
+hazard the reader is about to judge.
 """
 
 from __future__ import annotations

@@ -107,7 +107,7 @@ EXIT_STATUS = re.compile(r"exit status (\d+)")
 
 # A step the engine killed at its bound is spelled in prose too, and only there: the node is
 # a plain `failed`, and the kill, the bound and the elapsed time survive in this sentence
-# alone. Measured against Dagu 2.11.0: `step timed out after 2.002s (timeout: 2s): context
+# alone. Measured against Dagu 2.18.2: `step timed out after 2.006s (timeout: 2s): context
 # deadline exceeded`, the durations in Go's own spelling ([22 A]).
 STEP_TIMEOUT = re.compile(r"step timed out after (\S+) \(timeout: ([^)]+)\)")
 _GO_DURATION = re.compile(r"(\d+(?:\.\d+)?)(h|ms|m|s)")

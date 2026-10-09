@@ -132,7 +132,7 @@ the skill that drives all of it.
   this file after any edit to the files it measures.
 
 Run everything with `python3 -m pytest -q` from this directory. The tests kill real
-processes, wait on real locks and drive a real Dagu 2.11.0; stray provider output during the
+processes, wait on real locks and drive a real Dagu 2.18.2; stray provider output during the
 run is expected.
 
 Two suites treat a missing `dagu` differently on purpose. `test_step_protocol.py` **fails**

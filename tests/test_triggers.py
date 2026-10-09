@@ -34,6 +34,7 @@ from cairn.__main__ import main as cairn_main
 from cairn.__main__ import record_the_run
 from cairn.baseconfig import (
     assert_catchup_disabled,
+    assert_dag_retry_disabled,
     ensure_dag_retry_disabled,
     read_base_retry_policy,
     read_base_scalar,
@@ -436,8 +437,11 @@ class TheCatchupHazardIsReadFromTheMachinesOwnFile(unittest.TestCase):
         self.path.write_text(text, encoding="utf-8")
         return self.path
 
-    def test_an_absent_file_carries_no_window(self) -> None:
-        assert_catchup_disabled(self.path)
+    def test_an_absent_file_is_refused_because_the_engine_will_create_it_armed(self) -> None:
+        """Measured against Dagu 2.18.2: the file the engine writes declares `"6h"`."""
+        with self.assertRaises(CairnError) as caught:
+            assert_catchup_disabled(self.path)
+        self.assertEqual(caught.exception.cause, "base_catchup_enabled")
 
     def test_a_file_declaring_none_carries_no_window(self) -> None:
         assert_catchup_disabled(self.write("retry_policy:\n  limit: 0\n"))
@@ -1325,7 +1329,7 @@ class OneCommandDisarmsBothHazardsWithoutLosingTheUsersFile(unittest.TestCase):
     def test_a_file_that_does_not_exist_is_created_with_both_closed(self) -> None:
         self.assertTrue(ensure_dag_retry_disabled(self.path))
         assert_catchup_disabled(self.path)
-        self.assertEqual(read_base_retry_policy(self.path).limit, 0)
+        assert_dag_retry_disabled(self.path)
 
 
 

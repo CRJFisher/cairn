@@ -198,7 +198,7 @@ def start_command(settled: Launch, run_id: str) -> tuple[str, ...]:
     parameters = [f"{PARENT_BRANCH_PARAM}={settled.parent_branch}"]
     if settled.occasion is not None:
         parameters.append(f"{OCCASION_PARAM}={settled.occasion}")
-    # Measured against Dagu 2.11.0, `--params` takes `P1=foo P2=bar` and splits on
+    # Measured against Dagu 2.18.2, `--params` takes `P1=foo P2=bar` and splits on
     # whitespace, so a value holding a space arrives as two parameters.
     for parameter in parameters:
         refuse_uncarriable(parameter)

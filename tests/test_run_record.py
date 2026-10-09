@@ -373,7 +373,7 @@ class TheEngineStatusMappingIsPinned(unittest.TestCase):
                 engine.node_status_name(value)
 
     def test_the_kill_survives_only_inside_the_error_sentence(self) -> None:
-        """Measured against Dagu 2.11.0: the node is a plain `failed`; the bound and the
+        """Measured against Dagu 2.18.2: the node is a plain `failed`; the bound and the
         elapsed time are in the prose, in Go's own duration spelling ([22 A])."""
         found = engine.parse_timeout(
             "step timed out after 2h30m0.041s (timeout: 2h30m0s): context deadline exceeded"

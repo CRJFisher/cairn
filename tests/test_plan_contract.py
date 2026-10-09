@@ -368,7 +368,7 @@ class UncoveredCodes(unittest.TestCase):
         self.assertIn("DAG name", said)
 
     def test_a_slug_at_the_engines_name_bound_passes(self) -> None:
-        """Measured against Dagu 2.11.0: 40 loads, 41 is refused."""
+        """Measured against Dagu 2.18.2: 40 loads, 41 is refused."""
         self.assertTrue(validate(minimal(slug="a" * ENGINE_NAME_MAX_BYTES)).ok)
 
     def test_an_id_the_engine_would_reject_is_refused(self) -> None:

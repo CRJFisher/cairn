@@ -1386,9 +1386,9 @@ class TheEngineVersionIsPinned(unittest.TestCase):
         self.assertIn("within 1s", str(caught.exception))
 
     def test_a_rehearsal_never_names_the_machines_own_engine_home(self) -> None:
-        """An engine home the binary has never seen is created carrying an active retry
-        policy that re-executes agent work ([09]), so reading whether the engine works must
-        never be the thing that arms it."""
+        """An engine home the binary has never seen is filled with a base configuration
+        that arms catch-up, so reading whether the engine works must never be the thing
+        that writes one into the home a run would use."""
         recorder = self.root / "argv"
         with self.assertRaises(EngineUnavailable):
             rehearse_start(
@@ -1401,7 +1401,7 @@ class TheEngineVersionIsPinned(unittest.TestCase):
         self.assertNotEqual(home, Path(os.environ.get("DAGU_HOME", "")))
 
     def test_the_pin_is_the_version_the_generator_was_measured_against(self) -> None:
-        self.assertEqual(ENGINE_VERSION, "2.11.0")
+        self.assertEqual(ENGINE_VERSION, "2.18.2")
 
     def test_an_engine_of_another_version_halts_naming_both(self) -> None:
         with self.assertRaises(EngineUnavailable) as caught:
@@ -1666,12 +1666,18 @@ class TheEngineGateRefusesAsWellAsPasses(unittest.TestCase):
         )
 
 
-# Captured verbatim from `dagu validate` 2.11.0 refusing a 41-character DAG name. The
-# engine's own log lines come first and its finding comes last, which is why a reader that
-# kept the head of this stream kept the logging and dropped the cause.
+# Captured from `dagu validate` 2.18.2 refusing a 41-character DAG name against a fresh
+# home, the path and name shortened. The engine's own log lines come first and its finding
+# comes last, which is why a reader that kept the head of this stream kept the logging and
+# dropped the cause.
 MEASURED_REFUSAL = (
-    'time=2026-08-26T11:51:10.723+01:00 level=WARN msg="No auth.mode configured — '
-    "defaulting to 'builtin'.\"\n"
+    'time=2026-10-07T10:16:54.471+01:00 level=WARN msg="No auth.mode configured — '
+    "defaulting to 'builtin'. Set auth.mode to 'none' to disable authentication, or "
+    'complete /setup to create an admin account."\n'
+    'time=2026-10-07T10:16:54.471+01:00 level=INFO msg="Creating example DAGs for '
+    'first-time users" dir=/a/very/long/path/home/dags\n'
+    'time=2026-10-07T10:16:54.527+01:00 level=INFO msg="Example DAGs created '
+    'successfully. Check the web UI to explore them!"\n'
     "Error: Validation failed for /a/very/long/path/aaaaaaaaaaa.yaml\n"
     "- field 'name': name must be less than 40 characters (value: aaaaaaaaaaa)\n"
 )

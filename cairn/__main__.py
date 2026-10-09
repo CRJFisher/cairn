@@ -330,7 +330,7 @@ def record_the_run(
     so a report node could not cover the failure path at all.
 
     **Nothing here may reach the exit status, and that is the whole design constraint.**
-    Measured against Dagu 2.11.0: a `handler_on.exit` body exiting nonzero records the whole
+    Measured against Dagu 2.18.2: a `handler_on.exit` body exiting nonzero records the whole
     run as `failed` and makes `dagu start` exit 1 even when every step succeeded — and
     because this node is load-bearing infrastructure in the record, Cairn's own verdict flips
     with it. A failure to write the record would then be reported as the run having failed,

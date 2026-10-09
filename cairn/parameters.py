@@ -26,7 +26,7 @@ what the run's record keeps.
 
 ## The divergence this exists to catch
 
-Measured against Dagu 2.11.0. The emitter concatenates the repository parameter with the
+Measured against Dagu 2.18.2. The emitter concatenates the repository parameter with the
 worktrees suffix **as text**, because a parameter reference may stand in `working_dir:` and
 nowhere else ([workflow.md]); `cairn worktree setup` derives the same directory from the
 repository it is standing in, through `Path`, which normalises. The two agree for every
@@ -65,9 +65,9 @@ from cairn.workflow.schema import PARENT_BRANCH_PARAM, REPOSITORY_PARAM
 def parameter(name: str, environ: Mapping[str, str] | None = None) -> str:
     """Read one of the workflow's declared parameters out of the step's environment.
 
-    A parameter cannot travel in a step's argv. Measured against Dagu 2.11.0, a `${...}`
+    A parameter cannot travel in a step's argv. Measured against Dagu 2.18.2, a `${...}`
     reference is left inert by the single quotes every emitted body is built with, splits on
-    whitespace if written bare, and executes whatever the value holds if written in double
+    whitespace if written bare under a POSIX `sh`, and executes whatever the value holds if written in double
     quotes — and a parameter is an editable field at trigger time ([03]). The engine exports
     every declared parameter into the step's environment instead, which is the one path that
     is neither quoted nor re-evaluated ([workflow/schema.py]).

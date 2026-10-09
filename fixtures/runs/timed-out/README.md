@@ -24,7 +24,7 @@ step comes from ([22 B]).
 ## What is here
 
 - `status.jsonl` — the engine's own state file, copied verbatim from a real Dagu
-  2.11.0 run.
+  2.18.2 run.
 - `reports/` — this run's own step reports: mark_alpha.json, mark_beta.json,
   verify_alpha.json, verify_beta.json.
 - `recording.json` — the engine version, the run id, and any field set by hand.

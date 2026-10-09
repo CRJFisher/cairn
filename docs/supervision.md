@@ -271,24 +271,26 @@ run it would have re-executed ([triggers.md](triggers.md)). That is the only pla
 hazard can fire, and a machine that was safe when a schedule was installed is not evidence
 about the machine a month later.
 
-So the disabling policy goes into the engine's machine-wide `base.yaml`, and is asserted
-before any run rather than assumed. **An absent file is refused, not trusted**: the engine
-writes `base.yaml` on the first invocation of any of its commands, with
-`retry_policy: {limit: 3, interval_sec: 5}` active, so "not there yet" means "enabled from
-the next command onward". `cairn supervise base-config --disable` writes it, editing rather
-than replacing, and reads its own edit back before accepting it: a splice that produced a
+So the policy in the engine's machine-wide `base.yaml` is asserted before any run rather
+than assumed. Only a declared policy with a positive limit arms DAG-level retry: the engine
+writes `base.yaml` on the first invocation of any of its commands with the policy commented
+out, so an absent file, and one that declares no policy, retry nothing. That same first
+write arms `catchup_window: "6h"`, so **an absent file is refused at scheduler start**,
+where the window is the hazard. `cairn supervise base-config --disable` turns both off,
+editing rather than replacing, and reads its own edit back before accepting it: a splice that produced a
 duplicate key would leave a file the engine refuses to load at all, taking every unrelated
 workflow on the machine with it. Anything the reader cannot account for exactly is refused
 as unreadable rather than guessed at.
 
-**Once per machine, before the first run:** `python3 -m cairn supervise base-config
---disable`. Without it every `lock acquire` refuses with `base_retry_enabled`, and every
-such refusal names this command.
+**Once per machine, before the first schedule:** `python3 -m cairn supervise base-config
+--disable`. Without it `cairn schedule start` refuses with `base_catchup_enabled`, and a
+`base.yaml` someone armed with a retry limit makes every `lock acquire` refuse with
+`base_retry_enabled`. Every such refusal names this command.
 
 ## The hang guard on every emitted step
 
 I7 forbids an unbounded step, and the engine supplies neither bound by default: its own step
-timeout is none, and a step retries not at all while the _DAG_ around it retries three times.
+timeout is none, and both retry policies are whatever the machine's `base.yaml` declares.
 Both are written on every emitted step, and a test fails if any step is emitted without them.
 
 **One constant, `HANG_GUARD`, bounds every plan step.** It is Cairn's own: a plan cannot set

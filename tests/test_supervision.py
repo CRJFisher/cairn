@@ -17,6 +17,7 @@ from typing import Any
 from unittest.mock import patch
 
 from cairn.baseconfig import (
+    assert_catchup_disabled,
     assert_dag_retry_disabled,
     base_config_path,
     ensure_dag_retry_disabled,
@@ -1332,7 +1333,7 @@ class BaseConfiguration(unittest.TestCase):
     def write(self, text: str) -> None:
         self.path.write_text(text, encoding="utf-8")
 
-    def test_the_engines_shipped_default_is_read_and_refused(self) -> None:
+    def test_an_armed_policy_is_read_and_refused(self) -> None:
         self.write(
             "type: graph\nretry_policy:\n  limit: 3\n  interval_sec: 5\n\nmax_active_steps: 10\n"
         )
@@ -1342,22 +1343,28 @@ class BaseConfiguration(unittest.TestCase):
         self.assertEqual(caught.exception.cause, "base_retry_enabled")
 
     def test_every_refusal_names_the_command_that_fixes_it(self) -> None:
-        for text in (None, "type: graph\nretry_policy:\n  limit: 3\n  interval_sec: 5\n"):
-            with self.subTest(text=text):
+        cases = {
+            "armed retry": (assert_dag_retry_disabled, "retry_policy:\n  limit: 3\n  interval_sec: 5\n"),
+            "armed catch-up": (assert_catchup_disabled, 'catchup_window: "6h"\n'),
+            "no file yet": (assert_catchup_disabled, None),
+        }
+        for case, (check, text) in cases.items():
+            with self.subTest(case=case):
                 if text is None:
                     self.path.unlink(missing_ok=True)
                 else:
                     self.write(text)
                 with self.assertRaises(CairnError) as caught:
-                    assert_dag_retry_disabled(self.path)
+                    check(self.path)
                 self.assertIn("supervise base-config --disable", str(caught.exception))
 
-    def test_an_absent_file_is_refused_because_the_engine_will_create_it_enabled(
-        self,
-    ) -> None:
-        with self.assertRaises(CairnError) as caught:
-            assert_dag_retry_disabled(self.root / "nothing.yaml")
-        self.assertEqual(caught.exception.cause, "base_retry_enabled")
+    def test_an_absent_file_retries_nothing(self) -> None:
+        """The engine writes its base configuration with the policy commented out."""
+        assert_dag_retry_disabled(self.root / "nothing.yaml")
+
+    def test_a_file_declaring_no_policy_retries_nothing(self) -> None:
+        self.write("type: graph\nmax_active_steps: 10\n")
+        assert_dag_retry_disabled(self.path)
 
     def test_a_disabled_policy_passes(self) -> None:
         self.write("retry_policy:\n  limit: 0\n  interval_sec: 1\n")
@@ -1495,9 +1502,10 @@ class BaseConfiguration(unittest.TestCase):
         self.assertTrue(ensure_dag_retry_disabled(self.path))
         self.assertFalse(ensure_dag_retry_disabled(self.path))
 
-    def test_a_file_with_no_policy_gains_one(self) -> None:
-        self.write("type: graph\n")
-        self.assertTrue(ensure_dag_retry_disabled(self.path))
+    def test_a_file_with_no_policy_is_left_without_one(self) -> None:
+        self.write('type: graph\ncatchup_window: ""\n')
+        self.assertFalse(ensure_dag_retry_disabled(self.path))
+        self.assertIsNone(read_base_retry_policy(self.path).limit)
         assert_dag_retry_disabled(self.path)
 
     def test_the_write_is_replaced_whole_rather_than_truncated_in_place(self) -> None:

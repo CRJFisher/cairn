@@ -32,7 +32,7 @@ each one is a row naming the node it was found under, what disagreed, and its fr
 
 ## What is here
 
-- `status.jsonl` — the engine's own state file from a real Dagu 2.11.0 run of the workflow
+- `status.jsonl` — the engine's own state file from a real Dagu 2.18.2 run of the workflow
   `green` is recorded from, with the two edits above and no others.
 - `reports/` — that run's own step reports, with the three edits above and no others:
   commit_alpha.json, commit_beta.json, mark_alpha.json, mark_beta.json, work_alpha.json,

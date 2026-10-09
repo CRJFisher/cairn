@@ -375,7 +375,7 @@ stderr.
 
 **What the gate cannot defend against is its own absence.** Fail-open is a property of the
 gate running; a condition command that never launches exits nonzero from outside Cairn, and
-the engine reads that as a skip. Measured against Dagu 2.11.0, a step is given a curated
+the engine reads that as a skip. Measured against Dagu 2.18.2, a step is given a curated
 environment rather than the caller's — `PYTHONPATH` is not among what propagates — so a gate
 invoked as a bare `python3 -m cairn` fails to import and
 **every step of the plan skips into a clean `Succeeded` with exit 0**. Two things follow,

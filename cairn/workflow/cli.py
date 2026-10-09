@@ -131,7 +131,7 @@ def _author(args: argparse.Namespace) -> int:
     # why: the engine reads a DAG's name off its file name, stripping one extension. A
     # pending file called `.<slug>.yaml.<8 random>.authoring` is therefore gated as the DAG
     # `.<slug>.yaml.<8 random>` — fifteen characters longer than the name that will actually
-    # run — so the gate judged a name nobody chose. Measured against Dagu 2.11.0: a
+    # run — so the gate judged a name nobody chose. Measured against Dagu 2.18.2: a
     # 40-character name loads, and the same file gated under the old pending name is refused
     # with `- field 'name': name must be less than 40 characters`. Every fixture slug is
     # short enough that the corpus never met it. A directory keeps the uniqueness the old

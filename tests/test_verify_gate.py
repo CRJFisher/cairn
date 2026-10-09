@@ -23,6 +23,7 @@ from cairn.assertions import (
     DECISION_RUN,
     DECISION_SHARED,
     DECISION_SKIPPED_UPSTREAM,
+    ENGINE_TIMEOUT_EXIT,
     EXIT_KEY,
     NEEDED_RUN_IT,
     NEEDED_SKIP_IT,
@@ -554,23 +555,41 @@ class TheAssertionsOwnGateFailsOpen(unittest.TestCase):
         self.assertIn("ended by a signal after 473s", account["summary"])
         self.assertGreaterEqual(account["duration"], 473)
 
-    def test_an_assertion_killed_at_its_bound_is_said_to_have_outgrown_it(self) -> None:
+    def _released(self, seconds_ago: int, *, bound: int = 600) -> RuntimeContext:
         work_report(self.root, "a", status="done")
-        self._needed("--bound", "600")
+        self._needed("--bound", str(bound))
         report = self._decision()
         assert report is not None
-        self.assertEqual(report["detail"][BOUND_KEY], 600)
-        report["detail"][RELEASED_AT_KEY] -= 601
+        self.assertEqual(report["detail"][BOUND_KEY], bound)
+        report["detail"][RELEASED_AT_KEY] -= seconds_ago
         (reports_of(self.root) / f"{verify_name('a')}.json").write_text(json.dumps(report))
-        context = RuntimeContext(
+        return RuntimeContext(
             run_id="run-1", step_id=mark_name("a"), working_directory=self.root,
             report_path=reports_of(self.root) / f"{mark_name('a')}.json", runs_root=self.root / "runs",
         )
-        run_verify_gate("a", CHAIN, str(SIGNALLED_EXIT), context)
+
+    def test_an_assertion_killed_at_its_bound_is_said_to_have_outgrown_it(self) -> None:
+        """Measured: the engine hands on `124` for a step it stopped at its `timeout_sec`."""
+        verdict, detail = run_verify_gate(
+            "a", CHAIN, str(ENGINE_TIMEOUT_EXIT), self._released(601)
+        )
+        self.assertEqual(verdict["cause"], "assertion_interrupted")
+        self.assertEqual(detail["verify_exit"], SIGNALLED_EXIT)
         account = self._decision()
         assert account is not None
         self.assertIn("stopped at its 600 s bound", account["summary"])
         self.assertIn("verify_timeout", account["summary"])
+
+    def test_an_assertion_that_exits_124_by_itself_failed(self) -> None:
+        """`timeout(1)` exits `124` too; short of the bound that is the assertion's answer."""
+        verdict, detail = run_verify_gate(
+            "a", CHAIN, str(ENGINE_TIMEOUT_EXIT), self._released(30)
+        )
+        self.assertEqual(verdict["cause"], "verify_failed")
+        self.assertEqual(detail["verify_exit"], ENGINE_TIMEOUT_EXIT)
+        account = self._decision()
+        assert account is not None
+        self.assertIn("exited 124", account["summary"])
 
     def test_a_missing_work_report_is_a_halt_whatever_the_reference_reads(self) -> None:
         context = RuntimeContext(
@@ -660,6 +679,21 @@ class ARemedyIsOneSessionOverAnAssertionThatRanAndFailed(unittest.TestCase):
                 declined = self._remedy_report()
                 assert declined is not None
                 self.assertEqual(declined["status"], "noop")
+
+    def test_no_remedy_opens_over_an_assertion_the_engine_stopped_at_its_bound(self) -> None:
+        work_report(self.root, "a", status="done")
+        run_cli(
+            ["verify", "needed", "--step", "a", "--command-digest", "0" * 64, "--bound", "60"],
+            runtime_env(self.root, step_id="verify_a"),
+            self.root,
+        )
+        account = self._decision()
+        assert account is not None
+        account["detail"][RELEASED_AT_KEY] -= 61
+        (reports_of(self.root) / "verify_a.json").write_text(json.dumps(account))
+        code, err = self._remedy_gate(str(ENGINE_TIMEOUT_EXIT))
+        self.assertEqual(code, REMEDY_DECLINE_IT, err)
+        self.assertIn("a signal ended the assertion", err)
 
     def test_a_remedy_is_declined_where_the_assertion_never_ran(self) -> None:
         self.assertEqual(self._remedy_gate("0")[0], REMEDY_DECLINE_IT)

@@ -2,8 +2,8 @@
 
 Every emitted step carries an explicit timeout and an explicit retry bound. I7 forbids an
 unbounded step, and the engine supplies neither by default — its own step timeout is none,
-and a step it inherits nothing from retries not at all while the *DAG* around it retries
-three times ([01]). Neither default is one Cairn is willing to run on, so both are written
+and both retry policies are whatever the machine's `base.yaml` declares, a file every other
+workflow on the machine shares and anyone may edit ([01]). Neither default is one Cairn is willing to run on, so both are written
 on every step and a test fails if any step is emitted without them. The timeout on a work
 step is the hang guard plus the grace its report needs, and on an agent step the longest
 hold at the subscription's allowance as well; no body states a bound of its own, and no plan
@@ -379,7 +379,7 @@ def emit_marker(step: Step, working_directory: str, position: str) -> EngineStep
     """The step that records verified work, gated on the assertion and the step's own report.
 
     It carries no `continue_on` of its own in either position. A closed gate skips this
-    step, and that skip has to reach the commit — measured against Dagu 2.11.0, a
+    step, and that skip has to reach the commit — measured against Dagu 2.18.2, a
     `continue_on: {skipped: true}` here lets the commit run anyway, which lands exactly
     the unverified work the gate refused to record. The flag belongs to the commit, the
     last node before the join.

@@ -182,7 +182,8 @@ It asserts, at the moment of starting rather than at install, that the machine i
 to run a scheduler on, and refuses otherwise **naming every failed run it would have
 re-executed**. Two machine-wide properties, both living in the one file every DAG inherits:
 
-- **DAG-level retry disabled.** The engine ships `retry_policy: {limit: 3}` active.
+- **DAG-level retry disabled.** The engine writes its base configuration with the policy
+  commented out; a file someone edited to arm it is refused.
 - **Catchup off.** The engine ships `catchup_window: "6h"`, and its own comment reads "all
   missed cron intervals within this window are executed (max 1000)". Every file Cairn emits
   states the empty window that turns it off — measured, `""` is accepted where `0s` is
@@ -299,7 +300,7 @@ A run nobody watched is exactly the one whose identity nobody has, so the direct
 is the entry point; the view's own page for the workflow is the other. Both reach the same
 record ([run-model.md](run-model.md)).
 
-**Nothing the release does may reach its exit status.** Measured against Dagu 2.11.0, a
+**Nothing the release does may reach its exit status.** Measured against Dagu 2.18.2, a
 `handler_on.exit` body exiting nonzero records the whole run as `failed` and makes `dagu
 start` exit 1 even when every step succeeded — and because that node is load-bearing
 infrastructure in Cairn's own record, Cairn's verdict flips with it. A failure to write the

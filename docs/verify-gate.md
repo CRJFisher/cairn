@@ -62,7 +62,7 @@ fails open like the marker gate, because running an assertion that need not run 
 minutes and skipping one that must run loses the step its record; and it writes its
 decision — `run`, `shared` or `skipped_upstream` — to the assertion node's own report
 before it answers, on every path. The verify gate below trusts the engine's exit-status reference
-only where that decision says the assertion ran: measured against Dagu 2.11.0,
+only where that decision says the assertion ran: measured against Dagu 2.18.2,
 `${<id>.exit_code}` resolves to `0` for a node its precondition skipped, and a gate that
 read it would record a marker over an assertion that never ran. The assertion node carries
 `continue_on: {skipped: true}` beside `failure: true` so a declined assertion still lets the
@@ -160,7 +160,7 @@ failed node anywhere, reports plain `Succeeded` with exit 0.
 
 **Exactly one node in a step's group carries the flag, and it is the commit.** A closed gate
 skips `mark_<id>`, and that skip has to reach the commit — which is what excludes the
-branch. Measured against Dagu 2.11.0, a `continue_on: {skipped: true}` on the marker instead
+branch. Measured against Dagu 2.18.2, a `continue_on: {skipped: true}` on the marker instead
 lets the commit run over a gate that refused to record anything, landing exactly the
 unverified work this document exists to stop. The same measurement settles the other half:
 the flag works on a node skipped by cascade, not only on one skipped by its own
@@ -404,7 +404,7 @@ proposes is not something this corpus can show.
   gate established on evidence of its own — a failed assertion, a step that did report —
   is never overridden; only the absent-report reading is.
 
-## Measured against Dagu 2.11.0
+## Measured against Dagu 2.18.2
 
 The routing rests on facts that source reading got wrong, so each is pinned by a test.
 
@@ -420,6 +420,7 @@ The routing rests on facts that source reading got wrong, so each is pinned by a
 | a node its own precondition skipped lets its dependents run only under `continue_on: {skipped: true}`, and `${<id>.exit_code}` resolves to `0` for it                          | the assertion node carries the flag, and the gate reads the reference only where the assertion's gate says it ran |
 | a step excluded with no failed node anywhere reports `Succeeded` with exit 0                                                                                                   | the failed assertion node is what keeps a run honest                                                              |
 | a step killed at its bound is a `failed` node whose error reads `step timed out after <elapsed> (timeout: <bound>): context deadline exceeded`, the durations in Go's spelling | the run record derives `timed_out`, the bound and the elapsed time from that sentence                             |
+| a step killed at its bound resolves `${<id>.exit_code}` to `124`; one a signal ended from elsewhere resolves it to `-1`                                                        | an assertion that ran to its bound and reads `124` is judged interrupted, never failed                            |
 | `DAG_RUN_STEP_NAME` carries a node's `name` even where it declares a different `id`                                                                                            | the assertion's gate writes its account under `verify_<step>`, which is where both readers of it look             |
 
 An assertion runs under the interpreter named by the operator's `$SHELL`, with `pipefail` and
