@@ -459,9 +459,8 @@ def _damage(target: Path, declared: dict[str, Any]) -> None:
         return
     state: dict[str, Any] = declared.get("state", {})
     path = target / "status.jsonl"
-    record: dict[str, Any] = json.loads(
-        path.read_text(encoding="utf-8").strip().splitlines()[-1]
-    )
+    lines = path.read_text(encoding="utf-8").strip().splitlines()
+    record: dict[str, Any] = json.loads(lines[-1])
     for field in state.get("drop", []):
         record.pop(field, None)
     for name in state.get("duplicate_node", []):
@@ -469,7 +468,8 @@ def _damage(target: Path, declared: dict[str, Any]) -> None:
             node for node in record["nodes"] if node["step"]["name"] == name
         )
         record["nodes"].append({**found, "status": 2, "error": "exit status 1"})
-    path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    lines[-1] = json.dumps(record)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     _augment(target / "reports", declared.get("reports", {}))
     for name in declared.get("truncate", []):
         report = target / "reports" / f"{name}.json"

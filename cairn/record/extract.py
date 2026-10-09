@@ -1609,11 +1609,19 @@ def _one_node_per_identity(
     outcome under the other's name; keeping the last would let input order decide the
     verdict. So the identity keeps the worst of what its occurrences claim, by a total order
     over their own content, and the refusal of the rest is recorded against the name.
+
+    A node with no readable name is kept as its own identity rather than grouped: it carries
+    no name to be a duplicate *of*, and merging every such node into one would read two
+    unrelated malformed nodes as the same identity and attribute one of them to nothing.
     """
     occurrences: dict[str, list[dict[str, Any]]] = {}
-    for node in recorded:
-        occurrences.setdefault(engine.node_name(node), []).append(node)
     kept: list[dict[str, Any]] = []
+    for node in recorded:
+        name = engine.node_name(node)
+        if not name:
+            kept.append(node)
+            continue
+        occurrences.setdefault(name, []).append(node)
     refused: list[Integrity] = []
     for name, found in occurrences.items():
         kept.append(found[0] if len(found) == 1 else min(found, key=_severity))
