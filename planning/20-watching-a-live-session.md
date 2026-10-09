@@ -14,7 +14,9 @@ graph stays static, digest-stamped, and free of logic ([11](11-emitter-and-prefl
 ## What the engine holds, measured against the pin
 
 The design leans on engine facts, so the facts come first. Instrument: the pinned binary itself —
-`dagu schema dag` on 2.11.0 — and the engine's published REST surface.
+`dagu schema dag` on 2.11.0 — and the engine's published REST surface. The pin is now 2.18.2
+([41](41-dagu-2-18-upgrade.md)); its re-recorded corpus changed no node or run status, and the
+facts below that it does not restate were not re-measured.
 
 - **A step's outputs publish only at completion.** Failed, aborted, and still-running steps publish
   nothing, and the outputs endpoint serves settled runs only. "Update the node's outputs to say
@@ -25,16 +27,19 @@ The design leans on engine facts, so the facts come first. Instrument: the pinne
   there ([13](13-triggers-and-schedules.md)), and `cairn/record/engine.py` names the REST
   `statusLabel` as the road not taken. **Whether the view renders a node's `.err` file live, as
   it does `.out`, is not yet measured**, and section A's breadcrumb depends on it — see the gate
-  below.
+  below. Since 2.11.0 the engine added live step output after a run starts (2.16.5) and streamed
+  per-step log downloads (2.17.0, 2.17.2) ([41](41-dagu-2-18-upgrade.md) O8); the gate measures
+  against 2.18.2.
 - **`handler_on` carries `wait`.** Beside `init`, `success`, `failure`, `abort` and `exit`, the
   2.11.0 lifecycle hooks include `wait`, which fires when the DAG enters the waiting status
   because a step needs human input — an approval gate. `cairn/workflow/build.py` already emits an
   `exit` handler (the run's release), so a hook is not a new kind of graph content.
 - **`otel` exports traces to an OTLP endpoint.** The DAG-level `otel` block sends spans for the run
   and its steps to a gRPC or HTTP collector.
-- **`harness.run` ships a claude provider with `output_schema` validation and approval push-back.**
-  The standing decision against it holds — exit-code translation lives in `cairn agent run`
-  ([02](02-agent-step-spike.md)) — and it is re-measured at the next engine version change.
+- **`harness.run` ships a claude provider.** Re-read from source at 2.18.2
+  ([41](41-dagu-2-18-upgrade.md)): it runs `claude -p`, spools stdout until the process exits and
+  returns it unparsed, so it shows nothing while a session runs — the opposite of what Watch needs.
+  The standing decision against it holds ([02](02-agent-step-spike.md)).
 
 ## Decided against, with the reason
 
@@ -42,7 +47,8 @@ The design leans on engine facts, so the facts come first. Instrument: the pinne
   no approval step, so in every workflow Cairn generates the hook never fires: a session that has
   stalled is a running node, not a waiting DAG. Adopting it would also change every emitted
   definition for no observable effect. It is reconsidered if Cairn ever emits an approval gate,
-  as its own decision with its own fixture change.
+  as its own decision with its own fixture change — which [35](35-human-in-the-loop-steps.md) proposes on
+  the 2.18.2 `human.task` ([41](41-dagu-2-18-upgrade.md) O1).
 - **OpenTelemetry tracing.** It needs a collector listening at an endpoint, which is a server
   Cairn would have to run or require, and Watch requires none. Spans also arrive per step, not per
   turn inside a session, so they could not say where a session is even with a collector present.

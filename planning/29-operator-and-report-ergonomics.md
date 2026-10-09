@@ -14,7 +14,7 @@ complete an ordinary task.
 Complete [16](16-release.md)'s acquisition work with a short README path:
 
 1. supported platforms and Python 3.11;
-2. install or verify Dagu 2.11.0 and the agent provider;
+2. install or verify the pinned Dagu (2.18.2, [41](41-dagu-2-18-upgrade.md)) and the agent provider;
 3. install/register the Cairn skill;
 4. verify discovery without spending or mutating;
 5. author and explain a minimal plan before the first offer.
@@ -42,6 +42,11 @@ liveness; it can claim a queued run has “nothing draining” while a scheduler
 
 - Distinguish running, stopped, stale identity, inaccessible, and unknown.
 - Say “queued” without claiming no drainer unless liveness proves that conclusion.
+- Engine surfaces on the pin that bear on this ([41](41-dagu-2-18-upgrade.md) O3, O6): `dagu ps
+  --json`, an API field naming a running run's local process, and a global scheduler pause
+  (`/services/scheduler/pause`). Measured on 2.18.2, `dagu ps` listed a killed run as fresh, so
+  none of them is proof of liveness on its own; Cairn's process check stays the authority. A
+  paused scheduler is a distinct state that status reports rather than calling it dead.
 - Show each installed plan's cron or external-only trigger and whether its link resolves.
 - Provide supported launchd/systemd installation, status, and stop guidance rather than leaving a
   foreground `execvp` as the operational story.

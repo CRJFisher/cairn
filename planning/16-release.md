@@ -103,7 +103,11 @@ contributor does not casually cross it.
    ([09](09-supervision.md)) — and verify them before a run rather than assuming them. The file
    already exists on any machine that has run `dagu` once, so acquisition edits rather than
    creates, and a user who installed the engine themselves has a different file whose difference is
-   invisible in the emitted plan.
+   invisible in the emitted plan. On the pinned 2.18.2 the engine's first write of `base.yaml`
+   leaves DAG-level retry commented out but arms `catchup_window: "6h"`, so on a fresh machine
+   `lock acquire` passes and `cairn schedule start` refuses with `base_catchup_enabled` until
+   `cairn supervise base-config --disable` runs ([41](41-dagu-2-18-upgrade.md) Outcome). The
+   install path says so, or acquisition writes the setting itself.
 4. **Claim the view's administrator account at acquisition**, or do not start a server. The two
    acceptable end states are a server whose admin account Cairn has created and handed to the user,
    and no server at all. An unclaimed running server is neither, and it is the state a naive
@@ -123,8 +127,12 @@ contributor does not casually cross it.
    drifting the emitted format silently ([11](11-emitter-and-preflight.md)). **Pin, and say why**: the engine's
    input format is well governed, but its run-state file is an internal struct with integer enums,
    no schema and no conformance test, so the pin is what stops a reporter reading nonsense
-   ([12](12-run-record.md)). Keeping current is a periodic manual judgement, not a subscription —
-   there is no CHANGELOG to watch.
+   ([12](12-run-record.md)). Keeping current is a periodic manual judgement, not a subscription.
+   The engine publishes per-release notes and, from 2.18.0, a signed release `packslip` beside
+   `checksums.txt`; acquisition verifies the download against the release checksums at least, as
+   the 2.18.2 move did ([41](41-dagu-2-18-upgrade.md)). The README's housekeeping guidance names
+   the engine's own retention commands (`dagu rm` with a duration filter, `dagu prune-artifacts`)
+   rather than Cairn inventing any ([41](41-dagu-2-18-upgrade.md) O7).
 9. **State the acquisition path per platform**, and make the unsupported case an explicit, early,
    actionable message rather than a failure at first run.
 10. **Write the README**, and let its shape be the deliverable rather than its length. It carries:
