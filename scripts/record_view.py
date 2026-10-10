@@ -22,13 +22,11 @@ import socket
 import subprocess
 import tempfile
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any
 
 from cairn.layout import VIEW_HEALTH_PATH
-from cairn.view import HEALTH_BODY_LIMIT, HEALTH_TIMEOUT, SERVING_TIMEOUT
+from cairn.view import HEALTH_TIMEOUT, SERVING_TIMEOUT, ask_health
 from cairn.workflow.gate import assert_pinned
 from cairn.workflow.schema import ENGINE_VERSION
 
@@ -47,16 +45,17 @@ def free_port() -> int:
 
 
 def answered(url: str) -> dict[str, Any]:
-    """One recorded answer, in the shape `cairn.view.Answer` carries."""
-    try:
-        with urllib.request.urlopen(url, timeout=HEALTH_TIMEOUT) as response:
-            body = response.read(HEALTH_BODY_LIMIT)
-            return {"code": int(response.status), "body": body.decode("utf-8", "replace"), "said": ""}
-    except urllib.error.HTTPError as refused:
-        body = refused.read(HEALTH_BODY_LIMIT)
-        return {"code": int(refused.code), "body": body.decode("utf-8", "replace"), "said": str(refused)}
-    except (urllib.error.URLError, OSError) as unreachable:
-        return {"code": None, "body": "", "said": str(unreachable)}
+    """One recorded answer, read through the same asker `cairn.view.status` uses.
+
+    Going through `ask_health` rather than a second `urlopen` means the recording and the
+    reading it feeds can never part ways on how an answer is parsed.
+    """
+    answer = ask_health(url, HEALTH_TIMEOUT)
+    return {
+        "code": answer.code,
+        "body": answer.body.decode("utf-8", "replace"),
+        "said": answer.said,
+    }
 
 
 def main() -> int:

@@ -412,6 +412,9 @@ def _cmd_view_start(args: argparse.Namespace) -> int:
     started = serve_view(allowed.binding, base=found.base)
     if started.status.state != VIEW_SERVING:
         print(f"refused  {started.status.reason}", file=sys.stderr)
+        # Left running deliberately — it may still come up — so the pid that stops it
+        # travels with the refusal rather than being findable only in the log.
+        print(f"pid      {started.pid}, if it is still running", file=sys.stderr)
         return EXIT_REFUSED
     print(f"serving  {found.base}")
     print(f"ran      {' '.join(started.command)}")

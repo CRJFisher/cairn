@@ -1,0 +1,7 @@
+{
+  "key": "once",
+  "run_id": "20261009T224737Z-151a689d",
+  "scope": "once",
+  "step_id": "review_33",
+  "summary": "Working tree already matched the review end state; both fixes were present; tests pass; changes uncommitted."
+}
