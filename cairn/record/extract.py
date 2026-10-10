@@ -489,10 +489,19 @@ def _contradictions(
                     f"{status or 'has no readable status'}",
                 )
             )
+    # The marker gate's own no-op is the one skipped work node a succeeded mark stands
+    # beside: the verify gate opens over the step it skipped, and the mark rewrites the
+    # marker it matched without claiming the work ([marker.py]). Every recovery has one.
+    gate_no_op = (
+        reported == "noop"
+        and work_status == engine.NODE_STATUS_SKIPPED
+        and _freshness(work_report) is not None
+    )
     if (
         mark_status == engine.NODE_STATUS_SUCCEEDED
         and work_status is not None
         and work_status != engine.NODE_STATUS_SUCCEEDED
+        and not gate_no_op
     ):
         found.append(
             ReportFault(

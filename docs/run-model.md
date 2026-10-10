@@ -152,7 +152,7 @@ Nine faults, highest concern first:
 | --------------------------- | ---------------------------------------------------------------------------------- |
 | `engine_run_status`         | the engine's own status for the run is missing, not a number, or outside the table |
 | `duplicate_node`            | one node name is recorded more than once                                           |
-| `gate_contradicts_work`     | the marker gate recorded work the engine says its work node did not complete       |
+| `gate_contradicts_work`     | a mark recorded work the engine says did not complete, and no marker gate skipped  |
 | `report_contradicts_engine` | a report's status is one the engine's status for that node cannot stand beside     |
 | `report_unreadable`         | the document is not readable JSON, or is not an object                             |
 | `report_renamed`            | the document is the account of another node, under this one's filename             |

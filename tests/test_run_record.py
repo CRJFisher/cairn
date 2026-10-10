@@ -2260,6 +2260,30 @@ class ContradictionsNeverRaiseAnOutcome(unittest.TestCase):
             [INTEGRITY_GATE_CONTRADICTS_WORK],
         )
 
+    def test_a_mark_rewriting_the_marker_its_gate_matched_contradicts_nothing(self) -> None:
+        """Measured: every recovery skips its landed steps at the marker gate, the verify
+        gate opens over the no-op, and the mark rewrites the marker it matched."""
+        found = classify_step(
+            work_status=engine.NODE_STATUS_SKIPPED,
+            mark_status=engine.NODE_STATUS_SUCCEEDED,
+            work_report={
+                "status": "noop",
+                "detail": {
+                    "scope": "once",
+                    "key": "once",
+                    "recorded_scope": "once",
+                    "recorded_key": "once",
+                    "recorded_run": "run-before",
+                },
+            },
+            mark_report=None,
+            has_assertion=True,
+            run_settled=True,
+            orchestrator_gone=False,
+        )
+        self.assertEqual(found.outcome, OUTCOME_NO_OP)
+        self.assertEqual(found.integrity, ())
+
     def test_a_verified_step_is_the_gates_word_and_the_engines_together(self) -> None:
         """The control: the pair that really did agree still reads as verified."""
         found = classify_step(
