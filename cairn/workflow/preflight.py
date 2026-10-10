@@ -51,6 +51,7 @@ from cairn.workflow.schema import (
 )
 
 GATE_PROBE_TIMEOUT = 30
+GATE_PROBE = (CAIRN_INVOCATION[0], "-S", *CAIRN_INVOCATION[1:])
 EXIT_CODE_SUFFIX = ".exit_code"
 
 # The three gates, as the argv the emitters actually build. Matched as a token prefix rather
@@ -787,7 +788,11 @@ def rehearse_gate(document: Any) -> list[Fault]:
     ([06]), so the probe runs under the environment the file declares plus the `PATH` the run
     will inherit, and from a directory holding no `cairn` package: run from the package's own
     root the interpreter finds it through the working directory whatever the environment says,
-    and the probe would pass for a workflow whose steps could not import it at all.
+    and the probe would pass for a workflow whose steps could not import it at all. It runs
+    with site-packages off for the same reason: Cairn is the standard library and itself, so
+    the declared `PYTHONPATH` is the only place a step's Cairn may come from, and a Cairn
+    installed into the interpreter would pass the probe for a file whose snapshot path names
+    nothing — and its steps would run that install rather than the snapshot.
     """
     environment = {"PATH": os.environ.get("PATH", "")}
     for entry in cast(list[Any], _mapping(document).get("env") or []):
@@ -797,7 +802,7 @@ def rehearse_gate(document: Any) -> list[Fault]:
         return [Fault("gate_unresolvable", None, f"the file declares no {PYTHONPATH_ENV}")]
     try:
         completed = subprocess.run(
-            list(CAIRN_INVOCATION),
+            list(GATE_PROBE),
             env=environment,
             cwd=tempfile.gettempdir(),
             capture_output=True,
@@ -806,13 +811,13 @@ def rehearse_gate(document: Any) -> list[Fault]:
             check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:
-        return [Fault("gate_unresolvable", None, f"{shlex.join(CAIRN_INVOCATION)}: {exc}")]
+        return [Fault("gate_unresolvable", None, f"{shlex.join(GATE_PROBE)}: {exc}")]
     if completed.returncode != 0:
         return [
             Fault(
                 "gate_unresolvable",
                 None,
-                f"{shlex.join(CAIRN_INVOCATION)} exited {completed.returncode} under the "
+                f"{shlex.join(GATE_PROBE)} exited {completed.returncode} under the "
                 f"environment this file declares: {completed.stderr.strip()[:200]}",
             )
         ]

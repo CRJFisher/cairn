@@ -74,14 +74,14 @@ from cairn.schedule import (
 )
 from cairn.topology import WORKTREES_SUFFIX, worktrees_parent
 from cairn.view import (
-    SERVING_TIMEOUT,
-    VIEW_ABSENT,
-    VIEW_FOREIGN,
-    VIEW_SERVING,
     CLAIM_CLAIMED,
     CLAIM_HELD,
     CLAIM_REFUSED,
     CLAIM_USERNAME,
+    SERVING_TIMEOUT,
+    VIEW_ABSENT,
+    VIEW_FOREIGN,
+    VIEW_SERVING,
     Answer,
     Ask,
     Binding,

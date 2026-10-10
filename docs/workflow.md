@@ -286,8 +286,9 @@ and it is authored on the machine that runs it. Moving a plan to another machine
 re-authoring it there, never editing the file.
 
 Because that package root is a fiction, a recorded file is judged by the preflight's rules and
-never by the gate rehearsal, which runs `python3 -m cairn` under the `PYTHONPATH` the file
-declares. Both engine checks still pass on one, which the suite holds to for `multi-wave` exactly
+never by the gate rehearsal, which runs `python3 -S -m cairn` under the `PYTHONPATH` the file
+declares — site-packages off, so a Cairn installed into the interpreter cannot answer for a
+snapshot path that names nothing. Both engine checks still pass on one, which the suite holds to for `multi-wave` exactly
 as committed — and that is the silent failure this whole component exists for: a gate that cannot launch
 exits nonzero, the engine reads nonzero as a skip, and a run whose every step skipped reports
 a clean success.

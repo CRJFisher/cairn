@@ -87,7 +87,6 @@ from cairn.workflow.stamp import (
     workflow_path,
     write_stamp,
 )
-from tests.engine import require_engine
 from scripts.regenerate_workflows import (
     GOLDENS,
     OCCASION,
@@ -106,6 +105,7 @@ from scripts.regenerate_workflows import (
     regenerate,
 )
 from scripts.regenerate_workflows import main as regenerate_main
+from tests.engine import require_engine
 
 CAIRN_ROOT = Path(__file__).resolve().parents[1]
 

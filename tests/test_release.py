@@ -25,6 +25,14 @@ import unittest
 from pathlib import Path
 
 from cairn import unsupported
+from cairn.layout import RUNS_DIRECTORY, VIEW_BASE_ENV
+from cairn.record.vocabulary import VERDICT_GREEN_WITH_EXCLUSIONS
+from cairn.topology import WORKTREES_SUFFIX
+from cairn.verify import EXCLUSION_CAUSES
+from cairn.workflow.pin import PINNED_DIRECTORY
+from cairn.workflow.schema import ENGINE_VERSION
+from scripts.worked_example import RECORDING
+from tests.engine import SKIP_ENV
 
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 README = PACKAGE_ROOT / "README.md"
@@ -54,11 +62,12 @@ UNSCANNED_SUFFIXES = (".pyc", ".svg", ".png", ".ico")
 
 
 def tracked_files() -> list[Path]:
-    """Every file the repository ships, which is the thing being published.
+    """Every file the repository ships, which is the thing being published, but this one.
 
     Asked of git rather than walked, because what is published is what is tracked: a
     scratch file in the working tree is not part of the artifact and a guard that failed on
-    one would be a guard people learn to ignore.
+    one would be a guard people learn to ignore. This file is left out because it is where
+    the forbidden shapes are spelled, and where the guard is shown rejecting them.
     """
     listed = subprocess.run(
         ("git", "ls-files", "-z"),
@@ -67,7 +76,12 @@ def tracked_files() -> list[Path]:
         text=True,
         check=True,
     )
-    return [PACKAGE_ROOT / name for name in listed.stdout.split("\0") if name]
+    guard = Path(__file__).resolve()
+    return [
+        PACKAGE_ROOT / name
+        for name in listed.stdout.split("\0")
+        if name and PACKAGE_ROOT / name != guard
+    ]
 
 
 def readable(path: Path) -> str | None:
@@ -191,8 +205,6 @@ class TheDirectoryIsSelfContained(unittest.TestCase):
 
     def test_the_worked_example_reads_a_fixture_in_this_directory(self) -> None:
         """The one command a reader is told to run has to work from a fresh checkout."""
-        from scripts.worked_example import RECORDING
-
         self.assertTrue((RECORDING / "status.jsonl").is_file())
         self.assertTrue((RECORDING / "reports").is_dir())
         self.assertIn(PACKAGE_ROOT, RECORDING.parents)
@@ -293,8 +305,6 @@ class TheQualityGateIsCheckedIn(unittest.TestCase):
     ) -> None:
         """A build that set the skip would be green on the suites that cover the failures
         which otherwise report success."""
-        from cairn.workflow.schema import ENGINE_VERSION
-
         self.assertIn(f"--version v{ENGINE_VERSION}", self.workflow)
         self.assertNotIn("CAIRN_SKIP_ENGINE_TESTS", self.workflow)
 
@@ -325,8 +335,6 @@ class TheReadmeStatesWhatItMayNotSoften(unittest.TestCase):
                 self.assertIn(claim, self.readme)
 
     def test_the_install_path_is_one_command_against_the_pin(self) -> None:
-        from cairn.workflow.schema import ENGINE_VERSION
-
         self.assertIn("installer.sh", self.readme)
         self.assertIn(f"--version v{ENGINE_VERSION}", self.readme)
         self.assertIn("checksums.txt", self.readme)
@@ -339,9 +347,6 @@ class TheReadmeStatesWhatItMayNotSoften(unittest.TestCase):
         verdict and the cause are both checked against the frozen vocabularies, so a
         renamed word fails here rather than leaving the one page a cold reader has
         quoting something the command no longer prints."""
-        from cairn.record.vocabulary import VERDICT_GREEN_WITH_EXCLUSIONS
-        from cairn.verify import EXCLUSION_CAUSES
-
         self.assertIn("python3 -m scripts.worked_example", self.readme)
         self.assertIn(VERDICT_GREEN_WITH_EXCLUSIONS, self.readme)
         quoted = re.findall(r"^\s*cause: (\S+)$", self.readme, re.MULTILINE)
@@ -351,8 +356,6 @@ class TheReadmeStatesWhatItMayNotSoften(unittest.TestCase):
                 self.assertIn(cause, EXCLUSION_CAUSES)
 
     def test_the_engine_test_policy_is_stated_once(self) -> None:
-        from tests.engine import SKIP_ENV
-
         self.assertIn(SKIP_ENV, self.readme)
 
     def test_it_names_the_skill_registration_and_a_check_that_starts_nothing(self) -> None:
@@ -363,10 +366,6 @@ class TheReadmeStatesWhatItMayNotSoften(unittest.TestCase):
         """Task 1: the enumeration, in the one document a cold reader has. Each row names
         where the path comes from, because "it is configurable" is how an author-shaped
         default survives an inspection."""
-        from cairn.layout import RUNS_DIRECTORY, VIEW_BASE_ENV
-        from cairn.topology import WORKTREES_SUFFIX
-        from cairn.workflow.pin import PINNED_DIRECTORY
-
         self.assertIn("### Every path, and where it comes from", self.readme)
         for path in (WORKTREES_SUFFIX, RUNS_DIRECTORY, PINNED_DIRECTORY, VIEW_BASE_ENV):
             with self.subTest(path=path):
