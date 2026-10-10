@@ -7,7 +7,6 @@ and what it does when the process disappears mid-write.
 
 import json
 import os
-import shutil
 import signal
 import subprocess
 import sys
@@ -28,9 +27,10 @@ from cairn.supervise import (
     reconcile,
 )
 from cairn.topology import worktrees_root_for
+from tests.engine import ENGINE, require_engine
+from tests.processes import reap
 
 PACKAGE_ROOT = Path(__file__).parents[1]
-ENGINE = shutil.which("dagu")
 # Long enough that no test outruns it, and distinctive enough that a process listing can
 # prove the sleep an engine step started is gone.
 SENTINEL_SECONDS = 987654
@@ -52,9 +52,9 @@ def steps_hold(marker: str, seconds: int) -> list[dict[str, Any]]:
     ]
 
 
-@unittest.skipUnless(ENGINE, "the engine is not installed")
 class EngineCase(unittest.TestCase):
     def setUp(self) -> None:
+        require_engine(self, "what a killed engine leaves behind")
         self._temporary = tempfile.TemporaryDirectory()
         self.root = Path(self._temporary.name).resolve()
         self.addCleanup(self._temporary.cleanup)
@@ -179,13 +179,8 @@ class EngineCase(unittest.TestCase):
             env=self.environment(),
             start_new_session=True,
         )
-        self.addCleanup(self._reap, child)
+        self.addCleanup(reap, child)
         return child
-
-    def _reap(self, child: subprocess.Popen[str]) -> None:
-        if child.poll() is None:
-            child.kill()
-            child.wait(timeout=30)
 
     def wait_for(self, predicate: Any, what: str, seconds: int = START_TIMEOUT_SECONDS) -> None:
         deadline = time.monotonic() + seconds
@@ -598,7 +593,7 @@ class SchedulerRetry(EngineCase):
             text=True,
             env=self.environment(),
         )
-        self.addCleanup(self._reap, scheduler)
+        self.addCleanup(reap, scheduler)
         # The scanner's own cadence is 45 seconds and it retries three times; a minute of
         # quiet with the disabling policy in place is the assertion.
         time.sleep(75)

@@ -91,11 +91,15 @@ from cairn.skill.vocabulary import (
 )
 from cairn.verify import EXCLUSION_CAUSES
 from cairn.view import (
+    CLAIM_CLAIMED,
+    CLAIM_HELD,
+    CLAIM_REFUSED,
     VIEW_ABSENT,
     VIEW_FOREIGN,
     VIEW_SERVING,
     Bindable,
     Binding,
+    ViewClaim,
     ViewStarted,
     ViewStatus,
 )
@@ -524,6 +528,7 @@ class FakeEngine:
     def __init__(self, exit_code: int | None = None) -> None:
         self.returncode = exit_code
         self.waited = False
+        self.terminated = False
         self.stdin = None
         self.stdout = None
         self.pid = 4242
@@ -536,10 +541,13 @@ class FakeEngine:
         return 0 if self.returncode is None else self.returncode
 
     def terminate(self) -> None:
-        raise AssertionError("a detached engine is never terminated by the start")
+        # Recorded rather than refused: a run's start never stops the engine it launched,
+        # but a view whose administrator account could not be claimed is stopped on purpose
+        # ([16]), and the two use this one process shape.
+        self.terminated = True
 
     def kill(self) -> None:
-        raise AssertionError("a detached engine is never killed by the start")
+        raise AssertionError("a detached process is never killed by the start that made it")
 
 
 class TheStartIsReachedOnlyByAnExplicitRunRequest(unittest.TestCase):
@@ -1397,10 +1405,19 @@ class TheEngineIsLaunchedToOutliveTheCommand(unittest.TestCase):
         self.root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         self.options: dict[str, Any] = {}
+        self.launched: list[FakeEngine] = []
 
     def _factory(self, command: Sequence[str], **options: Any) -> FakeEngine:
         self.options = options
-        return FakeEngine()
+        engine = FakeEngine()
+        self.launched.append(engine)
+        return engine
+
+    def test_the_engine_is_never_stopped_by_the_command_that_launched_it(self) -> None:
+        """The whole point of the detachment: the run outlives its caller. The view's own
+        start does stop a server in one case, and this is what keeps that from spreading."""
+        trigger.launch_detached(("true",), self.root / "engine.log", self._factory)
+        self.assertFalse(self.launched[0].terminated)
 
     def test_the_engine_leaves_the_commands_session_and_process_group(self) -> None:
         """Measured 2026-08-25: a detached start outlived the session that launched it by
@@ -1542,23 +1559,71 @@ class TheViewIsAskedAboutAndServedByItsOwnCommand(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("cannot bind", said)
 
-    def test_a_started_view_says_how_to_claim_it_and_how_to_stop_it(self) -> None:
-        """The two things a started server owes the person, in the same reply as the
-        address: its authentication begins unclaimed, and stopping it loses nothing."""
-        served = ViewStatus(
+    def _served(self) -> ViewStatus:
+        return ViewStatus(
             VIEW_SERVING, "http://127.0.0.1:8080", "dagu 2.18.2 is serving it", "2.18.2"
         )
-        started = ViewStarted(served, ("dagu", "server"), Path("/tmp/view-server.log"), 4242)
+
+    def _start_said(self, started: ViewStarted) -> tuple[int, str]:
         with (
             patch("cairn.skill.cli.bindable", return_value=Bindable(Binding("127.0.0.1", 8080), "")),
             patch("cairn.skill.cli.serve_view", return_value=started),
         ):
-            code, said = self._said(["start"], self._absent())
+            return self._said(["start"], self._absent())
+
+    def test_a_started_view_hands_over_the_account_it_claimed_and_how_to_stop_it(self) -> None:
+        """The two things a started server owes the person, in the same reply as the
+        address: the administrator account Cairn created, and that stopping it loses
+        nothing. The password is said here or nowhere, because Cairn keeps no copy."""
+        claimed = ViewClaim(
+            CLAIM_CLAIMED, "cairn", "s3cret-token-value", "Cairn created the account"
+        )
+        code, said = self._start_said(
+            ViewStarted(
+                self._served(), ("dagu", "server"), Path("/tmp/view-server.log"), 4242, claimed
+            )
+        )
         self.assertEqual(code, 0, said)
-        self.assertIn("claim", said)
-        self.assertIn("administrator", said)
+        self.assertIn("user     cairn", said)
+        self.assertIn("password s3cret-token-value", said)
         self.assertIn("kill 4242", said)
         self.assertIn("loses nothing", said)
+        self.assertIn("/tmp/view-server.log", said)
+
+    def test_an_account_somebody_else_holds_is_reported_without_credentials(self) -> None:
+        """Setup is completed once per machine, so the second server Cairn starts finds the
+        account taken — which is the end state, not a failure, and Cairn invents no login
+        for an account it does not hold."""
+        held = ViewClaim(CLAIM_HELD, None, None, "the administrator account was already claimed")
+        code, said = self._start_said(
+            ViewStarted(
+                self._served(), ("dagu", "server"), Path("/tmp/view-server.log"), 4242, held
+            )
+        )
+        self.assertEqual(code, 0, said)
+        self.assertIn("already claimed", said)
+        self.assertNotIn("password", said)
+
+    def test_a_server_whose_account_could_not_be_claimed_is_a_refusal_with_no_pid(
+        self,
+    ) -> None:
+        """`start` stops a server it could not claim, so there is nothing left to kill and
+        offering a pid would send the person after a process that is already gone."""
+        refused = ViewClaim(CLAIM_REFUSED, None, None, "the claim answered 500")
+        stopped = ViewStatus(
+            VIEW_ABSENT,
+            "http://127.0.0.1:8080",
+            "the claim answered 500. Cairn stopped the server it started",
+            None,
+        )
+        code, said = self._start_said(
+            ViewStarted(
+                stopped, ("dagu", "server"), Path("/tmp/view-server.log"), 4242, refused
+            )
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("Cairn stopped the server it started", said)
+        self.assertNotIn("pid      4242", said)
         self.assertIn("/tmp/view-server.log", said)
 
     def test_a_server_that_never_answered_is_a_refusal_naming_where_it_said_why(self) -> None:

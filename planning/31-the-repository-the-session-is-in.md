@@ -18,7 +18,7 @@ The session's reply, quoted:
 
 > **What I need from you: which repository?** Cairn takes the target repository from the
 > request and never assumes it from the directory we're in. The tasks are in `ariadne`'s
-> backlog, so the likely answer is `/Users/chuck/workspace/ariadne` […] Please confirm that,
+> backlog, so the likely answer is `/Users/me/src/ariadne` […] Please confirm that,
 > or name another repository or branch.
 
 The agent was following the rule exactly. `SKILL.md` says the repository "comes from the
@@ -85,7 +85,7 @@ provenance `session`, and one new case for each ask above), `tests/test_the_skil
 
 - The ariadne request in [30](30-a-plan-stated-in-the-request.md), made from inside ariadne,
   reaches a parse report and then a started run without a repository question. The reply names
-  `/Users/chuck/workspace/ariadne` with provenance `subjects`.
+  `/Users/me/src/ariadne` with provenance `subjects`.
 - The same request made from Cairn's own checkout asks, and the question names ariadne as the
   repository the tasks were found in.
 - A report requested from inside a repository finds its runs, and its first line names that

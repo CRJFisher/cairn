@@ -1,7 +1,7 @@
 """Record the fixture corpus by running a real engine, one shape per recorded run.
 
-Every fixture's `status.jsonl` is a real file written by the pinned engine, copied verbatim
-from a run this script executed, and the script refuses to record against any other version. That is not fastidiousness: the corpus exists to prove things *about the
+Every fixture's `status.jsonl` is a real file written by the pinned engine during a run this
+script executed, and the script refuses to record against any other version. That is not fastidiousness: the corpus exists to prove things *about the
 engine*, and the one fixture the exit criteria name — a run the engine calls a clean success
 over an excluded step — is a claim only the engine can make. Hand-authoring it would assert
 the author's belief and test nothing.
@@ -51,6 +51,14 @@ ENGINE = shutil.which("dagu")
 # enough that a recording session is not a coffee break.
 HOLD_SECONDS = 30
 SAMPLE_SECONDS = 3
+
+# What a recorded command names its interpreter by. The engine writes a step's command into
+# its state file verbatim, and the recording runs under `sys.executable` so that the Cairn
+# being recorded is the Cairn in this checkout — so the file it writes would otherwise carry
+# the absolute interpreter path of the machine that recorded it, which is an author-shaped
+# literal in a checked-in fixture ([16] task 7). The invocation was a `python3` one either
+# way; what the normalisation drops is which `python3`.
+RECORDED_INTERPRETER = "python3"
 
 
 def cairn(*arguments: str) -> str:
@@ -583,7 +591,10 @@ def _publish(
     for recorded in ("status.jsonl", "recording.json"):
         (target / recorded).unlink(missing_ok=True)
     (target / "reports").mkdir(parents=True)
-    shutil.copy2(state, target / "status.jsonl")
+    (target / "status.jsonl").write_text(
+        state.read_text(encoding="utf-8").replace(sys.executable, RECORDED_INTERPRETER),
+        encoding="utf-8",
+    )
     reports = runs / run_id / "reports"
     if reports.is_dir():
         for report in sorted(reports.glob("*.json")):
@@ -596,6 +607,7 @@ def _publish(
                 "engine": ENGINE_VERSION,
                 "why": why,
                 "hand_set_fields": augmented or {},
+                "normalised": {"interpreter": RECORDED_INTERPRETER},
                 "damage": damage or {},
             },
             indent=2,

@@ -16,7 +16,7 @@ from contextlib import chdir, redirect_stderr, redirect_stdout
 from datetime import UTC, datetime
 from io import StringIO
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 from unittest.mock import patch
 
 from cairn.__main__ import asks_for_help, main
@@ -48,6 +48,7 @@ from cairn.protocol import (
 )
 from cairn.providers import PROVIDER_RUNNERS, hook_settings, run_claude
 from cairn.topology import node_name
+from tests.engine import require_engine
 from tests.ownership import own_repository
 
 CAIRN_ROOT = Path(__file__).resolve().parent.parent
@@ -1302,26 +1303,8 @@ class TheThreeStates(unittest.TestCase):
 class TheEngineHonoursTheLowering(unittest.TestCase):
     """Against real Dagu, because the failure mode here reports success."""
 
-    SKIP_ENV = "CAIRN_SKIP_ENGINE_TESTS"
-    dagu: ClassVar[str | None] = None
-
-    @classmethod
-    def setUpClass(cls) -> None:
-        located = subprocess.run(
-            ("which", "dagu"), capture_output=True, text=True, check=False
-        )
-        cls.dagu = located.stdout.strip() or None
-
     def setUp(self) -> None:
-        if self.dagu is None:
-            # These cover the one failure mode that reports success, so their absence is
-            # declared rather than discovered: a machine without the engine has to say so.
-            if os.environ.get(self.SKIP_ENV):
-                self.skipTest(f"{self.SKIP_ENV} is set")
-            self.fail(
-                "dagu is not installed, so the lowering is unverified. Install it, or "
-                f"set {self.SKIP_ENV}=1 to record that this run did not check it."
-            )
+        self.dagu = require_engine(self, "the lowering onto a precondition")
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name).resolve()
         self.addCleanup(self.temporary.cleanup)

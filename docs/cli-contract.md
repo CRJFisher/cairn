@@ -17,8 +17,8 @@ against a graph on disk, `cairn workflow …` generates and checks an engine def
 what a workflow would do, what a frozen word means
 and why a step was excluded, `cairn view status` says whether the address a run is watched at
 is being served and `cairn view start` serves it — one detached `dagu server`, never the
-scheduler, and never on a port something else already answers on
-([triggers.md](triggers.md)), and `cairn hook stop` answers the one hook a step's own session
+scheduler, never on a port something else already answers on, and never left with an
+unclaimed administrator account ([triggers.md](triggers.md)), and `cairn hook stop` answers the one hook a step's own session
 runs under — reading the harness's end-of-turn payload on stdin and exiting `2` to hold the
 turn open while a background shell the session started is still running, or `0` to let it
 end ([step-protocol.md](step-protocol.md)). It is routed ahead of every other command

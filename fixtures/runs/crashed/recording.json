@@ -4,5 +4,8 @@
   "engine": "2.18.2",
   "why": "the orchestrator was killed mid-run, so the engine's record says `running` with no finish time and will say so forever",
   "hand_set_fields": {},
+  "normalised": {
+    "interpreter": "python3"
+  },
   "damage": {}
 }

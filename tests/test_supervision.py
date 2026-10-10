@@ -113,6 +113,7 @@ from cairn.worktrees import (
     read_branch_owner,
     setup_worktree,
 )
+from tests.processes import reap
 
 # Above the platform's maximum process identifier, so it can never name a live process.
 IMPOSSIBLE_PID = 99_999_999
@@ -397,7 +398,7 @@ class GitWriteMutex(RepositoryCase):
             text=True,
             env={**os.environ, "PYTHONPATH": str(PACKAGE_ROOT)},
         )
-        self.addCleanup(child.kill)
+        self.addCleanup(reap, child)
         assert child.stdout is not None
         self.assertEqual(child.stdout.readline().strip(), "held")
         child.kill()
@@ -529,7 +530,7 @@ class SubcommandsTakeTheMutex(RepositoryCase):
             cwd=directory,
             env=self.step_environment(directory),
         )
-        self.addCleanup(child.kill)
+        self.addCleanup(reap, child)
         return child
 
     HELD_OUT_SECONDS = 8.0

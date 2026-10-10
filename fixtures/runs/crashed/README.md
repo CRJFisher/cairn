@@ -8,8 +8,8 @@ dead — the start-time comparison is what makes that true.
 
 ## What is here
 
-- `status.jsonl` — the engine's own state file, copied verbatim from a real Dagu
-  2.18.2 run.
+- `status.jsonl` — the engine's own state file, written by a real Dagu 2.18.2 run, with
+  one declared normalisation: the recording machine's interpreter path reads as `python3`.
 - `reports/` — this run's own step reports: none.
 - `recording.json` — the engine version, the run id, and any field set by hand.
 

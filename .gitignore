@@ -1,1 +1,9 @@
 __pycache__/
+# What an install and a build leave in the checkout, which is the whole artifact.
+*.egg-info/
+build/
+dist/
+# Local tooling: a virtual environment and the caches the test runner and the linter keep.
+.venv/
+.pytest_cache/
+.ruff_cache/

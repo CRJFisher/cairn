@@ -21,17 +21,17 @@ import hashlib
 import io
 import json
 import os
-import shutil
 import signal
 import socket
 import subprocess
 import tempfile
 import unittest
 import warnings
+from collections.abc import Callable
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, ClassVar, cast
+from typing import Any, cast
 from unittest.mock import patch
 
 from cairn.__main__ import main as cairn_main
@@ -78,11 +78,18 @@ from cairn.view import (
     VIEW_ABSENT,
     VIEW_FOREIGN,
     VIEW_SERVING,
+    CLAIM_CLAIMED,
+    CLAIM_HELD,
+    CLAIM_REFUSED,
+    CLAIM_USERNAME,
     Answer,
     Ask,
     Binding,
+    ViewClaim,
     ViewStarted,
     bindable,
+    claim_admin,
+    mint_password,
     serve_command,
     start,
     status,
@@ -103,6 +110,7 @@ from cairn.workflow.schema import (
 
 # One detached-launch double, shared with the suite that proves the engine's own launch: two
 # fakes of one process shape would let the view's four flags drift from the engine's.
+from tests.engine import require_engine
 from tests.test_the_skill import FakeEngine
 
 CAIRN_ROOT = Path(__file__).resolve().parent.parent
@@ -475,6 +483,15 @@ class NothingStartedForAViewIsEverAScheduler(unittest.TestCase):
                 self.assertNotIn(forbidden, source)
 
 
+def claiming(state: str) -> Callable[[str], ViewClaim]:
+    """A claim that answers one state, naming the address it was put to."""
+
+    def claimed(base: str) -> ViewClaim:
+        return ViewClaim(state, None, None, f"{base} answered the claim with {state}")
+
+    return claimed
+
+
 class AViewServerOutlivesTheSessionThatAskedForIt(unittest.TestCase):
     """Doc 33: the link has to load after the conversation that started it has ended."""
 
@@ -484,13 +501,24 @@ class AViewServerOutlivesTheSessionThatAskedForIt(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.options: dict[str, Any] = {}
         self.commands: list[tuple[str, ...]] = []
+        self.claimed: list[str] = []
+        self.engines: list[FakeEngine] = []
 
     def _factory(self, command: list[str], **options: Any) -> FakeEngine:
         self.commands.append(tuple(command))
         self.options = options
-        return FakeEngine()
+        engine = FakeEngine()
+        self.engines.append(engine)
+        return engine
+
+    def _claim(self, base: str) -> ViewClaim:
+        self.claimed.append(base)
+        return ViewClaim(CLAIM_CLAIMED, "cairn", "minted", f"Cairn claimed {base}")
 
     def _start(self, answers: list[Answer], **extra: Any) -> ViewStarted:
+        # Claimed by a double unless a test says otherwise: the real claim is an HTTP call
+        # to whatever holds that port on the machine the suite runs on.
+        extra.setdefault("claim", self._claim)
         with patch("cairn.view.view_log_path", return_value=self.root / "view-server.log"):
             return start(
                 Binding("127.0.0.1", 8080),
@@ -540,6 +568,49 @@ class AViewServerOutlivesTheSessionThatAskedForIt(unittest.TestCase):
         self.assertIn("exited 1", started.status.reason)
         self.assertIn("view-server.log", started.status.reason)
 
+    def test_the_account_is_claimed_at_the_address_the_person_is_handed(self) -> None:
+        """Doc 16 task 4: a server Cairn starts and leaves unclaimed is an open
+        administrator account, and a claim against any other address leaves it open."""
+        started = self._start([recorded_answer("serving")])
+        self.assertEqual(self.claimed, [started.status.base])
+        assert started.claim is not None
+        self.assertEqual(started.claim.state, CLAIM_CLAIMED)
+        self.assertEqual(started.claim.password, "minted")
+
+    def test_an_account_already_held_is_reported_and_the_server_stays_up(self) -> None:
+        """Setup is completed once per machine and survives restarts, so the account being
+        taken is the end state this exists to reach rather than a failure."""
+        started = self._start(
+            [recorded_answer("serving")],
+            claim=claiming(CLAIM_HELD),
+        )
+        self.assertEqual(started.status.state, VIEW_SERVING)
+        assert started.claim is not None
+        self.assertEqual(started.claim.state, CLAIM_HELD)
+        self.assertFalse(self.engines[0].terminated)
+
+    def test_a_server_whose_account_cannot_be_claimed_is_stopped(self) -> None:
+        """The two acceptable end states are a claimed server and no server. An unclaimed
+        one that Cairn started and walked away from is neither."""
+        started = self._start(
+            [recorded_answer("serving")],
+            claim=claiming(CLAIM_REFUSED),
+        )
+        self.assertTrue(self.engines[0].terminated)
+        self.assertNotEqual(started.status.state, VIEW_SERVING)
+        self.assertIn("Cairn stopped the server it started", started.status.reason)
+
+    def test_nothing_is_claimed_where_nothing_came_up(self) -> None:
+        """A claim against an address that never answered would be a request to whatever
+        does hold that port."""
+        clock = iter([0.0, 0.0, SERVING_TIMEOUT + 1])
+        self._start(
+            [recorded_answer("absent"), recorded_answer("absent")],
+            monotonic=lambda: next(clock),
+            sleeper=no_sleep,
+        )
+        self.assertEqual(self.claimed, [])
+
     def test_a_server_that_has_not_answered_yet_is_left_running(self) -> None:
         """Killing a server that is a moment from answering, on a timer, is the one
         destructive move available here."""
@@ -552,6 +623,56 @@ class AViewServerOutlivesTheSessionThatAskedForIt(unittest.TestCase):
         self.assertNotEqual(started.status.state, VIEW_SERVING)
         self.assertIn("did not answer", started.status.reason)
         self.assertIn("view-server.log", started.status.reason)
+
+
+class TheClaimReadsWhatTheSetupEndpointAnswered(unittest.TestCase):
+    """Doc 16 task 4: the three answers the engine's setup endpoint gives, and the one
+    account Cairn ever creates. Measured against Dagu 2.18.2 and recorded here as the
+    status codes, because what distinguishes "I took it" from "somebody else has it" is a
+    `200` against a `403` and nothing else in the body."""
+
+    def _posted(self, answer: Answer) -> tuple[ViewClaim, list[tuple[str, bytes]]]:
+        sent: list[tuple[str, bytes]] = []
+
+        def post(url: str, payload: bytes, timeout: float) -> Answer:
+            del timeout
+            sent.append((url, payload))
+            return answer
+
+        return claim_admin("http://127.0.0.1:8080", post=post), sent
+
+    def test_a_claim_that_was_taken_hands_back_what_it_sent(self) -> None:
+        claim, sent = self._posted(Answer(200, b'{"token":"x"}', ""))
+        self.assertEqual(claim.state, CLAIM_CLAIMED)
+        self.assertEqual(claim.username, CLAIM_USERNAME)
+        url, payload = sent[0]
+        self.assertEqual(url, "http://127.0.0.1:8080/api/v1/auth/setup")
+        self.assertEqual(
+            json.loads(payload),
+            {"username": CLAIM_USERNAME, "password": claim.password},
+        )
+
+    def test_the_password_is_long_enough_for_the_engine_to_accept(self) -> None:
+        """Measured: the engine refuses anything under twelve characters as not meeting its
+        security requirements, and a refusal here stops a server the person asked for."""
+        self.assertGreaterEqual(len(mint_password()), 12)
+        self.assertNotEqual(mint_password(), mint_password())
+
+    def test_an_account_already_taken_is_held_rather_than_claimed(self) -> None:
+        claim, _ = self._posted(Answer(403, b'{"code":"forbidden"}', ""))
+        self.assertEqual(claim.state, CLAIM_HELD)
+        self.assertIsNone(claim.password)
+
+    def test_any_other_answer_is_a_refusal_carrying_what_was_said(self) -> None:
+        claim, _ = self._posted(Answer(500, b"upstream exploded", ""))
+        self.assertEqual(claim.state, CLAIM_REFUSED)
+        self.assertIn("500", claim.reason)
+        self.assertIsNone(claim.password)
+
+    def test_nothing_answering_at_all_is_a_refusal_too(self) -> None:
+        claim, _ = self._posted(Answer(None, b"", "connection refused"))
+        self.assertEqual(claim.state, CLAIM_REFUSED)
+        self.assertIn("connection refused", claim.reason)
 
 
 class TheBindIsProbedBeforeAnythingIsLaunched(unittest.TestCase):
@@ -591,18 +712,8 @@ class TheViewServerCairnStartsReallyServesTheLink(unittest.TestCase):
     not a server anybody was told about.
     """
 
-    SKIP_ENV: ClassVar[str] = SKIP_ENV
-
     def setUp(self) -> None:
-        self.dagu = shutil.which("dagu")
-        if not self.dagu and not os.environ.get(self.SKIP_ENV):
-            self.fail(
-                "dagu is not installed, so the view Cairn offers to start is unverified "
-                f"against the engine that serves it. Install it, or set {self.SKIP_ENV}=1 "
-                "to record that this run did not check it."
-            )
-        if not self.dagu:
-            self.skipTest("recorded deliberately as unchecked")
+        self.dagu = require_engine(self, "the view Cairn offers to start")
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.home = Path(self.temporary.name) / "home"
@@ -628,6 +739,25 @@ class TheViewServerCairnStartsReallyServesTheLink(unittest.TestCase):
         # Asked again through a fresh reading, because what the start claims and what the
         # address answers are two different facts.
         self.assertEqual(status(base).state, VIEW_SERVING)
+
+    def test_the_server_cairn_starts_has_no_administrator_account_left_to_take(self) -> None:
+        """Doc 16's exit criterion, asserted against a real server rather than reasoned
+        about: Cairn claims the account, and the next caller — which is what a local
+        process racing a human would be — finds it held."""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = int(probe.getsockname()[1])
+        base = f"http://127.0.0.1:{port}"
+        with patch.dict(os.environ, {"DAGU_HOME": str(self.home)}), warnings.catch_warnings():
+            warnings.simplefilter("ignore", ResourceWarning)
+            started = start(Binding("127.0.0.1", port), base=base)
+            self.addCleanup(self._stop, started.pid)
+        self.assertEqual(started.status.state, VIEW_SERVING, started.status.reason)
+        assert started.claim is not None
+        self.assertEqual(started.claim.state, CLAIM_CLAIMED, started.claim.reason)
+        self.assertEqual(started.claim.username, CLAIM_USERNAME)
+        assert started.claim.password is not None
+        self.assertEqual(claim_admin(base).state, CLAIM_HELD)
 
     def _stop(self, pid: int) -> None:
         with contextlib.suppress(ProcessLookupError, PermissionError):
@@ -1049,18 +1179,10 @@ class TheEnginesPathsAreAskedOfTheEngine(unittest.TestCase):
 class TheEngineAcceptsWhatCairnRefuses(unittest.TestCase):
     """For each trigger rule, Cairn refuses and `dagu validate` exits 0 on the same bytes."""
 
-    SKIP_ENV: ClassVar[str] = SKIP_ENV
-
     def setUp(self) -> None:
-        self.dagu = shutil.which("dagu")
-        if not self.dagu and not os.environ.get(self.SKIP_ENV):
-            self.fail(
-                "dagu is not installed, so these refusals are unverified against the engine "
-                f"that would run the same bytes. Install it, or set {self.SKIP_ENV}=1 to "
-                "record that this run did not check them."
-            )
-        if not self.dagu:
-            self.skipTest("recorded deliberately as unchecked")
+        self.dagu = require_engine(
+            self, "refusals the engine itself accepts the same bytes for"
+        )
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
@@ -1142,17 +1264,8 @@ class ASecondFiringDoesItsWork(unittest.TestCase):
     pin the occasion and the second firing no-ops instead.
     """
 
-    SKIP_ENV: ClassVar[str] = SKIP_ENV
-
     def setUp(self) -> None:
-        self.dagu = shutil.which("dagu")
-        if not self.dagu and not os.environ.get(self.SKIP_ENV):
-            self.fail(
-                "dagu is not installed, so the defect this closes is unverified. Install "
-                f"it, or set {self.SKIP_ENV}=1 to record that this run did not check it."
-            )
-        if not self.dagu:
-            self.skipTest("recorded deliberately as unchecked")
+        self.dagu = require_engine(self, "the occasion a second firing is keyed on")
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name).resolve()

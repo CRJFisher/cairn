@@ -87,6 +87,7 @@ from cairn.workflow.stamp import (
     workflow_path,
     write_stamp,
 )
+from tests.engine import require_engine
 from scripts.regenerate_workflows import (
     GOLDENS,
     OCCASION,
@@ -1236,18 +1237,8 @@ class APlanThatNamedNoAssertionStillReachesAWorkflow(unittest.TestCase):
 class TheEngineIsWhatDecidesTheShape(unittest.TestCase):
     """The pairing: what Cairn refuses, and what the engine says about the same bytes."""
 
-    SKIP_ENV: ClassVar[str] = "CAIRN_SKIP_ENGINE_TESTS"
-
     def setUp(self) -> None:
-        self.dagu = shutil.which("dagu")
-        if not self.dagu and not os.environ.get(self.SKIP_ENV):
-            self.fail(
-                "dagu is not installed, so the preflight's whole reason to exist is "
-                f"unverified. Install it, or set {self.SKIP_ENV}=1 to record that this run "
-                "did not check it."
-            )
-        if not self.dagu:
-            self.skipTest("recorded deliberately as unchecked")
+        self.dagu = require_engine(self, "the preflight's whole reason to exist")
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)

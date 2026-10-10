@@ -56,8 +56,8 @@ status` answers `serving`, `absent` or `foreign` and starts nothing. It is about
      port, and that `CAIRN_VIEW_BASE` is how Cairn is pointed at a view served elsewhere.
 
    Where the view was started, repeat the two things the command prints with the address:
-   open it now and claim the admin account, which begins unclaimed, and how to stop it —
-   which loses nothing, because it holds no run state.
+   the administrator account it claimed — the user and the password, said once because Cairn
+   keeps no copy — and how to stop it, which loses nothing, because it holds no run state.
 
 6. **Start it.** The request is the go-ahead; nothing is put to the person first.
    `python3 -m cairn run start --plan <slug> --repository <path> --session <path> --trigger

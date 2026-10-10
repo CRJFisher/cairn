@@ -9,5 +9,8 @@
       "summary": "the schema change needs a call on the sentinel's default"
     }
   },
+  "normalised": {
+    "interpreter": "python3"
+  },
   "damage": {}
 }

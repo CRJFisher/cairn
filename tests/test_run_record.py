@@ -11,7 +11,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -124,6 +123,7 @@ from cairn.verify import (
 )
 from cairn.view import VIEW_SERVING
 from cairn.workflow.schema import ENGINE_VERSION
+from tests.engine import require_engine
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 CORPUS = PACKAGE_ROOT / "fixtures" / "runs"
@@ -2549,10 +2549,6 @@ class TheStepsOwnAccountIsTheRicherSource(unittest.TestCase):
         self.assertEqual(record["verdict"], VERDICT_FAILED)
 
 
-@unittest.skipUnless(
-    os.environ.get("CAIRN_SKIP_ENGINE_TESTS") != "1" and shutil.which("dagu"),
-    "the crash case is about what a real engine leaves behind",
-)
 class AKilledRunIsReadForReal(unittest.TestCase):
     """Task 13: kill -9 a live run and read the record, with no repair in between.
 
@@ -2562,6 +2558,7 @@ class AKilledRunIsReadForReal(unittest.TestCase):
     """
 
     def setUp(self) -> None:
+        require_engine(self, "what a real engine leaves behind when it is killed")
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)

@@ -410,4 +410,4 @@ rechecks every pin and every quotation against the documents themselves.
 Six of these plans are also the recorded inputs to `fixtures/workflows/`, so a change to one
 of their graphs changes an emitted file too ([workflow.md](workflow.md)).
 
-Run everything with `python3 -m pytest -q` from this directory.
+Run everything with `python3 -m unittest discover -s tests -t .` from this directory.

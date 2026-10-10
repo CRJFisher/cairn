@@ -1,3 +1,47 @@
+# Cairn is one directory: the package, the skill's documents, and its fixtures. Installing
+# it gives you the executable; registering this directory with the agent harness gives you
+# the skill. Both paths are in the README, and neither reaches outside this checkout.
+#
+# A generated workflow does not use the executable. It names an immutable snapshot of this
+# package on its `PYTHONPATH` and runs `python3 -m cairn`, so an upgrade here cannot change
+# what a workflow authored yesterday executes.
+
+[project]
+name = "cairn"
+version = "0.1.0"
+description = "Run pre-planned Claude Code work trees as verified, concurrent workflows on Dagu"
+readme = "README.md"
+# 3.11 is the floor the package is written against, and the version an emitted step's
+# `python3` must satisfy: the code imports `datetime.UTC`, which arrived in 3.11, so an
+# older interpreter cannot import Cairn at all.
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+# The standard library and nothing else, on purpose: a step runs Cairn from a snapshot
+# directory on `PYTHONPATH`, where a dependency tree would have nowhere to be installed.
+dependencies = []
+classifiers = [
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Software Development :: Build Tools",
+]
+
+[project.scripts]
+cairn = "cairn.__main__:main"
+
+# The one development dependency: the type checker, pinned for the reason the engine is —
+# a checker that moves under the build turns somebody else's release into this
+# repository's red build. CI installs this exact version and a test holds the two in step.
+[dependency-groups]
+dev = ["pyright==1.1.411"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["cairn*"]
+
 [tool.pyright]
 pythonVersion = "3.11"
 typeCheckingMode = "strict"

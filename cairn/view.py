@@ -18,6 +18,13 @@ start-all` and never `dagu scheduler`: the scheduler's retry scanner re-executes
 run recorded on this machine in the last day ([docs/triggers.md]), and a request to see a
 graph never reaches for that.
 
+**A server Cairn starts is a server Cairn has claimed.** The engine's authentication begins
+unclaimed and the first local process to reach its setup endpoint becomes administrator — a
+shell `curl` won that race against a human in the spike — so an unclaimed running server is
+an open administrator account on the user's machine. `start` claims it in the same breath as
+starting it and hands the credentials over; a claim that cannot be made stops the server
+instead. There is no third end state ([16]).
+
 **It outlives the session that started it**, launched exactly the way a run is
 ([skill/trigger.launch_detached]) — its own session, stdin from `/dev/null`, output appended
 to a log under the engine home. Closing the conversation, a harness killing its process tree
@@ -31,6 +38,7 @@ same run.
 from __future__ import annotations
 
 import json
+import secrets
 import socket
 import subprocess
 import time
@@ -41,9 +49,9 @@ from pathlib import Path
 from typing import Any, NamedTuple, cast
 from urllib.parse import urlsplit
 
-from cairn.core import PopenFactory
+from cairn.core import Child, PopenFactory
 from cairn.enginehome import ENGINE_BINARY, run_records_path
-from cairn.layout import view_base, view_health_url
+from cairn.layout import view_base, view_health_url, view_setup_url
 from cairn.skill.trigger import launch_detached
 from cairn.workflow.schema import ENGINE_VERSION
 
@@ -75,6 +83,24 @@ SERVING_INTERVAL = 0.2
 # run history rather than in any repository: the server is the machine's, not one run's.
 VIEW_LOG_FILE = "view-server.log"
 
+# What became of the administrator account on a server Cairn started, and the only three
+# answers there are.
+CLAIM_CLAIMED = "claimed"
+CLAIM_HELD = "held"
+CLAIM_REFUSED = "refused"
+CLAIM_STATES: tuple[str, ...] = (CLAIM_CLAIMED, CLAIM_HELD, CLAIM_REFUSED)
+
+# The account Cairn creates, named for what created it so a person reading the engine's own
+# user list knows where it came from.
+CLAIM_USERNAME = "cairn"
+# Measured against Dagu 2.18.2, the engine refuses a password under twelve characters as not
+# meeting its security requirements; `token_urlsafe(24)` is thirty-two of them from the
+# platform's own entropy source.
+CLAIM_PASSWORD_BYTES = 24
+# One request to a server that has already answered its health check, so it is bounded the
+# way that check is rather than the way a launch is.
+CLAIM_TIMEOUT = 10.0
+
 
 class ViewStatus(NamedTuple):
     """What is on the view's address, with the reason in the same breath as the state.
@@ -103,6 +129,7 @@ class Answer(NamedTuple):
 
 
 Ask = Callable[[str, float], Answer]
+Post = Callable[[str, bytes, float], Answer]
 
 
 class Binding(NamedTuple):
@@ -123,18 +150,36 @@ class Bindable(NamedTuple):
         return self.binding is not None
 
 
+class ViewClaim(NamedTuple):
+    """What became of the administrator account on a server Cairn started.
+
+    The credentials are present only for `claimed`, because that is the only state in which
+    Cairn knows any: `held` means somebody else completed setup on this machine and their
+    password is theirs, and `refused` means nothing was claimed at all.
+    """
+
+    state: str
+    username: str | None
+    password: str | None
+    reason: str
+
+
 class ViewStarted(NamedTuple):
     """A launched server, and whether it came up answering.
 
     The process identifier is carried because the person is told how to stop it in the same
     reply they are told it is up: it holds no run state, so stopping it loses nothing, and a
     person who cannot name the process cannot act on that.
+
+    `claim` is `None` only where nothing was started or nothing answered. A server that is
+    up and has no claim beside it is a state this module does not return.
     """
 
     status: ViewStatus
     command: tuple[str, ...]
     log: Path
     pid: int
+    claim: ViewClaim | None = None
 
 
 def view_log_path() -> Path:
@@ -224,6 +269,84 @@ def status(base: str | None = None, *, ask: Ask = ask_health) -> ViewStatus:
     )
 
 
+def post_setup(url: str, payload: bytes, timeout: float) -> Answer:
+    """Put a claim to the setup address, and report what came back.
+
+    Every outcome is a value, the way a health answer is: a refusal is as much a fact about
+    the account as a success, and the caller has a server to stop either way.
+    """
+    request = urllib.request.Request(
+        url, data=payload, headers={"Content-Type": "application/json"}, method="POST"
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return Answer(int(response.status), response.read(HEALTH_BODY_LIMIT), "")
+    except urllib.error.HTTPError as answered:
+        return Answer(int(answered.code), answered.read(HEALTH_BODY_LIMIT), str(answered))
+    except (urllib.error.URLError, OSError, ValueError) as unreachable:
+        return Answer(None, b"", str(unreachable))
+
+
+def mint_password() -> str:
+    return secrets.token_urlsafe(CLAIM_PASSWORD_BYTES)
+
+
+def claim_admin(
+    base: str,
+    *,
+    post: Post = post_setup,
+    mint: Callable[[], str] = mint_password,
+) -> ViewClaim:
+    """Take the administrator account on a server, so that nothing else can.
+
+    The engine's server starts with its authentication unclaimed and the **first** local
+    process to reach its setup endpoint becomes administrator — a shell `curl` beat every
+    human to it when this was measured. A server left in that state is an open administrator
+    account on the user's machine for as long as it runs, so Cairn claims the account in the
+    same breath as starting the server and hands the credentials to the person.
+
+    The password is minted here and returned once. Cairn writes it nowhere: the engine keeps
+    its own hashed copy, and a copy in Cairn's state would be a credential Cairn holds.
+
+    `held` is not a failure. Setup is completed once per machine and survives restarts, so
+    the second server Cairn starts on a machine finds the account already taken — which is
+    the end state this exists to reach.
+    """
+    password = mint()
+    payload = json.dumps({"username": CLAIM_USERNAME, "password": password}).encode("utf-8")
+    answer = post(view_setup_url(base), payload, CLAIM_TIMEOUT)
+    if answer.code == 200:
+        return ViewClaim(
+            CLAIM_CLAIMED,
+            CLAIM_USERNAME,
+            password,
+            f"Cairn created the administrator account {CLAIM_USERNAME!r} on {base}",
+        )
+    if answer.code == 403:
+        return ViewClaim(
+            CLAIM_HELD,
+            None,
+            None,
+            f"the administrator account on {base} was already claimed, so this server "
+            "answers to whoever holds it",
+        )
+    if answer.code is None:
+        return ViewClaim(
+            CLAIM_REFUSED,
+            None,
+            None,
+            f"nothing answered the claim at {view_setup_url(base)}: "
+            f"{answer.said or 'the connection was refused'}",
+        )
+    return ViewClaim(
+        CLAIM_REFUSED,
+        None,
+        None,
+        f"the claim at {view_setup_url(base)} answered {answer.code} with "
+        f"{_glimpse(answer.body)}",
+    )
+
+
 def _glimpse(body: bytes) -> str:
     """Enough of another program's answer to recognise it by, and no more."""
     text = " ".join(body.decode("utf-8", errors="replace").split())
@@ -295,16 +418,30 @@ def serve_command(where: Binding) -> tuple[str, ...]:
     return (ENGINE_BINARY, "server", "--host", where.host, "--port", str(where.port))
 
 
+def stop(process: Child) -> None:
+    """End a server Cairn started, for the one case where leaving it up is the hazard.
+
+    A server whose administrator account could not be claimed is an open account for as
+    long as it runs, and Cairn started it — so the only other acceptable end state is no
+    server. Stopping one loses nothing: it holds no run state, and no run waits on it.
+    """
+    try:
+        process.terminate()
+    except OSError:
+        pass
+
+
 def start(
     where: Binding,
     *,
     base: str | None = None,
     factory: PopenFactory = subprocess.Popen,
     ask: Ask = ask_health,
+    claim: Callable[[str], ViewClaim] = claim_admin,
     monotonic: Callable[[], float] = time.monotonic,
     sleeper: Callable[[float], None] = time.sleep,
 ) -> ViewStarted:
-    """Serve the view, detached, and return once the address answers — or once it will not.
+    """Serve the view, detached, claim its administrator account, and hand both over.
 
     Detached for the reason a run is: the server has to outlive the conversation that asked
     for it, and a process group the harness kills takes everything inside it. It is Cairn's
@@ -315,6 +452,12 @@ def start(
     anything is listening, and the address Cairn is about to hand over is the thing being
     claimed — so it is read back from the health check, through the same reader that found it
     absent.
+
+    **The claim is not a separate step a caller may skip.** The server's authentication
+    begins unclaimed and the first local process to reach its setup endpoint becomes
+    administrator, so a server that is up and unclaimed is an open administrator account on
+    the user's machine. There are two end states here and no third: a server whose account
+    Cairn created and handed over, or no server at all.
     """
     log = view_log_path()
     command = serve_command(where)
@@ -325,7 +468,22 @@ def start(
     while True:
         found = status(address, ask=ask)
         if found.state == VIEW_SERVING:
-            return ViewStarted(found, command, log, pid)
+            taken = claim(address)
+            if taken.state != CLAIM_REFUSED:
+                return ViewStarted(found, command, log, pid, taken)
+            stop(process)
+            return ViewStarted(
+                found._replace(
+                    state=VIEW_ABSENT,
+                    reason=f"{taken.reason}. Cairn stopped the server it started rather "
+                    "than leave an administrator account on this machine for the next "
+                    "local process to take",
+                ),
+                command,
+                log,
+                pid,
+                taken,
+            )
         exited = process.poll()
         if exited is not None:
             return ViewStarted(
@@ -359,6 +517,13 @@ __all__ = [
     "HEALTH_TIMEOUT",
     "SERVING_INTERVAL",
     "SERVING_TIMEOUT",
+    "CLAIM_CLAIMED",
+    "CLAIM_HELD",
+    "CLAIM_PASSWORD_BYTES",
+    "CLAIM_REFUSED",
+    "CLAIM_STATES",
+    "CLAIM_TIMEOUT",
+    "CLAIM_USERNAME",
     "VIEW_ABSENT",
     "VIEW_FOREIGN",
     "VIEW_LOG_FILE",
@@ -368,13 +533,19 @@ __all__ = [
     "Ask",
     "Bindable",
     "Binding",
+    "ViewClaim",
     "ViewStarted",
     "ViewStatus",
+    "Post",
     "ask_health",
+    "claim_admin",
     "bindable",
     "binding",
+    "mint_password",
+    "post_setup",
     "serve_command",
     "start",
+    "stop",
     "status",
     "view_log_path",
 ]

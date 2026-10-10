@@ -135,6 +135,11 @@ VIEW_BASE_DEFAULT = "http://127.0.0.1:8080"
 # answers JSON with no authentication, while `/health` and `/api/v2/health` both answer 200
 # with the web app's HTML — so the path is as load-bearing as the reading of the body.
 VIEW_HEALTH_PATH = "/api/v1/health"
+# Where that server's administrator account is claimed, which is the one call Cairn makes
+# against a server it has just started ([view.claim_admin]). Measured against Dagu 2.18.2:
+# `POST` here with a username and a password answers `200` and a token for the first caller,
+# and `403 forbidden` — "Setup has already been completed" — for every caller after it.
+VIEW_SETUP_PATH = "/api/v1/auth/setup"
 # The engine's own two, honoured where Cairn has not been told otherwise, so a machine that
 # already says where its server listens does not have to say it twice.
 ENGINE_HOST_ENV = "DAGU_HOST"
@@ -199,6 +204,16 @@ def view_health_url(base: str | None = None) -> str:
     return f"{root}{VIEW_HEALTH_PATH}"
 
 
+def view_setup_url(base: str | None = None) -> str:
+    """Where the administrator account on the server behind one view base is claimed.
+
+    From the same base as the address handed over, for the reason the health address is: a
+    claim against an address nobody was sent to leaves the server they were sent to open.
+    """
+    root = view_base() if base is None else base.rstrip("/")
+    return f"{root}{VIEW_SETUP_PATH}"
+
+
 def occasion_path(runs_root: Path, run_id: str) -> Path:
     """Where this run records the occasion it is keyed on.
 
@@ -235,6 +250,7 @@ __all__ = [
     "VIEW_BASE_DEFAULT",
     "VIEW_BASE_ENV",
     "VIEW_HEALTH_PATH",
+    "VIEW_SETUP_PATH",
     "assertion_lock_path",
     "assertion_result_path",
     "assertions_directory",
@@ -248,5 +264,6 @@ __all__ = [
     "run_directory",
     "view_base",
     "view_health_url",
+    "view_setup_url",
     "view_url",
 ]

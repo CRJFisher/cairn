@@ -70,12 +70,14 @@ terminal hangup all stop at that boundary. A server started as a background job 
 would die with that shell, which is why starting one is this command rather than something
 improvised.
 
-**Claim the server's admin account when you start one.** It is safe in the sense that
-matters here — it holds no run state, so killing it loses nothing, and `view start` prints the
-process to kill — but its authentication begins unclaimed, and the first local process to call
-its setup endpoint becomes administrator. That is a packaging concern rather than this
-component's, and until it is closed, starting a server is a decision to make deliberately:
-Cairn asks once, and never starts one on a port it did not recognise.
+**A server Cairn starts is a server Cairn has claimed.** The engine's authentication begins
+unclaimed and the first local process to reach its setup endpoint becomes administrator, so a
+running unclaimed server is an open administrator account on the machine. `view start` claims
+it in the same breath as starting it: it posts a username of `cairn` and a password minted
+from the platform's entropy source, and prints both once — Cairn keeps no copy, and the engine
+keeps its own hashed one. An account somebody already claimed is reported as held, which is
+the same end state. A claim that cannot be made at all stops the server Cairn just started,
+because the two acceptable end states are a claimed server and no server.
 
 **Nothing about a run depends on any of this.** `dagu start` runs a workflow with no server,
 a run whose view was declined is the same run, and a server Cairn did not start is never
@@ -351,8 +353,9 @@ and the handler's own node are not yet recorded. It is regenerable, and a later
 created through its REST API and bound to the engine's own lifecycle events; the only
 in-file transport, `mail_on`, fires on the engine's verdict — which is precisely the verdict
 Cairn does not trust, because a run that dropped a branch reports clean. Binding one to
-Cairn's verdict needs a claimed admin account on a running server, and an unclaimed server is
-an open administrator account any local process can take — which is release's to close, not
-this component's. Until then an unattended run leaves a record a person can find, and
+Cairn's verdict needs an admin account on a running server, and the account `view start`
+claims is the machine's single one rather than a credential Cairn could hand a subsystem —
+so a channel bound to it would be bound to whatever the person did with that password. An
+unattended run leaves a record a person can find, and
 `cairn schedule status` is where they find the ones nothing is draining — but nothing is
 pushed to them.

@@ -58,6 +58,7 @@ from cairn.skill.trigger import (
 )
 from cairn.skill.vocabulary import TRIGGER_SHAPES
 from cairn.view import (
+    CLAIM_CLAIMED,
     VIEW_ABSENT,
     VIEW_FOREIGN,
     VIEW_SERVING,
@@ -412,22 +413,25 @@ def _cmd_view_start(args: argparse.Namespace) -> int:
     started = serve_view(allowed.binding, base=found.base)
     if started.status.state != VIEW_SERVING:
         print(f"refused  {started.status.reason}", file=sys.stderr)
-        # Left running deliberately — it may still come up — so the pid that stops it
-        # travels with the refusal rather than being findable only in the log.
-        print(f"pid      {started.pid}, if it is still running", file=sys.stderr)
+        if started.claim is None:
+            # Left running deliberately — it may still come up — so the pid that stops it
+            # travels with the refusal rather than being findable only in the log. A claim
+            # that failed has already stopped it, and there is no pid to offer.
+            print(f"pid      {started.pid}, if it is still running", file=sys.stderr)
+        print(f"said     {started.log}", file=sys.stderr)
         return EXIT_REFUSED
     print(f"serving  {found.base}")
     print(f"ran      {' '.join(started.command)}")
     print(f"pid      {started.pid}")
-    # The two things a started server owes the person, in the same breath as the address.
-    # Its authentication begins unclaimed and the first local process to call its setup
-    # endpoint becomes administrator ([docs/triggers.md]), so claiming it is not a chore to
-    # get to later.
-    print(
-        f"claim    open {found.base} now and claim the admin account: the server starts "
-        "with its authentication unclaimed, and the first local process to reach its setup "
-        "endpoint becomes administrator"
-    )
+    claim = started.claim
+    # The account is handed over in the same reply as the address, because the password is
+    # minted here and kept nowhere: Cairn has it once, in this sentence.
+    if claim is not None and claim.state == CLAIM_CLAIMED:
+        print(f"claim    {claim.reason}; it is written nowhere else, so keep it now")
+        print(f"user     {claim.username}")
+        print(f"password {claim.password}")
+    elif claim is not None:
+        print(f"claim    {claim.reason}")
     print(
         f"stop     kill {started.pid} — the server holds no run state, so stopping it "
         "loses nothing, and no run depends on it"

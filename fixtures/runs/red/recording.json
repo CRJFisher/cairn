@@ -4,5 +4,8 @@
   "engine": "2.18.2",
   "why": "a step fails, and everything behind it never runs",
   "hand_set_fields": {},
+  "normalised": {
+    "interpreter": "python3"
+  },
   "damage": {}
 }

@@ -4,5 +4,8 @@
   "engine": "2.18.2",
   "why": "the engine reports a clean Succeeded with exit 0 over an excluded step, because every node either succeeded or skipped and none failed. This is I5's regression fixture and the reason the verdict is derived by walking nodes",
   "hand_set_fields": {},
+  "normalised": {
+    "interpreter": "python3"
+  },
   "damage": {}
 }

@@ -11,7 +11,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from itertools import pairwise
 from pathlib import Path
-from typing import Any, ClassVar, cast
+from typing import Any, cast
 from unittest.mock import patch
 
 from cairn.assertions import (
@@ -90,7 +90,9 @@ from cairn.verify import (
     work_name,
 )
 from cairn.workflow.build import envelope
+from tests.engine import require_engine
 from tests.ownership import own_repository
+from tests.processes import reap
 from tests.test_step_protocol import run_cli, runtime_env, work_report
 
 # The engine mints a run id when none is given, and a run's records are keyed by it.
@@ -983,7 +985,7 @@ class PublishingAProofIsOneDecision(unittest.TestCase):
             stderr=subprocess.PIPE,
             text=True,
         )
-        self.addCleanup(child.kill)
+        self.addCleanup(reap, child)
         return child
 
     def _race(self, round_index: int, exits: tuple[int, ...]) -> dict[str, Any]:
@@ -1676,6 +1678,13 @@ class TheGateIsStatedOnce(unittest.TestCase):
             self.assertIn(f"`{cause}`", text)
 
     def test_the_causes_are_named_in_one_document_only(self) -> None:
+        """One statement of the vocabulary, so a second list cannot drift from it.
+
+        The README is the one other file that may name a cause, and only because its worked
+        example quotes what the renderer really printed — a sample of output rather than a
+        second definition. `tests/test_release.py` holds that quotation to the vocabulary,
+        so a renamed cause fails there rather than leaving a stale example.
+        """
         needle = "gate_indeterminate"
         holders = {
             path.name
@@ -1683,28 +1692,14 @@ class TheGateIsStatedOnce(unittest.TestCase):
             for path in CAIRN_ROOT.glob(pattern)
             if needle in path.read_text(encoding="utf-8")
         }
-        self.assertEqual(holders, {"verify.py", "verify-gate.md"})
+        self.assertEqual(holders, {"verify.py", "verify-gate.md", "README.md"})
 
 
 class TheEngineRoutesFailureByPosition(unittest.TestCase):
     """Against real Dagu, because every failure mode here otherwise reports success."""
 
-    SKIP_ENV = "CAIRN_SKIP_ENGINE_TESTS"
-    dagu: ClassVar[str | None] = None
-
-    @classmethod
-    def setUpClass(cls) -> None:
-        located = subprocess.run(("which", "dagu"), capture_output=True, text=True, check=False)
-        cls.dagu = located.stdout.strip() or None
-
     def setUp(self) -> None:
-        if self.dagu is None:
-            if os.environ.get(self.SKIP_ENV):
-                self.skipTest(f"{self.SKIP_ENV} is set")
-            self.fail(
-                "dagu is not installed, so the gate is unverified. Install it, or set "
-                f"{self.SKIP_ENV}=1 to record that this run did not check it."
-            )
+        self.dagu = require_engine(self, "how the gate routes a failure by position")
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name).resolve()
         self.engine_temporary = tempfile.TemporaryDirectory()

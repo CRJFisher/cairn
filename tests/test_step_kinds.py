@@ -62,6 +62,7 @@ from cairn.verify import (
     judge,
 )
 from tests.ownership import own_repository
+from tests.processes import reap
 from tests.test_step_protocol import plan_step
 
 
@@ -1369,9 +1370,7 @@ class ProviderBehavior(unittest.TestCase):
             self.assertEqual(outcome[0].status, "done")
         finally:
             for process in started:
-                if process.poll() is None:
-                    process.kill()
-                    process.wait()
+                reap(process)
 
     def test_an_answer_survives_a_provider_that_will_not_exit(self) -> None:
         started: list[subprocess.Popen[str]] = []
@@ -1419,9 +1418,7 @@ class ProviderBehavior(unittest.TestCase):
             self.assertIsNotNone(started[0].poll())
         finally:
             for process in started:
-                if process.poll() is None:
-                    process.kill()
-                    process.wait()
+                reap(process)
 
     def test_a_second_provider_is_one_dictionary_entry(self) -> None:
         self.assertEqual(set(PROVIDER_RUNNERS), {"claude"})

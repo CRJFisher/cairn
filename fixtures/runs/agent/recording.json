@@ -8,5 +8,8 @@
       "rate_limits": "redacted",
       "resets_at": "redacted"
     }
+  },
+  "normalised": {
+    "interpreter": "python3"
   }
 }

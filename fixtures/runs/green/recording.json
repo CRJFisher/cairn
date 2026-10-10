@@ -4,5 +4,8 @@
   "engine": "2.18.2",
   "why": "every step verified, nothing excluded, nothing left to do",
   "hand_set_fields": {},
+  "normalised": {
+    "interpreter": "python3"
+  },
   "damage": {}
 }

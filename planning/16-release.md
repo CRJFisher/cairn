@@ -6,11 +6,85 @@ nothing to a verified step by reading one file. The test is a fresh machine, not
 
 **Serves** D1, D5 and D6.
 
+**Status: implemented, except what only a second person on a second machine can establish
+(see Outcome).** Tasks 1–11, 14 and the stated half of 15 are done and asserted. Task 12 —
+the walk-through on a fresh machine by someone who is not the author, timed, with the number
+published — and task 13's re-authoring check, which is one step of that walk, are left to a
+person: they are facts about a machine this repository has never run on, and no test here
+can stand in for them.
+
 This is the whole of delivery: compliance, packaging and onboarding together. Cairn is a git
 repository with a README, published because it might help someone, with no launch sequence and
 no adoption target. So packaging is a directory move plus a manifest, onboarding is a cold path
 that has to be walked by someone who is not the author before it counts as a fact, and the
 posture is here because it is measured and load-bearing.
+
+## Outcome
+
+**What a person sees differently.** Cairn has an install path: prerequisites, one command
+that installs the pinned engine and verifies it against the release's own `checksums.txt`,
+one command that writes Cairn's values into the engine's machine-wide configuration, a
+`git clone` whose checkout is both the package and the skill, one symlink that registers it,
+and three checks that start nothing. The first thing the README then asks them to run is the
+**failing** example: `python3 -m scripts.worked_example` renders a run the engine calls
+`Succeeded` with exit `0`, over a step whose work never landed, and Cairn reports the step
+excluded, names the cause `gate_indeterminate`, and exits `3`. It needs no engine, no agent
+session, no network and no money. The README states the security posture it measured,
+including the sentence that no posture closes — the trust boundary is the user account, not
+the server — and the licensing boundary that keeps GPL obligations off the artifact.
+
+**A view Cairn starts is no longer an open administrator account.** The engine's
+authentication begins unclaimed and the first local process to reach its setup endpoint wins
+([03](03-surface-spike.md)). `cairn view start` now claims it in the same breath as starting
+the server: `POST /api/v1/auth/setup` with the user `cairn` and a password minted from the
+platform's entropy source, printed once and kept nowhere. Measured against 2.18.2: the first
+caller gets `200` and a token, every caller after it gets `403 Setup has already been
+completed` — so an account somebody else claimed reads as held, and that is the same end
+state. A claim that cannot be made stops the server Cairn just started. There are two end
+states and no third, asserted against a real server in `tests/test_triggers.py`.
+
+**Nothing in the artifact is shaped like its author.** `tests/test_release.py` fails on an
+absolute home directory anywhere in any tracked file — source, generated fixture or recorded
+one — with a declared placeholder list as the only way past it, and separately on this
+machine's own home and checkout path, which is a different literal on every machine that
+runs it. It found two real instances: the ten recorded runs in `fixtures/runs/` each carried
+the recording machine's absolute interpreter path, because the engine writes a step's command
+into its state file exactly as it ran it, and one planning document quoted an absolute path.
+`scripts/record_runs.py` now normalises that path to the bare name `python3` on every
+recording and declares the normalisation in `recording.json`, so the next re-recording cannot
+reintroduce it.
+
+**The gate is both halves and it runs somewhere that is not a laptop.**
+`.github/workflows/ci.yml` installs the pinned engine by the documented command, writes and
+then asserts the base configuration, runs `python3 -m unittest discover -s tests -t .` and
+strict Pyright, and fails the build on a `ResourceWarning` — the leak check is a grep,
+because a warning raised while the interpreter collects a leaked file is reported and
+swallowed rather than raised. The leaks the audit found were test-launched children whose
+pipes were never closed; `tests/processes.py` is the one way a test ends a child now.
+
+**One engine-test policy, not two.** Every suite that needs the engine fails without it, and
+`CAIRN_SKIP_ENGINE_TESTS=1` is the one way to pass without one. `tests/engine.py` is the
+single statement of it; the two suites that used to skip silently — a machine with no engine
+being the machine where everything passes — now do not.
+
+**The manifest is real.** `pyproject.toml` carries project metadata, a build backend, a
+`cairn` executable, no dependencies, and `requires-python = ">=3.11"`; the floor is the one
+Cairn actually has, because the package imports `datetime.UTC`. One test holds the manifest,
+Pyright's target and the README to the same number. Windows is refused by
+`cairn/__init__.py` with the thing to do instead, before the import of `fcntl` that would
+otherwise fail with a missing module on somebody's first command.
+
+**What the audit's numbers are now.** The suite is roughly 1,600 tests and strict Pyright
+reports none of the nine errors the audit found. No runtime is promised anywhere: the README
+says minutes rather than seconds and names no figure, because no figure measured here is a
+figure about CI.
+
+**Not done, and why.** Task 12 and task 13: a plan run end to end on a machine that has
+never held the author's files, timed, with the cold-start number published. Task 15's
+replacement of the baked interpreter resolution also stands open — the minimum version is
+now stated, which is the half this document owns outright, and the bare `python3` in every
+emitted body is unchanged, so a generated workflow remains the per-machine build product the
+claims below describe.
 
 ## The claims
 

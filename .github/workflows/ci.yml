@@ -1,0 +1,63 @@
+name: ci
+
+# The whole gate, on every change: the suite and the type checker, against the engine the
+# emitted format is pinned to. A green run here means a machine that is not the author's
+# installed the engine by the one documented command and then proved the same claims.
+on:
+  push:
+  pull_request:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    # The suite kills real processes, waits on real locks and drives a real engine, so it
+    # is minutes rather than seconds. The bound is a runaway guard, not a promise.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # The floor `pyproject.toml` declares. Checking the floor rather than the latest
+          # is the point: a step's `python3` is whatever the machine running it has.
+          python-version: "3.11"
+
+      - name: Install the pinned engine
+        # The one command the README's install path names, so a change that breaks cold
+        # acquisition breaks the build rather than the next person's afternoon. The
+        # installer verifies the download against the release's own checksums.
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL https://raw.githubusercontent.com/dagu-org/dagu/main/scripts/installer.sh \
+            | bash -s -- --version v2.18.2 --service no --install-dir "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Own the engine's base configuration
+        # Every workflow on the machine inherits this file, and the engine writes it with a
+        # catch-up window armed. Cairn's values are written, then asserted.
+        run: |
+          dagu version
+          python3 -m cairn supervise base-config --disable
+          python3 -m cairn supervise base-config
+
+      - name: The suite
+        # The leak check is the grep, not the warning filter: a `ResourceWarning` raised
+        # while the interpreter is collecting a leaked file is reported and swallowed, so
+        # turning warnings into errors would not fail anything. What fails the build is a
+        # warning appearing at all — a suite that leaves a file or a pipe open fails here
+        # rather than exhausting a descriptor table somewhere else entirely.
+        run: |
+          set -o pipefail
+          python3 -W error::ResourceWarning -m unittest discover -s tests -t . 2>&1 \
+            | tee suite.log
+          if grep -nE "ResourceWarning|Exception ignored" suite.log; then
+            echo "::error::the suite leaked a resource"
+            exit 1
+          fi
+
+      - name: Strict type checking
+        # Pinned for the reason the engine is: a checker that moves under the build turns
+        # someone else's release into this repository's red build.
+        run: |
+          python3 -m pip install pyright==1.1.411
+          pyright

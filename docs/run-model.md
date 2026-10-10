@@ -657,9 +657,13 @@ writing one somewhere nothing will look.
 
 ## The fixture corpus
 
-`fixtures/runs/<shape>/` holds `status.jsonl` copied verbatim from a real Dagu 2.18.2 run,
-that run's own step reports, and a `recording.json` naming the engine version, why the shape
-exists, and any field set by hand. `scripts/record_runs.py` re-records them.
+`fixtures/runs/<shape>/` holds `status.jsonl` written by a real Dagu 2.18.2 run, that run's
+own step reports, and a `recording.json` naming the engine version, why the shape exists,
+any field set by hand, and the one normalisation every recording carries: the engine writes
+a step's command into its state file exactly as it ran it, so the recording machine's
+absolute interpreter path is replaced by the bare name `python3` — a checked-in fixture
+carries no path belonging to the machine that recorded it ([16]).
+`scripts/record_runs.py` re-records them.
 
 Every state file is a real engine run, because the corpus exists to prove things about the
 engine and the fixture the exit criteria name is a claim only the engine can make. Every
