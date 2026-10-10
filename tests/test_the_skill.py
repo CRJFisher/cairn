@@ -48,7 +48,7 @@ from cairn.parameters import repository as declared_repository
 from cairn.record.vocabulary import VERDICT_PRECEDENCE
 from cairn.report import phrases
 from cairn.skill import explain, resolve, surface, trigger
-from cairn.skill.cli import explain_main, run_main
+from cairn.skill.cli import explain_main, run_main, view_main
 from cairn.skill.dispatch import (
     ASK_REASONS,
     DISPATCH_RULES,
@@ -90,6 +90,15 @@ from cairn.skill.vocabulary import (
     WRITES_NOTHING,
 )
 from cairn.verify import EXCLUSION_CAUSES
+from cairn.view import (
+    VIEW_ABSENT,
+    VIEW_FOREIGN,
+    VIEW_SERVING,
+    Bindable,
+    Binding,
+    ViewStarted,
+    ViewStatus,
+)
 from cairn.workflow.schema import (
     LABEL_GRAPH_DIGEST,
     PARENT_BRANCH_PARAM,
@@ -517,6 +526,7 @@ class FakeEngine:
         self.waited = False
         self.stdin = None
         self.stdout = None
+        self.pid = 4242
 
     def poll(self) -> int | None:
         return self.returncode
@@ -1430,6 +1440,151 @@ class TheEngineIsLaunchedToOutliveTheCommand(unittest.TestCase):
             self.root,
         )
         self.assertEqual(where.log, self.root / RUN_ID / "engine.log")
+
+
+class TheViewIsAskedAboutAndServedByItsOwnCommand(unittest.TestCase):
+    """Doc 33: what `cairn view` says, which is what the skill repeats to the person.
+
+    The run is not here, and that is the claim: neither verb takes a repository, resolves a
+    run or touches one. What they decide is whether a person is sent to an address that
+    loads.
+    """
+
+    def _said(self, argv: list[str], found: ViewStatus) -> tuple[int, str]:
+        spoken = io.StringIO()
+        with (
+            redirect_stdout(spoken),
+            redirect_stderr(spoken),
+            patch("cairn.skill.cli.view_status", return_value=found),
+        ):
+            return view_main(argv), spoken.getvalue()
+
+    def _absent(self) -> ViewStatus:
+        return ViewStatus(VIEW_ABSENT, "http://127.0.0.1:8080", "nothing answered", None)
+
+    def test_a_served_view_is_reported_with_its_version_and_nothing_is_started(self) -> None:
+        found = ViewStatus(
+            VIEW_SERVING, "http://127.0.0.1:8080", "dagu 2.18.2 is serving it", "2.18.2"
+        )
+        code, said = self._said(["status"], found)
+        self.assertEqual(code, 0)
+        self.assertIn(f"state    {VIEW_SERVING}", said)
+        self.assertIn("2.18.2", said)
+        self.assertNotIn("view start", said)
+
+    def test_an_absent_view_is_answered_with_the_command_that_serves_it(self) -> None:
+        code, said = self._said(["status"], self._absent())
+        self.assertEqual(code, 0, said)
+        self.assertIn(f"state    {VIEW_ABSENT}", said)
+        self.assertIn("python3 -m cairn view start", said)
+        self.assertIn("dagu server --host 127.0.0.1 --port 8080", said)
+
+    def test_a_foreign_answer_is_never_offered_a_launch(self) -> None:
+        found = ViewStatus(
+            VIEW_FOREIGN, "http://127.0.0.1:8080", "something else answered 200", None
+        )
+        code, said = self._said(["status"], found)
+        self.assertEqual(code, 0)
+        self.assertIn("CAIRN_VIEW_BASE", said)
+        self.assertNotIn("view start", said)
+
+    def test_reading_the_view_starts_nothing_whatever_the_answer_is(self) -> None:
+        """A status that could launch something would make the question decorative."""
+        for found in (
+            self._absent(),
+            ViewStatus(VIEW_FOREIGN, "http://127.0.0.1:8080", "something else", None),
+        ):
+            with self.subTest(state=found.state), patch(
+                "cairn.view.launch_detached",
+                side_effect=AssertionError("a status started a process"),
+            ):
+                self.assertEqual(self._said(["status"], found)[0], 0)
+
+    def test_a_start_against_something_that_is_not_the_view_is_refused(self) -> None:
+        found = ViewStatus(
+            VIEW_FOREIGN, "http://127.0.0.1:8080", "something else answered 200", None
+        )
+        with patch(
+            "cairn.view.launch_detached",
+            side_effect=AssertionError("a foreign port was launched onto"),
+        ):
+            code, said = self._said(["start"], found)
+        self.assertEqual(code, 1)
+        self.assertIn("refused", said)
+        self.assertIn("CAIRN_VIEW_BASE", said)
+
+    def test_a_start_against_a_view_already_up_launches_nothing(self) -> None:
+        found = ViewStatus(
+            VIEW_SERVING, "http://127.0.0.1:8080", "dagu 2.18.2 is serving it", "2.18.2"
+        )
+        with patch(
+            "cairn.view.launch_detached",
+            side_effect=AssertionError("a second server was launched"),
+        ):
+            code, said = self._said(["start"], found)
+        self.assertEqual(code, 0)
+        self.assertIn("nothing was started", said)
+
+    def test_a_shell_that_cannot_bind_is_told_that_rather_than_left_waiting(self) -> None:
+        """[19]'s wall 3 in its TCP spelling: an agent harness sandboxes its shell, and a
+        detached server refused the bind dies in a log nobody is watching."""
+        with (
+            patch(
+                "cairn.skill.cli.bindable",
+                return_value=Bindable(None, "this shell cannot bind 127.0.0.1:8080"),
+            ),
+            patch(
+                "cairn.view.launch_detached",
+                side_effect=AssertionError("a server was launched after a refused bind"),
+            ),
+        ):
+            code, said = self._said(["start"], self._absent())
+        self.assertEqual(code, 1)
+        self.assertIn("cannot bind", said)
+
+    def test_a_started_view_says_how_to_claim_it_and_how_to_stop_it(self) -> None:
+        """The two things a started server owes the person, in the same reply as the
+        address: its authentication begins unclaimed, and stopping it loses nothing."""
+        served = ViewStatus(
+            VIEW_SERVING, "http://127.0.0.1:8080", "dagu 2.18.2 is serving it", "2.18.2"
+        )
+        started = ViewStarted(served, ("dagu", "server"), Path("/tmp/view-server.log"), 4242)
+        with (
+            patch("cairn.skill.cli.bindable", return_value=Bindable(Binding("127.0.0.1", 8080), "")),
+            patch("cairn.skill.cli.serve_view", return_value=started),
+        ):
+            code, said = self._said(["start"], self._absent())
+        self.assertEqual(code, 0, said)
+        self.assertIn("claim", said)
+        self.assertIn("administrator", said)
+        self.assertIn("kill 4242", said)
+        self.assertIn("loses nothing", said)
+        self.assertIn("/tmp/view-server.log", said)
+
+    def test_a_server_that_never_answered_is_a_refusal_naming_where_it_said_why(self) -> None:
+        never = ViewStatus(
+            VIEW_ABSENT, "http://127.0.0.1:8080", "it did not answer; see /tmp/x.log", None
+        )
+        started = ViewStarted(never, ("dagu", "server"), Path("/tmp/x.log"), 4242)
+        with (
+            patch("cairn.skill.cli.bindable", return_value=Bindable(Binding("127.0.0.1", 8080), "")),
+            patch("cairn.skill.cli.serve_view", return_value=started),
+        ):
+            code, said = self._said(["start"], self._absent())
+        self.assertEqual(code, 1)
+        self.assertIn("/tmp/x.log", said)
+
+    def test_neither_verb_takes_a_repository(self) -> None:
+        """The view is the machine's one server, so there is no repository to resolve — and
+        a verb that asked for one would make a person answer for nothing."""
+        for verb in ("status", "start"):
+            with (
+                self.subTest(verb=verb),
+                redirect_stderr(io.StringIO()),
+                self.assertRaises(SystemExit) as caught,
+            ):
+                view_main([verb, "--repository", str(PACKAGE_ROOT)])
+            self.assertEqual(caught.exception.code, 2)
 
 
 class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):

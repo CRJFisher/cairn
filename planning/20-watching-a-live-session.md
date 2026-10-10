@@ -94,7 +94,9 @@ the `where` line in `cairn report` is the whole of Watch.
 
 **What must not change.** The report still rebuilds the record fresh on every invocation and holds
 no daemon and no poller; liveness is still decided by the process check; no engine server is
-required for the `where` line; the emitted workflow definitions are unchanged.
+required for the `where` line — the report reads whether one is serving the run's address and
+says so, and derives the line either way ([33](33-the-view-link-answers.md)); the emitted
+workflow definitions are unchanged.
 
 **Touches.** `cairn/providers.py` (the breadcrumb beside the tee), `cairn/record/extract.py` (the
 transcript tail and last-event age for running nodes), `cairn/record/facts.py`,

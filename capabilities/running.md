@@ -40,7 +40,26 @@ conversation is in>` and, where the request's subjects are documents, `--subject
    `python3 -m cairn explain workflow --plan <slug> --repository <path>` says what the
    definition does and whether it is still the file Cairn wrote, and starts nothing.
 
-5. **Start it.** The request is the go-ahead; nothing is put to the person first.
+5. **Check that the address you are about to hand over loads.** `python3 -m cairn view
+status` answers `serving`, `absent` or `foreign` and starts nothing. It is about the view and
+   never about the run: the run goes ahead whatever the answer is, and nothing here waits on
+   it.
+
+   - **`serving`** — say nothing about it; the link in step 7 just works.
+   - **`absent`** — **put one question with the ask tool, before the start**: start the view
+     server, or not now. Starting it runs `python3 -m cairn view start`, which serves the
+     address and keeps serving it after this conversation ends; declining starts the run
+     anyway and the reply prints the address together with the one command that serves it.
+     Never start a server as a background shell job of your own — that ties it to this
+     session and the link dies with the terminal.
+   - **`foreign`** — ask nothing and start nothing. Say what the command said is on that
+     port, and that `CAIRN_VIEW_BASE` is how Cairn is pointed at a view served elsewhere.
+
+   Where the view was started, repeat the two things the command prints with the address:
+   open it now and claim the admin account, which begins unclaimed, and how to stop it —
+   which loses nothing, because it holds no run state.
+
+6. **Start it.** The request is the go-ahead; nothing is put to the person first.
    `python3 -m cairn run start --plan <slug> --repository <path> --session <path> --trigger
 <shape>`. The run
    id is minted for you; pass `--run-id` only to choose one. The branch comes from the
@@ -50,10 +69,11 @@ conversation is in>` and, where the request's subjects are documents, `--subject
    a run from, and a working tree with uncommitted work or an unresolved merge in it — each
    before anything is written.
 
-6. **Hand over the address.** The command prints five lines — the repository and its
+7. **Hand over the address.** The command prints five lines — the repository and its
    provenance, the run id, the branch, where the run can be watched, and the command that
    reads its record — and it prints them **before it invokes the engine**, so a start killed
-   under a caller's own timeout has still told you the name of the run. Where the plan has run here before it also states the
+   under a caller's own timeout has still told you the name of the run. The watch line is
+   the address step 5 read, so say what that reading was where it was not `serving`. Where the plan has run here before it also states the
    occasion reading it took and what the other reading would have meant; say that too. It
    then returns as soon as the engine has taken the run on, not when the run ends: a long
    plan is a blocked terminal otherwise, and an agent harness kills its own tool call long
@@ -73,7 +93,7 @@ conversation is in>` and, where the request's subjects are documents, `--subject
    the engine said, and `cairn report --run <run-id>` a minute later for whether it took the
    run on. **Do not start the run again** until the report says it did not.
 
-7. **When it ends, report it.** [reading.md](reading.md). The command's own exit status says
+8. **When it ends, report it.** [reading.md](reading.md). The command's own exit status says
    only that the run was started: a run that dropped a branch exits zero at the engine level,
    and the verdict is derived by walking every node, which is `cairn report`'s to give.
 
@@ -149,7 +169,9 @@ killed run is given a terminal status.
 
 The graph drawn live, each step's state as it changes, the logs, the timings and the node a
 failure halted at. It reads a finished run identically to a live one and it survives the
-server restarting. Link to it; do not narrate it.
+server restarting. Link to it; do not narrate it — and link to it checked, which is step 5.
+A server Cairn started serves it until somebody stops it; a server Cairn did not start is
+never stopped, restarted or reconfigured by Cairn.
 
 What it will never answer is **divergence** and the **verdict**. Those are Cairn's and they
 live in the run record. Say which is which.

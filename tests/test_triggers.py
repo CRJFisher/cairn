@@ -15,15 +15,19 @@ defects they cover are the ones that otherwise report success. Set `CAIRN_SKIP_E
 to record deliberately that a run did not check them.
 """
 
+import contextlib
 import copy
 import hashlib
 import io
 import json
 import os
 import shutil
+import signal
+import socket
 import subprocess
 import tempfile
 import unittest
+import warnings
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -46,7 +50,13 @@ from cairn.enginehome import (
     forget_engine_paths,
     run_records_path,
 )
-from cairn.layout import VIEW_BASE_DEFAULT, occasion_path, view_base, view_url
+from cairn.layout import (
+    VIEW_BASE_DEFAULT,
+    occasion_path,
+    view_base,
+    view_health_url,
+    view_url,
+)
 from cairn.marker import OCCASION_PATTERN, mint_occasion, resolve_occasion
 from cairn.parameters import parameter, parent_branch, repository
 from cairn.record.extract import extract
@@ -63,10 +73,25 @@ from cairn.schedule import (
     scheduler_command,
 )
 from cairn.topology import WORKTREES_SUFFIX, worktrees_parent
+from cairn.view import (
+    SERVING_TIMEOUT,
+    VIEW_ABSENT,
+    VIEW_FOREIGN,
+    VIEW_SERVING,
+    Answer,
+    Ask,
+    Binding,
+    ViewStarted,
+    bindable,
+    serve_command,
+    start,
+    status,
+)
 from cairn.workflow.build import envelope
 from cairn.workflow.preflight import RULES, check
 from cairn.workflow.schema import (
     CATCHUP_DISABLED,
+    ENGINE_VERSION,
     OCCASION_PARAM,
     OVERLAP_SKIP,
     PARENT_BRANCH_PARAM,
@@ -76,9 +101,23 @@ from cairn.workflow.schema import (
     serialise,
 )
 
+# One detached-launch double, shared with the suite that proves the engine's own launch: two
+# fakes of one process shape would let the view's four flags drift from the engine's.
+from tests.test_the_skill import FakeEngine
+
 CAIRN_ROOT = Path(__file__).resolve().parent.parent
 TRIGGERS_DOC = CAIRN_ROOT / "docs" / "triggers.md"
 SKIP_ENV = "CAIRN_SKIP_ENGINE_TESTS"
+
+# What the pinned server really answered at each of the three view states, recorded by
+# `python3 -m scripts.record_view`. The engine double in this file is a recording for the
+# same reason the run corpus is: the claim being tested is a claim about the engine.
+VIEW_ANSWERS = cast(
+    dict[str, Any],
+    json.loads(
+        (CAIRN_ROOT / "fixtures" / "view" / "answers.json").read_text(encoding="utf-8")
+    ),
+)
 
 
 # The engine refuses a definition with no steps at all, so every document here carries one.
@@ -311,6 +350,288 @@ class TheLiveViewIsALink(unittest.TestCase):
         self.assertEqual(
             view_url("n", "r", "http://h:1/"), "http://h:1/dag-runs/n/r"
         )
+
+    def test_the_address_that_is_checked_is_the_address_that_is_handed_over(self) -> None:
+        """One base for both, so a healthy reading is a reading of the server a person is
+        sent to rather than of a neighbour Cairn derived for itself."""
+        self.assertEqual(
+            view_health_url("http://127.0.0.1:8080/"),
+            "http://127.0.0.1:8080/api/v1/health",
+        )
+        self.assertTrue(
+            view_health_url(VIEW_BASE_DEFAULT).startswith(
+                view_url("n", "r", VIEW_BASE_DEFAULT).split("/dag-runs")[0]
+            )
+        )
+
+
+# ---------------------------------------------------------------------------
+# Doc 33 — the view link answers when it is opened
+# ---------------------------------------------------------------------------
+
+
+def recorded_answer(state: str) -> Answer:
+    """One answer the pinned server really gave, read out of the recorded corpus."""
+    said = cast(dict[str, Any], VIEW_ANSWERS[state])
+    return Answer(said["code"], str(said["body"]).encode("utf-8"), str(said["said"]))
+
+
+def answering(answer: Answer) -> Ask:
+    def ask(url: str, timeout: float) -> Answer:
+        del url, timeout
+        return answer
+
+    return ask
+
+
+def no_sleep(seconds: float) -> None:
+    """The poll's own wait, taken out so a test of the poll is not a test of the clock."""
+    del seconds
+
+
+class TheViewsAddressIsReadBeforeAnybodyIsSentToIt(unittest.TestCase):
+    """Doc 33: the three states, driven by what a real server answered.
+
+    The corpus is recorded by `python3 -m scripts.record_view` against the pinned engine,
+    because the whole reason the body is read rather than the status code is a measurement —
+    and a hand-written body would assert the belief instead of the measurement.
+    """
+
+    def test_the_corpus_was_recorded_against_the_engine_cairn_pins(self) -> None:
+        self.assertEqual(VIEW_ANSWERS["recorded_with"], ENGINE_VERSION)
+
+    def test_a_server_that_answers_its_health_check_reads_as_serving(self) -> None:
+        found = status("http://127.0.0.1:8080", ask=answering(recorded_answer("serving")))
+        self.assertEqual(found.state, VIEW_SERVING)
+        self.assertEqual(found.version, ENGINE_VERSION)
+        self.assertIn("http://127.0.0.1:8080", found.reason)
+
+    def test_the_engines_own_web_app_on_a_health_path_reads_as_foreign(self) -> None:
+        """Measured: `/health` and `/api/v2/health` answer 200 with the web app's HTML, so a
+        reader that believed a status code would call any web server a healthy view."""
+        answer = recorded_answer("foreign")
+        self.assertEqual(answer.code, 200)
+        found = status("http://127.0.0.1:8080", ask=answering(answer))
+        self.assertEqual(found.state, VIEW_FOREIGN)
+        self.assertIsNone(found.version)
+
+    def test_nothing_listening_reads_as_absent_and_says_what_the_socket_said(self) -> None:
+        answer = recorded_answer("absent")
+        found = status("http://127.0.0.1:8080", ask=answering(answer))
+        self.assertEqual(found.state, VIEW_ABSENT)
+        self.assertIn("Connection refused", found.reason)
+
+    def test_a_json_answer_that_does_not_say_it_is_healthy_is_foreign(self) -> None:
+        for body in (b'{"status":"degraded","version":"2.18.2"}', b'{"status":"healthy"}', b"[]"):
+            with self.subTest(body=body):
+                self.assertEqual(
+                    status("http://h:1", ask=answering(Answer(200, body, ""))).state,
+                    VIEW_FOREIGN,
+                )
+
+    def test_an_answer_from_something_that_is_not_the_view_is_foreign(self) -> None:
+        self.assertEqual(
+            status("http://h:1", ask=answering(Answer(404, b"nope", "404"))).state,
+            VIEW_FOREIGN,
+        )
+
+    def test_a_view_of_another_version_still_serves_and_the_drift_is_stated(self) -> None:
+        """The pin is the run's gate to enforce. A view of another version draws the run
+        perfectly well, and refusing to link to it would take the graph away over a fact
+        about a binary nobody is about to invoke."""
+        answer = Answer(200, b'{"status":"healthy","version":"2.11.0"}', "")
+        found = status("http://h:1", ask=answering(answer))
+        self.assertEqual((found.state, found.version), (VIEW_SERVING, "2.11.0"))
+        self.assertIn(ENGINE_VERSION, found.reason)
+
+    def test_the_question_is_put_to_the_views_own_health_address(self) -> None:
+        asked: list[str] = []
+
+        def ask(url: str, timeout: float) -> Answer:
+            del timeout
+            asked.append(url)
+            return recorded_answer("absent")
+
+        status("http://127.0.0.1:9999", ask=ask)
+        self.assertEqual(asked, ["http://127.0.0.1:9999/api/v1/health"])
+
+
+class NothingStartedForAViewIsEverAScheduler(unittest.TestCase):
+    """Doc 33: the scheduler's retry scanner re-executes failed runs across the machine, and
+    a request to see a graph never reaches for it."""
+
+    def test_the_command_is_the_view_server_and_nothing_else(self) -> None:
+        self.assertEqual(
+            serve_command(Binding("127.0.0.1", 8080)),
+            ("dagu", "server", "--host", "127.0.0.1", "--port", "8080"),
+        )
+
+    def test_the_module_holds_no_argument_that_could_spell_either_daemon(self) -> None:
+        """Quoted literals rather than prose: what reaches a command line is a string, and
+        the module says in words why neither of these is ever one."""
+        source = (CAIRN_ROOT / "cairn" / "view.py").read_text(encoding="utf-8")
+        for forbidden in ('"start-all"', '"scheduler"', "'start-all'", "'scheduler'"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, source)
+
+
+class AViewServerOutlivesTheSessionThatAskedForIt(unittest.TestCase):
+    """Doc 33: the link has to load after the conversation that started it has ended."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.options: dict[str, Any] = {}
+        self.commands: list[tuple[str, ...]] = []
+
+    def _factory(self, command: list[str], **options: Any) -> FakeEngine:
+        self.commands.append(tuple(command))
+        self.options = options
+        return FakeEngine()
+
+    def _start(self, answers: list[Answer], **extra: Any) -> ViewStarted:
+        with patch("cairn.view.view_log_path", return_value=self.root / "view-server.log"):
+            return start(
+                Binding("127.0.0.1", 8080),
+                factory=self._factory,
+                ask=lambda url, timeout: answers.pop(0),
+                **extra,
+            )
+
+    def test_the_server_leaves_the_commands_session_and_holds_no_pipe(self) -> None:
+        self._start([recorded_answer("serving")])
+        self.assertIs(self.options["start_new_session"], True)
+        self.assertIs(self.options["stdin"], subprocess.DEVNULL)
+        self.assertIs(self.options["stderr"], subprocess.STDOUT)
+        self.assertEqual(
+            Path(self.options["stdout"].name), self.root / "view-server.log"
+        )
+
+    def test_it_is_launched_the_way_a_run_is_rather_than_copied(self) -> None:
+        """One detached launch in Cairn, so the four flags that make a process outlive its
+        caller cannot drift between the engine and the view."""
+        source = (CAIRN_ROOT / "cairn" / "view.py").read_text(encoding="utf-8")
+        self.assertIn("from cairn.skill.trigger import launch_detached", source)
+        self.assertNotIn("start_new_session", source)
+
+    def test_the_address_is_read_back_before_it_is_claimed_to_be_serving(self) -> None:
+        """A launched process says nothing about whether anything is listening."""
+        started = self._start(
+            [recorded_answer("absent"), recorded_answer("serving")],
+            sleeper=no_sleep,
+        )
+        self.assertEqual(started.status.state, VIEW_SERVING)
+        self.assertEqual(started.pid, 4242)
+        self.assertEqual(started.log, self.root / "view-server.log")
+
+    def test_a_server_that_exited_without_serving_says_where_it_said_why(self) -> None:
+        def factory(command: list[str], **options: Any) -> FakeEngine:
+            del command, options
+            return FakeEngine(exit_code=1)
+
+        with patch("cairn.view.view_log_path", return_value=self.root / "view-server.log"):
+            started = start(
+                Binding("127.0.0.1", 8080),
+                factory=factory,
+                ask=answering(recorded_answer("absent")),
+            )
+        self.assertNotEqual(started.status.state, VIEW_SERVING)
+        self.assertIn("exited 1", started.status.reason)
+        self.assertIn("view-server.log", started.status.reason)
+
+    def test_a_server_that_has_not_answered_yet_is_left_running(self) -> None:
+        """Killing a server that is a moment from answering, on a timer, is the one
+        destructive move available here."""
+        clock = iter([0.0, 0.0, SERVING_TIMEOUT + 1])
+        started = self._start(
+            [recorded_answer("absent"), recorded_answer("absent")],
+            monotonic=lambda: next(clock),
+            sleeper=no_sleep,
+        )
+        self.assertNotEqual(started.status.state, VIEW_SERVING)
+        self.assertIn("did not answer", started.status.reason)
+        self.assertIn("view-server.log", started.status.reason)
+
+
+class TheBindIsProbedBeforeAnythingIsLaunched(unittest.TestCase):
+    """Doc 33: the sandbox wall in its TCP spelling, found before a person is left waiting."""
+
+    def test_an_address_this_machine_could_not_serve_is_refused_with_the_reason(self) -> None:
+        for base in ("https://dagu.example", "http://dagu.example", "http://h:not-a-port"):
+            with self.subTest(base=base):
+                allowed = bindable(base)
+                self.assertFalse(allowed.allowed)
+                self.assertIn("CAIRN_VIEW_BASE", allowed.reason)
+
+    def test_a_free_loopback_port_is_bindable(self) -> None:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = int(probe.getsockname()[1])
+        allowed = bindable(f"http://127.0.0.1:{port}")
+        self.assertEqual(allowed.binding, Binding("127.0.0.1", port))
+
+    def test_a_port_something_else_already_holds_is_refused(self) -> None:
+        """The one race the reading can lose: a server that appeared between the reading and
+        the launch. The bind is what catches it, and nothing is launched on top."""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as held:
+            held.bind(("127.0.0.1", 0))
+            held.listen(1)
+            port = int(held.getsockname()[1])
+            allowed = bindable(f"http://127.0.0.1:{port}")
+        self.assertFalse(allowed.allowed)
+        self.assertIn(f"127.0.0.1:{port}", allowed.reason)
+
+
+class TheViewServerCairnStartsReallyServesTheLink(unittest.TestCase):
+    """Doc 33's first acceptance criterion, against the engine rather than a double.
+
+    One real `dagu server`, on a port of its own, read back through the same health check a
+    person's browser would be sent to — then stopped, because a server the suite started is
+    not a server anybody was told about.
+    """
+
+    SKIP_ENV: ClassVar[str] = SKIP_ENV
+
+    def setUp(self) -> None:
+        self.dagu = shutil.which("dagu")
+        if not self.dagu and not os.environ.get(self.SKIP_ENV):
+            self.fail(
+                "dagu is not installed, so the view Cairn offers to start is unverified "
+                f"against the engine that serves it. Install it, or set {self.SKIP_ENV}=1 "
+                "to record that this run did not check it."
+            )
+        if not self.dagu:
+            self.skipTest("recorded deliberately as unchecked")
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.home = Path(self.temporary.name) / "home"
+        self.home.mkdir(parents=True)
+
+    def test_the_address_cairn_prints_loads_once_the_view_is_started(self) -> None:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = int(probe.getsockname()[1])
+        base = f"http://127.0.0.1:{port}"
+        self.assertEqual(status(base).state, VIEW_ABSENT)
+        with patch.dict(os.environ, {"DAGU_HOME": str(self.home)}), warnings.catch_warnings():
+            # A detached launch deliberately leaves nobody waiting on the child, which is
+            # what the whole design is for; the interpreter reads that as an unreaped
+            # process. The warning is the detachment, not a leak.
+            warnings.simplefilter("ignore", ResourceWarning)
+            started = start(Binding("127.0.0.1", port), base=base)
+            self.addCleanup(self._stop, started.pid)
+            self.assertEqual(started.status.state, VIEW_SERVING)
+            self.assertEqual(started.status.version, ENGINE_VERSION)
+            # The log is under the engine's own home, not in any repository.
+            self.assertEqual(started.log.parent, run_records_path().parent)
+        # Asked again through a fresh reading, because what the start claims and what the
+        # address answers are two different facts.
+        self.assertEqual(status(base).state, VIEW_SERVING)
+
+    def _stop(self, pid: int) -> None:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.kill(pid, signal.SIGTERM)
 
 
 # ---------------------------------------------------------------------------

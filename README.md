@@ -33,7 +33,9 @@ is derived by walking every node — so a run the engine calls a clean success o
 step reads as exactly that; give a plan a cron schedule and install it where a scheduler
 watches, with `cairn schedule start` refusing on a machine whose retry or catchup policy
 would re-execute failed runs; read any run at the engine's own view, from the address its
-record carries; and render that record for a terminal, a repository or a browser with
+record carries — checked before anyone is sent to it, and served on request by one detached
+`dagu server` that outlives the conversation asking for it; and render that record for a
+terminal, a repository or a browser with
 `python3 -m cairn report --run <run-id> --repository <path>`, which answers in order whether
 it worked, what to do next, what needs attention, what each step did, and what shape the run was. Every run leaves that record whether anyone watched it or not.
 And start a run of the definition that would execute, handing the engine exactly that one run.
@@ -111,9 +113,12 @@ the skill that drives all of it.
   graph layout, and the three renderings.
 - `cairn/skill/` — `vocabulary.py` the frozen words, `dispatch.py` the rule table and its
   ask list, `resolve.py` the repository and the occasion,
-  `trigger.py` the one path that starts a run, `explain.py` three answers, `surface.py` the
-  measurement below, `cli.py` the two commands. `cairn run start` starts one run, and
+  `trigger.py` the one path that starts a run, `explain.py` four answers, `surface.py` the
+  measurement below, `cli.py` the three commands. `cairn run start` starts one run, and
   `trigger.start` is the only thing here that can invoke the engine.
+- `cairn/view.py` — whether the address a run is watched at is being served, absent or held
+  by something else, and the one detached `dagu server` Cairn will start for it. Never the
+  scheduler; no run waits on any of it.
 - `fixtures/plans/` — sixteen plans with their golden graphs and expected verdicts, two of
   them carrying the answers their authoring conversation received.
 - `fixtures/workflows/` — the whole emitted file for six of those plans, one per topology
@@ -122,7 +127,11 @@ the skill that drives all of it.
   green-with-exclusions, all-no-op, mid-run, crashed, timed-out, one real agent step, and
   one whose evidence was then damaged in five declared ways. Three of them are the same
   clean success as far as the engine is concerned and none of them extracts the same way.
+- `fixtures/view/` — what the pinned server really answers at each of the three view states,
+  including the web app's HTML under a `200` on a neighbouring health path, which is why the
+  reading is of the body and not the status code.
 - `scripts/record_runs.py` — re-records that corpus against the installed engine.
+- `scripts/record_view.py` — re-records the view answers against one real server.
 - `scripts/measure_fanout.py` — what the fan-out buys and what the mutex adds, as numbers.
 - `fixtures/invocations/` — every phrasing the skill is held to, what each must resolve to,
   and what the corpus does and does not prove.
@@ -167,8 +176,8 @@ Measured by `python3 -m scripts.measure_surface`. Tokens are an estimate at 4 ch
 | Read                          | What                                   | Characters | Lines | Tokens (est.) |
 | ----------------------------- | -------------------------------------- | ---------: | ----: | ------------: |
 | when Cairn is named           | the skill's description                |      `211` |   `1` |          `53` |
-| when Cairn is named           | `SKILL.md`                             |    `13274` | `192` |        `3319` |
-| when a capability is selected | `capabilities/running.md`, the largest |    `10292` | `155` |        `2573` |
+| when Cairn is named           | `SKILL.md`                             |    `13778` | `199` |        `3445` |
+| when a capability is selected | `capabilities/running.md`, the largest |    `11849` | `177` |        `2963` |
 
 **None of it is read unless asked for.** Cairn declares `disable-model-invocation: true`, so
 its description stays out of a session's context until someone types `/cairn` — a session

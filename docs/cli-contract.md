@@ -4,7 +4,7 @@
 interface. It is the only entry point, and the skill invokes it: a person asks for what they
 want and never learns one of these lines ([../SKILL.md](../SKILL.md)). Runtime commands — `exec`, `wait`,
 `agent`, `marker write`, `lock`, `worktree`, `commit`, `merge`, `wave` — dispatch through a
-dictionary and run inside a step. Twelve commands take no part in that dispatch: `cairn plan …`
+dictionary and run inside a step. Thirteen commands take no part in that dispatch: `cairn plan …`
 runs at derivation time
 against a graph on disk, `cairn workflow …` generates and checks an engine definition
 ([workflow.md](workflow.md)), `cairn occasion new` mints an occasion a caller means to pin,
@@ -13,16 +13,19 @@ against a graph on disk, `cairn workflow …` generates and checks an engine def
 `cairn supervise …` repairs a run that is over, `cairn record …` reads one
 ([run-model.md](run-model.md)), `cairn report …` renders it ([report.md](report.md)), and
 `cairn schedule …` installs a recurring trigger and starts the daemon it needs
-([triggers.md](triggers.md)), `cairn run start` starts a run, and `cairn explain …` answers
+([triggers.md](triggers.md)), `cairn run start` starts a run, `cairn explain …` answers
 what a workflow would do, what a frozen word means
-and why a step was excluded, and `cairn hook stop` answers the one hook a step's own session
+and why a step was excluded, `cairn view status` says whether the address a run is watched at
+is being served and `cairn view start` serves it — one detached `dagu server`, never the
+scheduler, and never on a port something else already answers on
+([triggers.md](triggers.md)), and `cairn hook stop` answers the one hook a step's own session
 runs under — reading the harness's end-of-turn payload on stdin and exiting `2` to hold the
 turn open while a background shell the session started is still running, or `0` to let it
 end ([step-protocol.md](step-protocol.md)). It is routed ahead of every other command
 because it runs as a grandchild of a step and inherits the step's environment: one that
 resolved a runtime identity would overwrite the very report the verify gate reads. It
 **fails open** on any fault — the inverse of the verify gate, because it holds an agent
-session and nothing in Cairn may depend on it having run. None of the twelve takes a runtime
+session and nothing in Cairn may depend on it having run. None of the thirteen takes a runtime
 identity, and only the verify gate leaves a report — under the name of the step it gated, on the one path where no step
 will run to write one.
 

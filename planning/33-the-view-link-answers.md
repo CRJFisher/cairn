@@ -10,6 +10,40 @@ thing the person tried to use.
 and logs Cairn points at actually load. When they cannot, the person is told why and offered
 the fix, before they find out in a browser.
 
+**Status: implemented (see Outcome). Every section below is done.**
+
+## Outcome
+
+**What a person sees differently.** A run is no longer preceded by an unchecked address. Run
+reads the view before it hands one over and, where nothing is listening, asks once whether to
+serve it — the run goes ahead either way. A view Cairn starts is one detached `dagu server`
+that outlives the conversation: measured, the process reparents to `init` and still answers
+after the shell that asked for it has gone, and the run's page returns `200`. A port holding
+something else is named rather than taken over, and `CAIRN_VIEW_BASE` is offered as the way
+to point Cairn at a view served elsewhere. A report on any run now says what the address it
+prints is doing, in all three renderings, and names `dagu server` where nothing is serving it.
+Nothing on the way to a view runs a scheduler: the command is `dagu server`, and `ps` shows
+only that.
+
+**How it is built.** `cairn/view.py` is the reading, the bind probe and the detached launch;
+`cairn view status` and `cairn view start` are the two verbs the skill invokes, and neither
+takes a repository, because the view is the machine's one server rather than a repository's.
+The reading is of the health **body**: measured on 2.18.2, `/api/v1/health` answers
+`{"status":"healthy",…,"version":"2.18.2"}` with no authentication while `/health` and
+`/api/v2/health` both answer `200` with the web app's HTML, so a reader that believed a status
+code would call any web server a healthy view. `fixtures/view/answers.json` records all three
+answers from a real server, re-recordable with `python3 -m scripts.record_view`. A view of
+another version serves and the drift is stated; the pin stays the run gate's to enforce.
+
+**What the report carries.** The serving reading is taken by `cairn report` and handed to
+`compose.document(record, view_state)`. It is deliberately **not** a record field: whether a
+server is listening is a fact about this machine now rather than about the run, and a record
+that carried it would go stale on disk and make every corpus reading depend on the machine
+the suite runs on.
+
+**The cost.** `SKILL.md` grew by the paragraph saying Cairn serves the view on request, and
+`ON_TRIGGER_CHARACTER_LIMIT` moved to 13,800 with that reason recorded beside it.
+
 ## Today
 
 - `cairn/layout.py` builds the address from `CAIRN_VIEW_BASE`, then the engine's

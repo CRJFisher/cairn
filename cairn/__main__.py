@@ -73,7 +73,7 @@ from cairn.record.cli import main as record_main
 from cairn.record.store import build_run_record, write_record
 from cairn.report.cli import main as report_main
 from cairn.schedule_cli import main as schedule_main
-from cairn.skill.cli import explain_main, run_main
+from cairn.skill.cli import explain_main, run_main, view_main
 from cairn.supervise import find_run_record
 from cairn.supervise_cli import main as supervise_main
 from cairn.topology import node_name, worktrees_root_for
@@ -460,13 +460,13 @@ def _parser(*, add_help: bool = True) -> argparse.ArgumentParser:
         description=__doc__,
         add_help=add_help,
         epilog=(
-            "Twelve more commands are dispatched before these and take no step identity: "
+            "Thirteen more commands are dispatched before these and take no step identity: "
             "`cairn plan`, `cairn occasion new`, `cairn marker absent`, "
             "`cairn verify gate`, `cairn supervise`, `cairn schedule`, "
             "`cairn workflow`, `cairn record`, `cairn report`, `cairn run`, "
-            "`cairn explain` and `cairn hook stop`. Each has its own --help. None of them "
-            "is the surface: type `/cairn` and say what you want, and the skill runs "
-            "these for you."
+            "`cairn explain`, `cairn view` and `cairn hook stop`. Each has its own "
+            "--help. None of them is the surface: type `/cairn` and say what you want, "
+            "and the skill runs these for you."
         ),
     )
     subcommands = parser.add_subparsers(dest="command_name", required=True)
@@ -703,12 +703,15 @@ def main(argv: list[str] | None = None) -> int:
         return record_main(arguments[1:])
     if arguments and arguments[0] == "report":
         return report_main(arguments[1:])
-    # The skill's own two. `run` is the only path in Cairn's code that begins a run;
-    # `explain` answers three questions and starts nothing ([skill/cli.py]).
+    # The skill's own three. `run` is the only path in Cairn's code that begins a run;
+    # `explain` answers four questions and starts nothing; `view` reads and, asked to, serves
+    # the address a run is watched at, which no run ever waits on ([skill/cli.py]).
     if arguments and arguments[0] == "run":
         return run_main(arguments[1:])
     if arguments and arguments[0] == "explain":
         return explain_main(arguments[1:])
+    if arguments and arguments[0] == "view":
+        return view_main(arguments[1:])
     # The whole marker namespace but `write` belongs to the gate, so a mistyped verb is
     # answered by the fail-open precondition rather than falling through to the step
     # dispatch, which would skip the step and leave a report claiming it failed.

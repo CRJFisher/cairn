@@ -122,6 +122,7 @@ from cairn.verify import (
     TIMED_OUT,
     VERIFY_FAILED,
 )
+from cairn.view import VIEW_SERVING
 from cairn.workflow.schema import ENGINE_VERSION
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -1584,7 +1585,7 @@ class ANoOpNamesWhoDidTheWork(unittest.TestCase):
         step = record["steps"][0]
         self.assertEqual(step["outcome"], OUTCOME_VERIFIED)
         self.assertIsNone(step["freshness"])
-        text = " ".join(render(document(record), as_mapping(record)).text.split())
+        text = " ".join(render(document(record, VIEW_SERVING), as_mapping(record)).text.split())
         self.assertNotIn("alpha was already complete", text)
 
     def test_a_run_with_no_lineage_still_extracts(self) -> None:

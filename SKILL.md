@@ -179,6 +179,13 @@ subprocess. Its view draws a running graph — the topology, each step's state a
 logs, timings, the halted node — better than a conversation can, and reads a finished run
 identically to a live one. Run and Report link to it rather than describing what it drew.
 
+**Cairn serves that view on request, and only that view.** The engine serves nothing until
+something starts it, so Run checks the address it is about to hand over and asks once where
+nothing is listening, and the server it starts then outlives the conversation that asked for
+it. Never a scheduler, by any door — wanting to see a graph is not the escalation. A server
+Cairn did not start is never stopped or reconfigured by it, and a port answering as something
+else is reported rather than taken over.
+
 Its command line is the one you already have for your other jobs, and the README says which
 of its verbs are worth pointing at. Cairn refuses exactly one: never `dagu retry`, because
 re-running a plan is the whole recovery story and a continued occasion is what makes it cheap.

@@ -1,4 +1,4 @@
-"""`python3 -m cairn run` and `python3 -m cairn explain` — what the skill invokes.
+"""`cairn run`, `cairn explain` and `cairn view` — what the skill invokes.
 
 Like `cairn plan`, `cairn workflow`, `cairn schedule`, `cairn record` and `cairn report`,
 these run outside any run: they resolve no runtime identity and leave no step report. They
@@ -8,11 +8,16 @@ they want and never learns one of these lines.
 `run` has one verb, `start`: a request to run is the go-ahead, so it gates the definition,
 begins the run and hands back the run's id and where it can be watched. `explain` has four
 verbs, one per question it answers, and none of them starts, locks or writes anything.
+`view` has two, `status` and `start`, and they are about the address a run is watched at
+rather than about any run: a run is neither started, waited on nor changed by either
+([cairn/view.py]).
 
 **Every one of them says which repository it took and where that came from**, in its first
 line, before whatever else it prints. A repository is resolved from what was named, from
 where the request's subjects live, or from the session's own directory ([resolve.py]) — so
-the line that says which candidate answered is what a person checks the answer against.
+the line that says which candidate answered is what a person checks the answer against. The
+two `view` verbs are the exception, and the reason is the design: the view is the machine's
+one server, not a repository's, so there is no repository for either of them to take.
 """
 
 from __future__ import annotations
@@ -52,6 +57,20 @@ from cairn.skill.trigger import (
     start,
 )
 from cairn.skill.vocabulary import TRIGGER_SHAPES
+from cairn.view import (
+    VIEW_ABSENT,
+    VIEW_FOREIGN,
+    VIEW_SERVING,
+    bindable,
+    binding,
+    serve_command,
+)
+from cairn.view import (
+    start as serve_view,
+)
+from cairn.view import (
+    status as view_status,
+)
 from cairn.workflow.gate import Admission, admit
 from cairn.workflow.schema import LABEL_GRAPH_DIGEST, PARENT_BRANCH_PARAM
 from cairn.workflow.stamp import workflow_path
@@ -334,6 +353,86 @@ def _cmd_explain_exclusion(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_view_status(args: argparse.Namespace) -> int:
+    """Say what is on the view's address, and start nothing whatever the answer is.
+
+    Exit zero for all three states. Each of them is this command answering the question it
+    was asked — "no view is running" is an answer, not a failure — and a nonzero status would
+    read as the check itself having gone wrong. The state gets a line of its own, under the
+    address it is about, because which of the three it is decides what the caller does next.
+    """
+    found = view_status(args.base)
+    print(f"view     {found.base}")
+    print(f"state    {found.state}")
+    print(f"because  {found.reason}")
+    if found.state == VIEW_SERVING:
+        print(f"version  {found.version}")
+    if found.state == VIEW_ABSENT:
+        # Cairn's own command first, because it is the one that detaches: a server started
+        # as a shell job of the session dies with the session, and the link with it.
+        print("serve    python3 -m cairn view start")
+        where = binding(found.base)
+        if where is not None:
+            print(f"or       {' '.join(serve_command(where))}, kept alive yourself")
+    if found.state == VIEW_FOREIGN:
+        # Never answered by starting anything: a second server cannot have the port, and
+        # whatever holds it is not Cairn's to stop.
+        print(
+            "point    set CAIRN_VIEW_BASE to where the engine's view is served, and Cairn "
+            "will print and check that address instead"
+        )
+    return EXIT_OK
+
+
+def _cmd_view_start(args: argparse.Namespace) -> int:
+    """Serve the view, once it is established that nothing already does.
+
+    **The order is the whole safety of it.** The address is read first, so a server already
+    up is left alone and a port held by something else is refused rather than competed with;
+    the bind is probed next, so a shell that may not bind a TCP port is told that instead of
+    being left waiting on a server that never comes up; only then is anything launched.
+    """
+    found = view_status(args.base)
+    if found.state == VIEW_SERVING:
+        print(f"view     {found.base}")
+        print(f"serving  {found.reason} — nothing was started")
+        return EXIT_OK
+    if found.state == VIEW_FOREIGN:
+        print(
+            f"refused  {found.reason}. Cairn starts nothing on a port it does not "
+            "recognise, and stops nothing it did not start: set CAIRN_VIEW_BASE to where "
+            "the engine's view is served, or free that port",
+            file=sys.stderr,
+        )
+        return EXIT_REFUSED
+    allowed = bindable(found.base)
+    if allowed.binding is None:
+        print(f"refused  {allowed.reason}", file=sys.stderr)
+        return EXIT_REFUSED
+    started = serve_view(allowed.binding, base=found.base)
+    if started.status.state != VIEW_SERVING:
+        print(f"refused  {started.status.reason}", file=sys.stderr)
+        return EXIT_REFUSED
+    print(f"serving  {found.base}")
+    print(f"ran      {' '.join(started.command)}")
+    print(f"pid      {started.pid}")
+    # The two things a started server owes the person, in the same breath as the address.
+    # Its authentication begins unclaimed and the first local process to call its setup
+    # endpoint becomes administrator ([docs/triggers.md]), so claiming it is not a chore to
+    # get to later.
+    print(
+        f"claim    open {found.base} now and claim the admin account: the server starts "
+        "with its authentication unclaimed, and the first local process to reach its setup "
+        "endpoint becomes administrator"
+    )
+    print(
+        f"stop     kill {started.pid} — the server holds no run state, so stopping it "
+        "loses nothing, and no run depends on it"
+    )
+    print(f"said     {started.log}")
+    return EXIT_OK
+
+
 def _run_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cairn run", description=__doc__)
     verbs = parser.add_subparsers(dest="verb", required=True)
@@ -380,6 +479,20 @@ def _explain_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _view_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="cairn view", description=__doc__)
+    verbs = parser.add_subparsers(dest="verb", required=True)
+    for verb in ("status", "start"):
+        child = verbs.add_parser(verb)
+        # Optional, and never a way to point Cairn somewhere else: the address a run is
+        # printed with comes from `CAIRN_VIEW_BASE` and the engine's own two
+        # ([cairn/layout.py]), so an address given here that was not that one would check a
+        # server nobody was sent to. It exists for the suite, which stands a server on a port
+        # of its own.
+        child.add_argument("--base")
+    return parser
+
+
 def run_main(argv: list[str]) -> int:
     args = _run_parser().parse_args(argv)
     try:
@@ -404,4 +517,14 @@ def explain_main(argv: list[str]) -> int:
         return EXIT_REFUSED
 
 
-__all__ = ["explain_main", "mint_run_id", "run_main"]
+def view_main(argv: list[str]) -> int:
+    args = _view_parser().parse_args(argv)
+    handlers = {"status": _cmd_view_status, "start": _cmd_view_start}
+    try:
+        return handlers[str(args.verb)](args)
+    except CairnError as refused:
+        print(f"refused  {refused}", file=sys.stderr)
+        return EXIT_REFUSED
+
+
+__all__ = ["explain_main", "mint_run_id", "run_main", "view_main"]

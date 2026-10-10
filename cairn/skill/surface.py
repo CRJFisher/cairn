@@ -56,7 +56,12 @@ DESCRIPTION_CHARACTER_LIMIT = 600
 # still worth a question ([31]). The rule it replaced was one sentence long and cost a person
 # a turn of the conversation every time they ran a plan from inside the repository it belongs
 # to — a shorter file that asks a question nobody needed to answer is not a cheaper file.
-ON_TRIGGER_CHARACTER_LIMIT = 13_300
+#
+# It moved up a third time, for the paragraph saying Cairn serves the view on request ([33]).
+# A run printed a live address nothing was listening at, and the person was left to find that
+# out in a browser and to discover `dagu server` for themselves — while the two sentences the
+# file did carry about the engine made the view sound like something already running.
+ON_TRIGGER_CHARACTER_LIMIT = 13_800
 
 
 class Size(NamedTuple):

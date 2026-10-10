@@ -15,6 +15,8 @@ Sections are built by walking `SECTIONS`, so their order is the tuple's and no c
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from cairn.headroom import AFTER_OUTAGE
 from cairn.record.engine import RUN_RUNNING
 from cairn.record.model import RunRecord
@@ -33,6 +35,7 @@ from cairn.report.phrases import (
     HEADLINE_BY_VERDICT,
     LABEL_BY_ATTENTION,
     SENTENCE_BY_ACTION,
+    SENTENCE_BY_VIEW_STATE,
     TONE_BY_VERDICT,
 )
 from cairn.report.spine import (
@@ -64,15 +67,22 @@ from cairn.report.spine import (
 )
 
 
-def document(record: RunRecord) -> Document:
-    """The whole report, in the one order every rendering conforms to."""
-    builders = {
+def document(record: RunRecord, view_state: str) -> Document:
+    """The whole report, in the one order every rendering conforms to.
+
+    `view_state` is what the engine's view was doing when the report was asked for, read by
+    the caller and handed in rather than taken here ([cairn/view.py]). It is the one thing in
+    the document that is not the record's: whether a server is listening is a fact about this
+    machine now, not about the run, and a composition that went and looked for itself would
+    be the report reaching out to the network it is meant to be readable without.
+    """
+    builders: dict[str, Callable[[RunRecord], list[Block]]] = {
         SECTION_VERDICT: _verdict,
         SECTION_NEXT: _next_action,
         SECTION_ATTENTION: _attention,
         SECTION_STEPS: _steps,
         SECTION_SHAPE: _shape,
-        SECTION_RECEIPTS: _receipts,
+        SECTION_RECEIPTS: lambda holds: _receipts(holds, view_state),
     }
     sections: list[Section] = []
     for question in SECTIONS:
@@ -566,7 +576,7 @@ def _shape(record: RunRecord) -> list[Block]:
     return blocks
 
 
-def _receipts(record: RunRecord) -> list[Block]:
+def _receipts(record: RunRecord, view_state: str) -> list[Block]:
     """What the run did and what it left behind, per step and for the run.
 
     The resume command is a `Verbatim` block rather than a field, because every sink must
@@ -574,6 +584,10 @@ def _receipts(record: RunRecord) -> list[Block]:
     beside it: on a green run the wave's prune removes the worktree the command changes into,
     and a reader who can see why is better served than one left guessing. The report does not
     check whether it is still there — that would be a fact the model does not carry.
+
+    The view's address is the one receipt a reader acts on immediately, so what that address
+    is doing is said directly under it: a link that goes nowhere, found in a browser, is how
+    a person's first move on a run came to fail ([33]).
     """
     blocks: list[Block] = [
         Fields(
@@ -593,6 +607,10 @@ def _receipts(record: RunRecord) -> list[Block]:
             ),
         )
     ]
+    if record["view_url"] is not None:
+        blocks.append(
+            Statement("statement", (Chrome(SENTENCE_BY_VIEW_STATE[view_state]),))
+        )
     for step in record["steps"]:
         key = f"step.{step['step_id']}"
         blocks.append(

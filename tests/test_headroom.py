@@ -83,6 +83,7 @@ from cairn.verify import (
     divergence_line,
     judge,
 )
+from cairn.view import VIEW_SERVING
 from tests.test_step_kinds import FakeOutput, FakeProcess, session_stream
 
 # The measured event, from Claude Code 2.1.220 ([38] § What was measured).
@@ -881,7 +882,7 @@ class TheRecordAndTheReportSayItInASentence(unittest.TestCase):
         self.assertEqual(headroom["held_until"], "2026-10-08T04:13:20Z")
         self.assertEqual(record["next_action"]["action"], NEXT_AWAIT_ALLOWANCE)
         self.assertEqual(record["allowance"][0]["window"], "seven_day")
-        text = " ".join(render(document(record), as_mapping(record)).text.split())
+        text = " ".join(render(document(record, VIEW_SERVING), as_mapping(record)).text.split())
         self.assertIn(SENTENCE_BY_ACTION[NEXT_AWAIT_ALLOWANCE], text)
         self.assertIn("2026-10-08T04:13:20Z", text)
         self.assertIn("seven_day 97% used", text)
@@ -907,7 +908,7 @@ class TheRecordAndTheReportSayItInASentence(unittest.TestCase):
         [step] = record["steps"]
         self.assertEqual(step["outcome"], OUTCOME_RUNNING)
         assert step["headroom"] is not None and step["headroom"]["holding"] is not None
-        text = " ".join(render(document(record), as_mapping(record)).text.split())
+        text = " ".join(render(document(record, VIEW_SERVING), as_mapping(record)).text.split())
         self.assertIn("waiting for the subscription's allowance, not stalled", text)
         self.assertIn("2026-10-05T07:31:00Z", text)
 
@@ -920,7 +921,7 @@ class TheRecordAndTheReportSayItInASentence(unittest.TestCase):
         }
         with patch("cairn.record.extract.owner_liveness", return_value=True):
             record = extract(state, reports, run_id="run-held", holds={"work_alpha": holding})
-        text = " ".join(render(document(record), as_mapping(record)).text.split())
+        text = " ".join(render(document(record, VIEW_SERVING), as_mapping(record)).text.split())
         self.assertIn("waiting for the model provider to answer again, not stalled", text)
         self.assertIn("the model provider from 2026-10-08T12:06:02Z", text)
         self.assertNotIn("subscription's allowance, not stalled", text)

@@ -30,9 +30,9 @@ and the trust claim is that all six questions are answered from the report alone
 
 ## What makes the order structural rather than conventional
 
-`compose.document(record)` is the only entry point that reads the record, and it builds
-sections by walking the spine; it hands the node and edge lists to `graph.layout`, which reads
-nothing else of it. A renderer is handed the document it returns, and nothing else:
+`compose.document(record, view_state)` is the only entry point that reads the record, and it
+builds sections by walking the spine; it hands the node and edge lists to `graph.layout`, which
+reads nothing else of it. A renderer is handed the document it returns, and nothing else:
 
 - **A renderer never sees the record.** It cannot reach a fact the composition did not place,
   re-order what it was given, or re-derive a verdict — not by discipline but because it was
@@ -163,6 +163,17 @@ be a fact the model does not carry, and it would be wrong the moment the filesys
 The run's own receipts carry the git facts, the occasion, the earlier runs, and
 the engine's own view of the run — the better surface for logs and timings, and one that
 survives the run ending.
+
+**What that address is doing is said directly under it**, and it is the one thing in the
+document that is not the record's. Whether a server is listening is a fact about this machine
+now rather than about the run, so the reading is taken by `cairn report` through
+`cairn/view.py` and handed to the composition as `view_state`: a composition that went looking
+for itself would be the report reaching out to a network it is meant to be readable without.
+The sentence is said for all three states — served, not served, or something else holding the
+port — because a reader told nothing cannot tell a checked address from an unchecked one. A
+link that is not being served names the command that serves it. Reading asks nothing and
+starts nothing: `cairn view start` is the only thing that serves a view, and only a person
+asks for it ([triggers.md](triggers.md)).
 
 ## Escaping
 

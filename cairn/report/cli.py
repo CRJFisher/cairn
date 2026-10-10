@@ -12,6 +12,10 @@ verdict: a rendering can never redefine what automation reads, so a run with exc
 The record is built fresh rather than read back from disk, for the same reason `cairn record
 facts` builds one: it is derived from the engine's state and the run's own reports, both of
 which outlive it, so a report never shows a reader a record that has since been superseded.
+
+The one thing it reads that is not the run's is whether the view's address is being served,
+because a link a reader cannot follow is a thing they act on ([../view.py]). It asks that
+question and starts nothing with the answer.
 """
 
 from __future__ import annotations
@@ -38,6 +42,7 @@ from cairn.report.spine import (
     Document,
 )
 from cairn.skill.resolve import Resolved, repository_line, resolve_repository
+from cairn.view import status as view_status
 
 Renderer = Callable[[Document, Mapping[str, str]], Rendering]
 
@@ -91,7 +96,13 @@ def _render(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return EXIT_NO_RECORD
-    rendering = RENDERERS[args.format](document(record), as_mapping(record))
+    # Read here rather than inside the composition, and only when there is a record to
+    # render: the reading is about this machine now, not about the run, and a report asks it
+    # because a dead link is something a reader acts on. It asks nothing of the person and
+    # starts nothing — reading a run never does ([../view.py]).
+    rendering = RENDERERS[args.format](
+        document(record, view_status().state), as_mapping(record)
+    )
     if args.out:
         # Replaced in one step, for the reason the record itself is: a reader has no way to
         # tell a half-written report from a run that did little, and the sections a truncated

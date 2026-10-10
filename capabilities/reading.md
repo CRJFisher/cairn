@@ -88,6 +88,13 @@ graph live and zoomable, its link survives the run ending, and past eighty nodes
 drawing defers to it outright. Every run record carries that address, so a run is reachable
 from its identity alone.
 
+**The report says what that address is doing.** It checks it as it renders, so a link nothing
+is serving reads as not being served, and names `dagu server` as what serves it; a port
+something else is holding reads as that, and names `CAIRN_VIEW_BASE`. Repeat the sentence as
+the report gives it. Reading never asks whether to start one and never starts one — that is
+Run's question ([running.md](running.md)), and a person who wants the view served now is
+asking for `python3 -m cairn view start`.
+
 What it will never answer: the **divergence** between a workflow and the plan that generated
 it, and the **verdict**, because a run that dropped a branch reports a clean success at the
 engine level. Those two are why this capability exists beside the view rather than instead

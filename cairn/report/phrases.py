@@ -109,6 +109,12 @@ from cairn.verify import (
 from cairn.verify import (
     VERIFY_FAILED as CAUSE_VERIFY_FAILED,
 )
+from cairn.view import (
+    VIEW_ABSENT,
+    VIEW_FOREIGN,
+    VIEW_SERVING,
+    VIEW_STATES,
+)
 
 # What a report says instead of a number it does not have. Never `0`, never a blank: a run
 # that recorded no turns and a run that took none are different facts, and one of them is
@@ -247,6 +253,25 @@ SENTENCE_BY_CAUSE: dict[str, str] = {
 
 
 
+# What the address the report prints is doing, read at the moment the report is built
+# ([cairn/view.py]). A link a reader cannot follow is the failure this answers: the report
+# names the address of every run, and until now it named it whether or not anything served
+# it ([33]). The sentence is said for all three states, including the one where it works,
+# because a reader who is told nothing cannot tell a served view from an unchecked one.
+SENTENCE_BY_VIEW_STATE: dict[str, str] = {
+    VIEW_SERVING: "That address is being served now.",
+    VIEW_ABSENT: (
+        "That address is not being served: `dagu server` serves it, and `python3 -m cairn "
+        "view start` starts one that outlives this reading. Nothing about the run depends "
+        "on it"
+    ),
+    VIEW_FOREIGN: (
+        "That address answers, but not as the engine's view — something else holds the "
+        "port. `CAIRN_VIEW_BASE` is how Cairn is pointed at a view served elsewhere"
+    ),
+}
+
+
 def _absent(value: str) -> bool:
     return value == ABSENT
 
@@ -323,6 +348,7 @@ TOTAL_MAPS: tuple[tuple[Mapping[str, object], tuple[str, ...]], ...] = (
     (LABEL_BY_OUTCOME, STEP_OUTCOMES),
     (SENTENCE_BY_CAUSE, EXCLUSION_CAUSES),
     (PHRASE_BY_ATTRIBUTION, ATTRIBUTIONS),
+    (SENTENCE_BY_VIEW_STATE, VIEW_STATES),
     (RULE_TEXT, RULES),
 )
 
@@ -346,6 +372,7 @@ __all__ = [
     "PHRASE_BY_ATTRIBUTION",
     "RULE_TEXT",
     "SENTENCE_BY_ACTION",
+    "SENTENCE_BY_VIEW_STATE",
     "TONE_BY_VERDICT",
     "TOTAL_MAPS",
     "actor",

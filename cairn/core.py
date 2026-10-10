@@ -53,8 +53,14 @@ class CommandResult(NamedTuple):
 
 
 class Child(Protocol):
-    """The slice of a running child process every subcommand actually touches."""
+    """The slice of a running child process every subcommand actually touches.
 
+    `pid` is here for the one child Cairn hands over rather than waits on: a detached view
+    server is stopped by the person, and "how to stop it" is a sentence only if it names the
+    process ([view.py]).
+    """
+
+    pid: int
     returncode: int | None
     stdin: Any
     stdout: Any

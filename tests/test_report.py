@@ -54,6 +54,7 @@ from cairn.report.spine import (
     SECTIONS,
     SINKS,
 )
+from cairn.view import VIEW_ABSENT, VIEW_FOREIGN, VIEW_SERVING
 from tests.test_run_record import (
     PACKAGE_ROOT,
     SHAPES,
@@ -108,8 +109,13 @@ def poke(shape: str, **fields: Any) -> RunRecord:
     return record
 
 
-def rendered(record: RunRecord, sink: str) -> Rendering:
-    return RENDERERS[sink](document(record), as_mapping(record))
+def rendered(record: RunRecord, sink: str, view_state: str = VIEW_SERVING) -> Rendering:
+    """One record through one sink, with the view's address answering unless stated.
+
+    The state is handed in rather than measured, so no rendering in this suite depends on
+    whether a server happens to be up on the machine running it.
+    """
+    return RENDERERS[sink](document(record, view_state), as_mapping(record))
 
 
 def loose(text: str) -> str:
@@ -361,7 +367,7 @@ class EveryRenderingAgreesWithTheProjection(unittest.TestCase):
         record = record_of("red")
         facts = dict(as_mapping(record))
         facts["run.verdict"] = "green"
-        wrong = terminal.render(document(record), facts)
+        wrong = terminal.render(document(record, VIEW_SERVING), facts)
         item = next(entry for entry in wrong.stated if entry.keys == ("run.verdict",))
         self.assertNotEqual(
             item.shown,
@@ -832,6 +838,48 @@ class TheReceiptsArePasteable(unittest.TestCase):
         page = rendered(record, "html").text
         self.assertNotIn('href="javascript', page)
         self.assertIn("javascript:alert(1)", page)
+
+    def test_a_link_nothing_is_serving_says_so_and_names_the_command(self) -> None:
+        """Doc 33's last acceptance. A report prints the address of every run, and until the
+        reading existed it printed it whether or not anything answered there — so a reader's
+        first move on a run was a page that would not load."""
+        record = record_of("green")
+        for sink in SINKS:
+            with self.subTest(sink=sink):
+                text = loose(rendered(record, sink, VIEW_ABSENT).text)
+                self.assertIn("not being served", text)
+                self.assertIn("dagu server", text)
+
+    def test_a_link_something_else_is_holding_sends_the_reader_to_the_variable(self) -> None:
+        for sink in SINKS:
+            with self.subTest(sink=sink):
+                text = loose(rendered(record_of("green"), sink, VIEW_FOREIGN).text)
+                self.assertIn("CAIRN_VIEW_BASE", text)
+                self.assertNotIn("not being served", text)
+
+    def test_a_served_link_is_said_to_be_served_rather_than_left_unsaid(self) -> None:
+        """A reader told nothing cannot tell a checked address from an unchecked one."""
+        for sink in SINKS:
+            with self.subTest(sink=sink):
+                text = loose(rendered(record_of("green"), sink, VIEW_SERVING).text)
+                self.assertIn("being served now", text)
+
+    def test_a_run_with_no_address_at_all_says_nothing_about_serving_it(self) -> None:
+        record = poke("green", view_url=None)
+        for sink in SINKS:
+            with self.subTest(sink=sink):
+                text = loose(rendered(record, sink, VIEW_ABSENT).text)
+                self.assertNotIn("not being served", text)
+
+    def test_the_reading_is_the_callers_and_never_the_renderings(self) -> None:
+        """A composition that went looking for itself would be the report reaching out to a
+        network it is meant to be readable without ([docs/report.md])."""
+        for sink in SINKS:
+            with self.subTest(sink=sink), patch(
+                "cairn.view.ask_health",
+                side_effect=AssertionError("a rendering asked the network"),
+            ):
+                rendered(record_of("green"), sink, VIEW_ABSENT)
 
 
 class TheDivergencesStandSideBySide(unittest.TestCase):

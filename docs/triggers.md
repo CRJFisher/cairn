@@ -33,10 +33,11 @@ graph position ([run-model.md](run-model.md)).
 
 ## Opening the view
 
-The engine serves it, and Cairn neither starts nor manages the process:
+The engine serves it, and Cairn serves the view — and only the view — when it is asked to:
 
 ```text
-dagu server                                  # binds 127.0.0.1:8080 unless told otherwise
+python3 -m cairn view status                 # serving, absent, or foreign, with the reason
+python3 -m cairn view start                  # one detached `dagu server`, then the address
 http://127.0.0.1:8080/dag-runs/<name>/<run-id>
 ```
 
@@ -44,17 +45,49 @@ http://127.0.0.1:8080/dag-runs/<name>/<run-id>
 A run's record carries the whole address as `view_url`; on a machine that binds the server
 elsewhere, set `CAIRN_VIEW_BASE` for the reader that builds the record.
 
+**The address is checked before anybody is sent to it.** `view status` asks
+`GET <view base>/api/v1/health` and reads the body, which has three answers:
+
+| State     | What it means                              | What Cairn does with it                       |
+| --------- | ------------------------------------------ | --------------------------------------------- |
+| `serving` | JSON saying `healthy` and naming a version | hands the address over; starts nothing        |
+| `absent`  | nothing answered                           | offers to serve it, once                      |
+| `foreign` | anything else answered                     | names what is there; starts and stops nothing |
+
+The body decides and the status code does not. Measured against Dagu 2.18.2: `/api/v1/health`
+answers that JSON with no authentication, while `/health` and `/api/v2/health` both answer
+`200` with the web app's HTML — so a reader that believed a status code would call any web
+server, or the wrong endpoint on the right one, a healthy view. A view of another version is
+`serving` and the drift is stated: it draws the run perfectly well, and the pin is the run's
+gate to enforce.
+
+**A started server outlives the session that started it.** `view start` probes the bind
+first, so a shell that may not bind a TCP port is told that rather than left waiting; then it
+launches `dagu server` the way a run is launched — its own session, stdin from `/dev/null`,
+output appended to `view-server.log` under the engine home — and polls the health check until
+the address answers. Closing the conversation, a harness killing its process tree and a
+terminal hangup all stop at that boundary. A server started as a background job of a shell
+would die with that shell, which is why starting one is this command rather than something
+improvised.
+
 **Claim the server's admin account when you start one.** It is safe in the sense that
-matters here — it holds no run state, so killing it loses nothing — but its authentication
-begins unclaimed, and the first local process to call its setup endpoint becomes
-administrator. That is a packaging concern rather than this component's, and until it is
-closed, starting a server is a decision to make deliberately.
+matters here — it holds no run state, so killing it loses nothing, and `view start` prints the
+process to kill — but its authentication begins unclaimed, and the first local process to call
+its setup endpoint becomes administrator. That is a packaging concern rather than this
+component's, and until it is closed, starting a server is a decision to make deliberately:
+Cairn asks once, and never starts one on a port it did not recognise.
+
+**Nothing about a run depends on any of this.** `dagu start` runs a workflow with no server,
+a run whose view was declined is the same run, and a server Cairn did not start is never
+stopped, restarted or reconfigured by Cairn.
 
 ## There are two daemons, and only one is dangerous
 
 **The view's is safe to the run state.** `dagu server` binds loopback, holds no run state,
 and reads the same files the CLI writes. Kill it and start another and nothing is lost. A
-manual trigger from the view needs nothing else running.
+manual trigger from the view needs nothing else running. It is the one daemon Cairn will
+start, and it starts it with `dagu server` and never `dagu start-all`, which would bring the
+other one up beside it.
 
 **The scheduler's is not.** While it is up its retry scanner re-executes every failed run
 recorded on the machine in the previous 24 hours — including runs outside the directory it
@@ -75,7 +108,8 @@ door.
 
 So a schedule or an external trigger is a deliberate, stated escalation from the one-shot
 default, never a side effect of wanting a recurring plan. Wanting the _view_ is not that
-escalation.
+escalation, and `cairn view start` is where that distinction is enforced: it runs `dagu
+server` and nothing else, so no path from "show me the graph" reaches the retry scanner.
 
 ## What a caller may vary, and what is refused
 

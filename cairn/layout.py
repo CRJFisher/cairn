@@ -130,6 +130,11 @@ def engine_log_path(runs_root: Path, run_id: str) -> Path:
 # showed it running. A machine that binds the server elsewhere says so here.
 VIEW_BASE_ENV = "CAIRN_VIEW_BASE"
 VIEW_BASE_DEFAULT = "http://127.0.0.1:8080"
+# Where that same server answers for itself, so the address Cairn prints can be checked
+# before a person tries it in a browser ([view.py]). Measured against Dagu 2.18.2: this path
+# answers JSON with no authentication, while `/health` and `/api/v2/health` both answer 200
+# with the web app's HTML — so the path is as load-bearing as the reading of the body.
+VIEW_HEALTH_PATH = "/api/v1/health"
 # The engine's own two, honoured where Cairn has not been told otherwise, so a machine that
 # already says where its server listens does not have to say it twice.
 ENGINE_HOST_ENV = "DAGU_HOST"
@@ -183,6 +188,17 @@ def view_url(dag_name: str, run_id: str, base: str | None = None) -> str:
     return f"{root}/dag-runs/{quote(dag_name, safe='')}/{quote(run_id, safe='')}"
 
 
+def view_health_url(base: str | None = None) -> str:
+    """Where the server behind one view base answers for itself.
+
+    Composed here beside `view_url` and from the same base, because the whole point is that
+    the address checked and the address handed over are one address. A reader that derived
+    its own could report a healthy view on a server nobody was sent to.
+    """
+    root = view_base() if base is None else base.rstrip("/")
+    return f"{root}{VIEW_HEALTH_PATH}"
+
+
 def occasion_path(runs_root: Path, run_id: str) -> Path:
     """Where this run records the occasion it is keyed on.
 
@@ -218,6 +234,7 @@ __all__ = [
     "RUN_ID",
     "VIEW_BASE_DEFAULT",
     "VIEW_BASE_ENV",
+    "VIEW_HEALTH_PATH",
     "assertion_lock_path",
     "assertion_result_path",
     "assertions_directory",
@@ -230,5 +247,6 @@ __all__ = [
     "reports_directory",
     "run_directory",
     "view_base",
+    "view_health_url",
     "view_url",
 ]
