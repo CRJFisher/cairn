@@ -122,7 +122,7 @@ def _report_fault(output: object) -> str | None:
     ]
     if missing:
         return "structured_output missing required fields: " + ", ".join(missing)
-    if report["status"] not in ("done", "noop", "failed"):
+    if report["status"] not in ("done", "failed"):
         return f"unknown structured status {report['status']!r}"
     if not isinstance(report["summary"], str):
         return "structured summary is not a string"

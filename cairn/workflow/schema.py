@@ -116,7 +116,10 @@ ENGINE_VERSION = "2.18.2"
 # 13: every file is stamped for Dagu 2.18.2. The emitted steps are unchanged, but a file
 # written by 12 names an engine the gate now refuses, so it cannot be told from a current one
 # by its body alone ([41]).
-GENERATOR_VERSION = 13
+# 14: an agent step's and a merge slot's engine bound carry the step's whole hold budget —
+# three whole windows — rather than one. A step written by 13 is killed by the engine
+# part-way through a second hold this binary would make.
+GENERATOR_VERSION = 14
 
 # The one execution type. The alternative reading serialises the graph, which is the defect
 # Cairn exists to avoid — and `type: chain` without `depends` validates clean and silently

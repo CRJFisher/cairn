@@ -169,7 +169,7 @@ parsed:
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "status": { "type": "string", "enum": ["done", "noop", "failed"] },
+    "status": { "type": "string", "enum": ["done", "failed"] },
     "summary": { "type": "string" },
     "follow_up_work": { "type": "array", "items": { "type": "string" } },
     "needs_user_decision": { "type": "boolean" }
@@ -177,6 +177,13 @@ parsed:
   "required": ["status", "summary", "follow_up_work", "needs_user_decision"]
 }
 ```
+
+**An agent never says `noop`.** That word is the marker gate's, written for a step it skipped
+without starting, and the record reads it only beside a node the engine skipped
+([run-model.md](run-model.md)). A session ran, so it either reached its end state — `done`,
+whether it changed the tree or found it already holding — or did not. Whether the tree
+changed is the commit's to establish, not the session's to judge: a session led by a command
+that applied fixes in its first half sees them in the tree in its second.
 
 **The report is the last one the session filed.** Each report is a call to the provider's
 report tool, and the provider streams every call; the step's report is the last call the
@@ -242,7 +249,7 @@ end only by reporting. Ending a turn to wait for a subagent asks you for a repor
 give one, then report again once it finishes. Your last report is the one that counts.
 
 Report through the structured output you are constrained to. `status` is `done` when the
-end state now holds, `noop` when it already held and you changed nothing, and `failed`
+end state now holds, whether or not you had to change anything to reach it, and `failed`
 when you could not reach it. List work you found but did not do in `follow_up_work`. Set
 `needs_user_decision` when a human has to decide something before the plan can safely
 proceed; that blocks the step rather than failing it.

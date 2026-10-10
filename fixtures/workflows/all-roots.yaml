@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "all-roots",
-    "cairn_generator": "13",
+    "cairn_generator": "14",
     "cairn_engine": "2.18.2",
     "cairn_graph_sha256": "b2c3096cc396886cc31b43f308ba4162bcd16236c7f0c8d3c7ae84f1dba94d8b",
-    "cairn_body_sha256": "24dfc71eb37694a8d2fb4726d9ac84d2eefd9b7194d1e3111e02161f4481b855"
+    "cairn_body_sha256": "924d253d1a41232a915557d614fb612559baa86dfa700ed62295c9a8395d1c97"
   },
   "params": [
     {
@@ -54,7 +54,7 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn lock acquire --plan all-roots --run-timeout 154200"
+      "run": "python3 -m cairn lock acquire --plan all-roots --run-timeout 327000"
     },
     {
       "name": "setup_drop_the_legacy_exporter",
@@ -72,7 +72,7 @@
     {
       "name": "work_drop_the_legacy_exporter",
       "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/all-roots/drop_the_legacy_exporter",
-      "timeout_sec": 36180,
+      "timeout_sec": 79380,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
@@ -164,7 +164,7 @@
     {
       "name": "work_tighten_the_log_format",
       "working_dir": "${CAIRN_REPOSITORY}.cairn-worktrees/all-roots/tighten_the_log_format",
-      "timeout_sec": 36180,
+      "timeout_sec": 79380,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
@@ -257,7 +257,7 @@
     {
       "name": "merge_w1_1",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 36720,
+      "timeout_sec": 79920,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
@@ -283,7 +283,7 @@
     {
       "name": "merge_w1_2",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 36720,
+      "timeout_sec": 79920,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1

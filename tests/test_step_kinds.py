@@ -33,7 +33,7 @@ from cairn.plan.schema import (
     AGENT_REPORT_GRACE,
     GRAPH_VERSION,
     HANG_GUARD,
-    QUOTA_WAIT,
+    HOLD_BUDGET,
     WAIT_REPORT_GRACE,
     normalise,
 )
@@ -1858,17 +1858,27 @@ class TheReportIsTheLastOneTheSessionFiled(unittest.TestCase):
         self.assertEqual(result.summary, "both reviews finished")
 
     def test_a_filing_the_provider_rejected_is_not_the_report(self) -> None:
-        rejected = {"status": "done", "summary": "missing its fields"}
+        rejected = {"status": "failed", "summary": "missing its fields"}
         result = self._ran(
-            filed_report(report("noop", "nothing to change")),
+            filed_report(report("done", "nothing to change")),
             filed_report(rejected),
-            structured=report("noop", "nothing to change"),
+            structured=report("done", "nothing to change"),
         )
-        self.assertEqual(result.status, "noop")
+        self.assertEqual(result.status, "done")
+
+    def test_a_filing_that_says_noop_is_not_a_report(self) -> None:
+        """`noop` is the marker gate's word for a step it never started; a session ran."""
+        result = self._ran(
+            filed_report(report("done", "both fixes applied")),
+            filed_report(report("noop", "the tree already held both fixes")),
+            structured=report("done", "both fixes applied"),
+        )
+        self.assertEqual(result.status, "done")
+        self.assertEqual(result.summary, "both fixes applied")
 
     def test_a_subagents_filing_never_reports_for_the_step(self) -> None:
         result = self._ran(
-            filed_report(report("noop", "the session's own")),
+            filed_report(report("done", "the session's own")),
             filed_report(report("failed", "a subagent's"), parent="toolu_agent"),
         )
         self.assertEqual(result.summary, "the session's own")
@@ -2101,12 +2111,12 @@ class EmitterContract(unittest.TestCase):
     ) -> None:
         """The wrapper stops the session at the hang guard it owns and holds at the
         allowance inside its own body, so the body carries no bound, and the engine's kill
-        lands after the longest hold and still the report grace later ([22 B], [38])."""
+        lands after every hold and still the report grace later ([22 B], [38])."""
         emitted = emit_step(plan_step(), "/repo")
         tokens = shlex.split(emitted["run"])
         self.assertNotIn("--timeout", tokens)
         self.assertEqual(
-            emitted["timeout_sec"], HANG_GUARD + QUOTA_WAIT + AGENT_REPORT_GRACE
+            emitted["timeout_sec"], HANG_GUARD + HOLD_BUDGET + AGENT_REPORT_GRACE
         )
 
     def test_table_handles_mixed_plan_kinds(self) -> None:

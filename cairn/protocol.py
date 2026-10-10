@@ -37,7 +37,7 @@ end only by reporting. Ending a turn to wait for a subagent asks you for a repor
 give one, then report again once it finishes. Your last report is the one that counts.
 
 Report through the structured output you are constrained to. `status` is `done` when the
-end state now holds, `noop` when it already held and you changed nothing, and `failed`
+end state now holds, whether or not you had to change anything to reach it, and `failed`
 when you could not reach it. List work you found but did not do in `follow_up_work`. Set
 `needs_user_decision` when a human has to decide something before the plan can safely
 proceed; that blocks the step rather than failing it.
@@ -120,7 +120,7 @@ STEP_REPORT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
-        "status": {"type": "string", "enum": ["done", "noop", "failed"]},
+        "status": {"type": "string", "enum": ["done", "failed"]},
         "summary": {"type": "string"},
         "follow_up_work": {"type": "array", "items": {"type": "string"}},
         "needs_user_decision": {"type": "boolean"},

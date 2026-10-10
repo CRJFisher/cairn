@@ -55,7 +55,13 @@ from cairn.core import (
 )
 from cairn.layout import HEADROOM_ENDPOINT_ENV, headroom_directory, holds_directory
 from cairn.locks import exclusive_lock
-from cairn.plan.schema import HANG_GUARD, HOLD_THRESHOLDS, OUTAGE_WAIT, QUOTA_WAIT
+from cairn.plan.schema import (
+    HANG_GUARD,
+    HOLD_BUDGET,
+    HOLD_THRESHOLDS,
+    OUTAGE_WAIT,
+    QUOTA_WAIT,
+)
 from cairn.protocol import RESUME_AFTER_LIMIT, RESUME_AFTER_OUTAGE
 from cairn.providers import (
     METERED_PROVIDERS,
@@ -459,7 +465,7 @@ def _epoch(moment: object) -> int | None:
     if not isinstance(moment, str) or not moment:
         return None
     try:
-        return int(datetime.fromisoformat(moment.replace("Z", "+00:00")).timestamp())
+        return int(datetime.fromisoformat(moment).timestamp())
     except ValueError:
         return None
 
@@ -705,10 +711,11 @@ class Steward:
 
     Two budgets bound it, and together they are what the engine's bound on the step is
     built from. Work — time inside a session — never exceeds the hang guard across every
-    session the step opens. Holding never exceeds the hold budget — `QUOTA_WAIT` for a plan
-    step, nothing for a merge slot: a hold may end no later than the step's start plus that
-    budget plus the work already done, so whatever is left of the guard still fits before
-    the engine's kill.
+    session the step opens. Holding never exceeds the hold budget: a hold may end no later
+    than the step's start plus that budget plus the work already done, so whatever is left
+    of the guard still fits before the engine's kill. Within it, each hold is bounded by
+    `QUOTA_WAIT` alone — a whole window — so a hold the step took earlier never shortens the
+    one it is taking now.
     """
 
     def __init__(
@@ -719,7 +726,7 @@ class Steward:
         instruments: Instruments,
         announce: Announcer,
         sleep: Callable[[float], None] = time.sleep,
-        hold_budget: float = QUOTA_WAIT,
+        hold_budget: float = HOLD_BUDGET,
     ) -> None:
         self.gauge = gauge
         self.hold_budget = hold_budget
@@ -795,7 +802,7 @@ class Steward:
             else:
                 until = now + RECHECK_BACKOFF[min(rechecks, len(RECHECK_BACKOFF) - 1)]
                 rechecks += 1
-            if until > self.hold_ceiling():
+            if until - now > QUOTA_WAIT or until > self.hold_ceiling():
                 return decision
             hold = Hold(
                 window=decision.window,
@@ -970,7 +977,7 @@ def within_allowance(
     instruments: Instruments,
     announce: Announcer,
     sleep: Callable[[float], None] = time.sleep,
-    hold_budget: float = QUOTA_WAIT,
+    hold_budget: float = HOLD_BUDGET,
 ) -> CommandResult:
     """Run one agent step's session inside the allowance, holding and resuming as it must.
 
@@ -1065,7 +1072,7 @@ def session_within_allowance(
     resume_session: str | None = None,
     call: Callable[..., CommandResult] | None = None,
     instruments: Instruments | None = None,
-    hold_budget: float = QUOTA_WAIT,
+    hold_budget: float = HOLD_BUDGET,
 ) -> CommandResult:
     """One step's session — a plan step's, a remedy's or a merge resolution's — admitted,
     held and resumed at the allowance, with every session it opens feeding the shared

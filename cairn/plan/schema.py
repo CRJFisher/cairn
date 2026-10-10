@@ -170,18 +170,27 @@ AGENT_REPORT_GRACE = 180
 # bound, whatever the resumed session does.
 AGENT_RESUME_MARGIN = 30
 
-# How long an agent step may spend held at the subscription's allowance, on top of the hang
-# guard it may spend working. Long enough to wait out a whole 5-hour window and the backed-off
-# re-measurements behind it; a hold that would end later — a weekly window days away — ends
-# the step `quota_held` instead of sleeping a worker for days. The engine's bound grows by it
-# exactly as it grows by the report grace, so the run's maximum and the lock's reclaim window
-# stay derivable from the graph ([headroom.py]).
+# How long any one hold at the subscription's allowance may last. Long enough to wait out a
+# whole 5-hour window and the backed-off re-measurements behind it; a hold that would end
+# later — a weekly window days away — ends the step `quota_held` instead of sleeping a worker
+# for days ([headroom.py]).
 QUOTA_WAIT = 21600
 
+# How long an agent step may spend held in all, on top of the hang guard it may spend working:
+# three whole windows. Each hold is bounded by `QUOTA_WAIT` on its own, never by what earlier
+# holds already spent, because a step held at admission starts into a window that reopened
+# for every consumer of the subscription at once and can meet its limit again before the step
+# is done. Measured: an Opus step held 2 h 25 min at admission, worked 49 min, and met the
+# 5-hour limit 4 h 10 min before its reset — two holds of most of a window each, in one step.
+# Three covers an admission hold and two limits met mid-session. The engine's bound grows by
+# it exactly as it grows by the report grace, so the run's maximum and the lock's reclaim
+# window stay derivable from the graph.
+HOLD_BUDGET = 3 * QUOTA_WAIT
+
 # How long an agent step may spend waiting for a provider it lost mid-session to answer
-# again. Drawn from the same hold budget as `QUOTA_WAIT` rather than added to it, so the
-# engine's bound is unchanged: an outage outlasting this is not a blip the step can ride out,
-# and the queue behind it is better told so than held for the rest of the day.
+# again. Drawn from the same hold budget rather than added to it, so the engine's bound is
+# unchanged: an outage outlasting this is not a blip the step can ride out, and the queue
+# behind it is better told so than held for the rest of the day.
 OUTAGE_WAIT = 14400
 
 # How full a window may be before a session is not started into it. One figure per window,
@@ -194,10 +203,10 @@ HOLD_THRESHOLDS: dict[str, float] = {
     "seven_day_sonnet": 0.95,
 }
 
-# The engine's bound on an agent step: the work, the longest hold, and the report after
-# them. The hold lives inside the step's own body, so the engine's kill lands after both and
-# still the grace later.
-AGENT_TIMEOUT = HANG_GUARD + QUOTA_WAIT + AGENT_REPORT_GRACE
+# The engine's bound on an agent step: the work, every hold, and the report after them. The
+# holds live inside the step's own body, so the engine's kill lands after both and still the
+# grace later.
+AGENT_TIMEOUT = HANG_GUARD + HOLD_BUDGET + AGENT_REPORT_GRACE
 
 # A merge resolver is an agent role like any other, so it names its model and runs under the
 # same hang guard and the same hold at the allowance. Its engine step also leaves the same
@@ -205,7 +214,7 @@ AGENT_TIMEOUT = HANG_GUARD + QUOTA_WAIT + AGENT_REPORT_GRACE
 # is the plan's own default — the resolver is the plan's default agent
 # ([docs/merge-step.md]), so a plan whose sentence pins every session to a model pins this
 # one too rather than leaving the engine to choose.
-MERGE_TIMEOUT = MUTEX_WAIT + GIT_TIMEOUT + HANG_GUARD + QUOTA_WAIT + AGENT_REPORT_GRACE
+MERGE_TIMEOUT = MUTEX_WAIT + GIT_TIMEOUT + HANG_GUARD + HOLD_BUDGET + AGENT_REPORT_GRACE
 MERGE_RETRIES = 0
 
 # The engine applies `timeout_sec` to each attempt rather than to the step [V], so a step's

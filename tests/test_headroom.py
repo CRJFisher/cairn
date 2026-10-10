@@ -629,7 +629,7 @@ class ALimitMetMidSessionIsAPause(Fixture):
 
     def test_a_second_limit_is_named_by_the_session_that_met_it(self) -> None:
         self.gauge.observe(event())
-        far = int(NOW) + QUOTA_WAIT + 7200
+        far = FIVE_HOUR_RESET + QUOTA_WAIT + 7200
 
         def again(_session: str, _told: str, _deadline: float) -> CommandResult:
             return limited(far, window="seven_day")._replace(
@@ -647,6 +647,29 @@ class ALimitMetMidSessionIsAPause(Fixture):
         )
         self.assertEqual(result.cause, QUOTA_HELD)
         self.assertEqual(result.detail["headroom"]["held_window"], "seven_day")
+
+    def test_a_step_held_at_admission_still_waits_out_a_whole_window_after_a_limit(self) -> None:
+        """Measured: held 2 h 25 min at admission, worked 49 min, then met the limit 4 h 10 min
+        before its reset. Neither hold is a weekly one, so neither may end the step."""
+        admission_reset = int(NOW) + 8700
+        self.gauge.observe(event(status="rejected", resets_at=admission_reset))
+        reopened = Probe(lambda: [event(resets_at=int(self.clock.now) + 18000)])
+        limit_reset: list[int] = []
+
+        def first(_deadline: float) -> CommandResult:
+            self.clock.now += 2940
+            limit_reset.append(int(self.clock.now) + 15000)
+            return limited(limit_reset[0])
+
+        def again(_session: str, _told: str, _deadline: float) -> CommandResult:
+            return done()
+
+        result = self.run_step(first, again, probe=reopened)
+        self.assertEqual(result.exit_code, EXIT_OK)
+        self.assertEqual(result.status, "done")
+        holds = result.detail["headroom"]["holds"]
+        self.assertEqual([hold["after"] for hold in holds], [BEFORE_SESSION, AFTER_LIMIT])
+        self.assertGreater(sum(self.clock.slept), QUOTA_WAIT)
 
     def test_a_session_that_raises_still_carries_what_it_was_admitted_on(self) -> None:
         self.gauge.observe(event())

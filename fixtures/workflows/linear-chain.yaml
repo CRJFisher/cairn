@@ -9,10 +9,10 @@
   "overlap_policy": "skip",
   "labels": {
     "cairn_plan": "linear-chain",
-    "cairn_generator": "13",
+    "cairn_generator": "14",
     "cairn_engine": "2.18.2",
     "cairn_graph_sha256": "31546d11a303d0aa633dd487c4c10bd37dfc34c9845fccda9e3e28a72e8a81dd",
-    "cairn_body_sha256": "be82ec9862a382497f910b2f6e1a0ed4525ed992767dda0dc32065aee4e6dfea"
+    "cairn_body_sha256": "1a5632426046b4375a00afa082d2b374c52c21faa1bc43ed7e88eb75f82ca1e2"
   },
   "params": [
     {
@@ -54,12 +54,12 @@
         "limit": 0,
         "interval_sec": 1
       },
-      "run": "python3 -m cairn lock acquire --plan linear-chain --run-timeout 115140"
+      "run": "python3 -m cairn lock acquire --plan linear-chain --run-timeout 244740"
     },
     {
       "name": "work_bucket_store",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 36180,
+      "timeout_sec": 79380,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
@@ -135,7 +135,7 @@
     {
       "name": "work_middleware",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 36180,
+      "timeout_sec": 79380,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1
@@ -211,7 +211,7 @@
     {
       "name": "work_gateway_wiring",
       "working_dir": "${CAIRN_REPOSITORY}",
-      "timeout_sec": 36180,
+      "timeout_sec": 79380,
       "retry_policy": {
         "limit": 0,
         "interval_sec": 1

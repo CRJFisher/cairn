@@ -300,7 +300,7 @@ session the guard stops is reported as stopped by the hang guard.
 
 | Kind                     | Timeout                                                    | Retries |
 | ------------------------ | ---------------------------------------------------------- | ------- |
-| `agent.*`                | `HANG_GUARD` + `QUOTA_WAIT` (6h) + 180s                    | 0       |
+| `agent.*`                | `HANG_GUARD` + `HOLD_BUDGET` (18h) + 180s                  | 0       |
 | `command`                | `HANG_GUARD`                                               | 0       |
 | `command` (`wait_until`) | `HANG_GUARD` + 15s                                         | 0       |
 | verify                   | the step's `verify_timeout` (600s unless the plan sets it) | 0       |
@@ -309,9 +309,10 @@ session the guard stops is reported as stopped by the hang guard.
 The wrapper enforces the guard on an agent session: the session is stopped there, resumed
 once under the 180-second grace to give the account it owes, and its report is written
 before the engine's kill — which lands the grace later and erases nothing a report could
-have said. The grace is for the report, never the work. `QUOTA_WAIT` is the longest an agent
-step may hold at the subscription's allowance (below); held time is never charged to the
-guard, so the engine's bound is the work, the hold and the grace, in that order. A `wait`
+have said. The grace is for the report, never the work. `HOLD_BUDGET` is the longest an agent
+step may spend held at the subscription's allowance in all (below); held time is never
+charged to the guard, so the engine's bound is the work, the holds and the grace, in that
+order. A `wait`
 keeps its own `--timeout`,
 because how long to wait for a condition is what that step means; the emitter sets it to the
 guard.
@@ -402,9 +403,12 @@ time until a measurement says it is open. While it holds, the step announces the
 `runs/<run-id>/holds/<node>.json`, so the run reads as waiting for a window rather than
 stalled, and takes the announcement back when it stops.
 
-A step may hold for at most `QUOTA_WAIT`, **6 hours** — enough to wait out a whole 5-hour
-window. A hold that would end later, typically a weekly window days away, does not sleep a
-worker for days: the step ends **`quota_held`**, exit **75**, and its summary names the moment
+Any one hold may last at most `QUOTA_WAIT`, **6 hours** — enough to wait out a whole 5-hour
+window — and a step may spend at most `HOLD_BUDGET`, **18 hours**, held in all: three whole
+windows, which covers a hold before the session and two limits met in it. Each hold is
+bounded on its own, so a step held at admission still waits out a whole window when its
+session meets the limit later. A hold that would end later than either allows, typically a
+weekly window days away, does not sleep a worker for days: the step ends **`quota_held`**, exit **75**, and its summary names the moment
 and the window — _held until Thu 08 Oct 04:00 BST — the weekly allowance at 97%_. The run's
 next action is then `await_allowance`, whose recovery command is the one to run after that
 moment; the committed markers mean it skips every step that already landed.
@@ -416,10 +420,10 @@ spends an unknown share of a window. A session that ends on `blocking_limit`, or
 **resumed by id** (`--resume`) once its window reopens, and asked to continue from where the
 tree now stands. The window it met is written into the shared reading at once, so every other
 step holds on it too. A resumed session may meet the limit again and is held and resumed
-again, within the same 6-hour hold budget. A resume that cannot continue the session —
+again, within the same 18-hour hold budget. A resume that cannot continue the session —
 refused, or failing before it reports — ends the step `quota_held` with the session's id.
 A merge slot's resolving session is admitted, held and resumed the same way, within the
-same 6-hour hold budget, and its outcome feeds the same reading.
+same 18-hour hold budget, and its outcome feeds the same reading.
 
 Held time is never charged as work: every session the step opens shares one hang guard,
 counted as time inside a session, and each resume is given what is left of it.
@@ -441,7 +445,7 @@ again in a fresh session, whose preamble sends it to the tree for whatever the l
 A resumed session that loses the provider again is held again.
 
 The step may spend at most `OUTAGE_WAIT`, **4 hours**, waiting on the provider, drawn from
-the same 6-hour hold budget as the allowance, so the engine's bound on the step is
+the same 18-hour hold budget as the allowance, so the engine's bound on the step is
 unchanged. A provider that does not answer within it ends the step **`provider_unreachable`**,
 and its summary quotes what the provider answered: _the model provider could not be reached
 for 240 min after the session lost it — the model provider could not be reached (HTTP 403:
