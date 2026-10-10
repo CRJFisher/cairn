@@ -115,7 +115,6 @@ from tests.test_the_skill import FakeEngine
 
 CAIRN_ROOT = Path(__file__).resolve().parent.parent
 TRIGGERS_DOC = CAIRN_ROOT / "docs" / "triggers.md"
-SKIP_ENV = "CAIRN_SKIP_ENGINE_TESTS"
 
 # What the pinned server really answered at each of the three view states, recorded by
 # `python3 -m scripts.record_view`. The engine double in this file is a recording for the

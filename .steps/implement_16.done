@@ -1,0 +1,7 @@
+{
+  "key": "once",
+  "run_id": "20261010T143556Z-93a9629c",
+  "scope": "once",
+  "step_id": "implement_16",
+  "summary": "Every acceptance criterion in planning/16-release.md that can be met inside this repository now holds, verified by running it rather than reading it. Most of the work was already in the tree from com\u2026"
+}

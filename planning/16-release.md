@@ -44,12 +44,14 @@ state. A claim that cannot be made stops the server Cairn just started. There ar
 states and no third, asserted against a real server in `tests/test_triggers.py`.
 
 **Nothing in the artifact is shaped like its author.** `tests/test_release.py` fails on an
-absolute home directory anywhere in any tracked file — source, generated fixture or recorded
-one — with a declared placeholder list as the only way past it, and separately on this
-machine's own home and checkout path, which is a different literal on every machine that
-runs it. It found two real instances: the ten recorded runs in `fixtures/runs/` each carried
-the recording machine's absolute interpreter path, because the engine writes a step's command
-into its state file exactly as it ran it, and one planning document quoted an absolute path.
+absolute home directory in any tracked file but its own — source, generated fixture or
+recorded one — with a declared placeholder list as the only way past it, and separately on
+this machine's own home and checkout path, which is a different literal on every machine
+that runs it. It leaves itself out because it is where the forbidden shapes are spelled and
+where the guard is shown rejecting them. It found two real instances: the ten recorded runs
+in `fixtures/runs/` each carried the recording machine's absolute interpreter path, because
+the engine writes a step's command into its state file exactly as it ran it, and one
+planning document quoted an absolute path.
 `scripts/record_runs.py` now normalises that path to the bare name `python3` on every
 recording and declares the normalisation in `recording.json`, so the next re-recording cannot
 reintroduce it.

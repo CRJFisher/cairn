@@ -13,7 +13,7 @@ import subprocess
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, ClassVar
+from typing import Any
 from unittest.mock import patch
 
 from cairn.core import EXIT_FAILED, EXIT_OK, CairnError, CommandResult, RuntimeContext
@@ -58,6 +58,7 @@ from cairn.plan.schema import (
 from cairn.topology import derive, merge_provider
 from cairn.verify import EXCLUSION_CAUSES, mark_name
 from cairn.workflow.build import envelope
+from tests.engine import require_engine
 from tests.ownership import own_repository
 
 # The engine mints a run id when none is given, and a run's records are keyed by it.
@@ -1022,22 +1023,8 @@ class TheMergeRefusesWhatItCannotLandHonestly(RepositoryCase):
 class TheEngineStopsAChainThatHalts(RepositoryCase):
     """Against real Dagu, because a run whose only failures are skips reports Succeeded."""
 
-    SKIP_ENV = "CAIRN_SKIP_ENGINE_TESTS"
-    dagu: ClassVar[str | None] = None
-
-    @classmethod
-    def setUpClass(cls) -> None:
-        located = subprocess.run(("which", "dagu"), capture_output=True, text=True, check=False)
-        cls.dagu = located.stdout.strip() or None
-
     def setUp(self) -> None:
-        if self.dagu is None:
-            if os.environ.get(self.SKIP_ENV):
-                self.skipTest(f"{self.SKIP_ENV} is set")
-            self.fail(
-                "dagu is not installed, so the merge chain's routing is unverified. Install "
-                f"it, or set {self.SKIP_ENV}=1 to record that this run did not check it."
-            )
+        self.dagu = require_engine(self, "how the merge chain routes a halt")
         super().setUp()
         self.engine_temporary = TemporaryDirectory()
         self.addCleanup(self.engine_temporary.cleanup)

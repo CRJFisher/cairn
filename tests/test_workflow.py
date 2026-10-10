@@ -1425,18 +1425,8 @@ class TheRehearsalDagLoadsOnARealEngine(unittest.TestCase):
     Cairn-side bug as a host that cannot bind a socket ([19 C]).
     """
 
-    SKIP_ENV: ClassVar[str] = "CAIRN_SKIP_ENGINE_TESTS"
-
     def setUp(self) -> None:
-        self.dagu = shutil.which("dagu")
-        if not self.dagu and not os.environ.get(self.SKIP_ENV):
-            self.fail(
-                "dagu is not installed, so the rehearsal's own DAG is unverified against a "
-                f"real engine. Install it, or set {self.SKIP_ENV}=1 to record that this run "
-                "did not check it."
-            )
-        if not self.dagu:
-            self.skipTest("recorded deliberately as unchecked")
+        self.dagu = require_engine(self, "the rehearsal's own DAG against a real engine")
 
     def test_the_rehearsal_dag_actually_takes_on_a_run(self) -> None:
         """The positive case the stubbed tests above cannot cover."""
@@ -1599,17 +1589,8 @@ class TheEmittedPathsAgreeWithTheRuntimes(unittest.TestCase):
 class TheEngineGateRefusesAsWellAsPasses(unittest.TestCase):
     """The gate is only a gate if it is ever seen to close."""
 
-    SKIP_ENV: ClassVar[str] = "CAIRN_SKIP_ENGINE_TESTS"
-
     def setUp(self) -> None:
-        self.dagu = shutil.which("dagu")
-        if not self.dagu and not os.environ.get(self.SKIP_ENV):
-            self.fail(
-                "dagu is not installed, so the mandatory gate is unverified. Install it, or "
-                f"set {self.SKIP_ENV}=1 to record that this run did not check it."
-            )
-        if not self.dagu:
-            self.skipTest("recorded deliberately as unchecked")
+        self.dagu = require_engine(self, "the mandatory gate")
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
