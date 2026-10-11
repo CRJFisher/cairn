@@ -158,8 +158,8 @@ SENTENCE_BY_ACTION: dict[str, str] = {
         "already done no-ops, and the held step starts again over the tree its session left."
     ),
     NEXT_ALLOWANCE_ELSEWHERE: (
-        "Run it again as a recovery now: the hold was another account's week, and the "
-        "account in use has not been measured. Every step already done no-ops, and the held "
+        "Run it again as a recovery now: the hold was another account's week, which says "
+        "nothing about the account in use. Every step already done no-ops, and the held "
         "step is admitted, or held again on a reading of its own."
     ),
     NEXT_START_SCHEDULER: "Start a scheduler: this run is queued and nothing is draining the queue.",

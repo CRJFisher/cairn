@@ -326,8 +326,8 @@ def _next_action(record: RunRecord) -> list[Block]:
                             Chrome("— and the account in use now is"),
                             Fact(("run.account_in_use",)),
                             Chrome(
-                                ", which nothing has measured. The moment that hold named "
-                                "says nothing about this account's windows."
+                                ". The moment that hold named says nothing about this "
+                                "account's windows."
                             ),
                         ),
                     )

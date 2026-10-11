@@ -65,8 +65,8 @@ figures the first acceptance below says must stop deciding.
 `cairn report` keeps the held step's account beside its moment. Where the account Claude Code
 is logged in to now differs from it, the next action is `allowance_elsewhere` rather than
 `await_allowance`, and reads: _It was held on seven_day of another account — team,
-organisation …— and the account in use now is pro, organisation …, which nothing has measured.
-The moment that hold named says nothing about this account's windows._ The recovery command is
+organisation …— and the account in use now is pro, organisation …. The moment that hold named
+says nothing about this account's windows._ The recovery command is
 the same command. Only the moment stops being a precondition.
 
 It is a second frozen word rather than the same one phrased differently, because the action is

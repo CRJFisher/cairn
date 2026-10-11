@@ -385,8 +385,8 @@ class Gauge:
 
     @contextmanager
     def _updating(self) -> Generator[Reading]:
-        # Resolved before the lock is taken: reading the account takes the same lock to
-        # cache what it found, and a second take inside this one would never come free.
+        # Resolved before the lock is taken: an uncached account read runs the provider as a
+        # subprocess, and every other step would wait out that subprocess inside the lock.
         key = self.key()
         with self._locked() as ledger:
             yield ledger["accounts"].setdefault(key, empty_reading())

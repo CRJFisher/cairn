@@ -1,0 +1,7 @@
+{
+  "key": "once",
+  "run_id": "20261012T083259Z-0a1251e8",
+  "scope": "once",
+  "step_id": "review_43",
+  "summary": "The end state holds: `/code-review low` has nothing left to fix on the `pause_after_42`..`implement_43` diff, and every fix is in the working tree uncommitted.\\n\\nFunctionality: `cairn report`, read\u2026"
+}
