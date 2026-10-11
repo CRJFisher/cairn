@@ -82,6 +82,21 @@ launch language, lossless diagnostics, accessible HTML, and display-width-aware 
 Then [20](20-watching-a-live-session.md) adds live session breadcrumbs, and
 [34](34-follow-on-runs.md) adds follow-on plan drafting, on top of records now safe to trust.
 
+### 8 — Make the allowance a pause a person never has to tend
+
+Two runs of `remaining-plans-3` stopped at the subscription's allowance. In order:
+
+1. [42](42-a-step-held-before-it-started.md) first, because it is a false claim in the record: a
+   step held before it started is reported as having diverged from its assertion, over work it
+   never did.
+2. [43](43-the-allowance-belongs-to-an-account.md) next, because [44] acts on a held moment, and
+   that moment has to belong to the account the resume will run under.
+3. [44](44-a-held-run-resumes-itself.md) removes the stall itself: the run resumes when the
+   window measures open.
+4. [45](45-spending-the-allowance-knowingly.md) last: it records what each step costs, forecasts
+   the queue against what is left, and paces the week. Its value grows with the records the
+   first three leave.
+
 ## Original 21–24 themes
 
 The eight changes are four separable pieces of work, and the order within each is forced by
