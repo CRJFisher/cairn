@@ -48,6 +48,7 @@ from typing import Any, NamedTuple, TypedDict, cast
 from cairn.core import (
     EXIT_FAILED,
     EXIT_RATE_LIMITED,
+    HELD,
     CairnError,
     CommandResult,
     RuntimeContext,
@@ -100,12 +101,12 @@ SOURCE_PROBE = "probe"
 SOURCE_LIMIT = "limit"
 
 # What admission decided for one session. `inert` is a session funded by an API key, which
-# has no subscription windows to hold on.
+# has no subscription windows to hold on. `HELD` is minted in [core.py], where the gates
+# that read a held step's report off it can reach it.
 ADMITTED = "admitted"
 WARNED = "warned"
 UNKNOWN = "unknown"
 INERT = "inert"
-HELD = "held"
 ADMISSIONS: tuple[str, ...] = (ADMITTED, WARNED, UNKNOWN, INERT, HELD)
 
 # Which moment a hold answered: the one before a session started, a limit a session met, or
@@ -647,9 +648,19 @@ def local_moment(epoch: float) -> str:
     return datetime.fromtimestamp(epoch).astimezone().strftime("%a %d %b %H:%M %Z")
 
 
-def _snapshot(reading: Reading, *, now: float, model: str | None) -> dict[str, Any]:
-    """The reading admission rested on, with each window's age rather than its timestamp."""
-    return {
+def _snapshot(
+    reading: Reading, *, now: float, model: str | None, newer_than: float | None
+) -> tuple[dict[str, Any], list[str]]:
+    """What admission read, with each window's age — and the windows it set aside as stale.
+
+    Only the windows the decision could rest on, which is exactly what `fresh_windows`
+    returned for it. A measurement older than `READING_TTL` decided nothing, and a snapshot
+    carrying it shows a step admitted against a window admission ignored ([42 B]). The stale
+    ones keep their names, because "a reading this old was there and was not used" is a
+    different fact from "nothing was measured".
+    """
+    fresh = fresh_windows(reading, now=now, model=model, newer_than=newer_than)
+    windows = {
         name: {
             "used": window["used"],
             "status": window["status"],
@@ -658,9 +669,14 @@ def _snapshot(reading: Reading, *, now: float, model: str | None) -> dict[str, A
             "read_at": iso_moment(window["read_at"]),
             "age_seconds": round(max(0.0, now - window["read_at"]), 1),
         }
-        for name, window in sorted(reading["windows"].items())
-        if _applies(name, model)
+        for name, window in sorted(fresh.items())
     }
+    stale = sorted(
+        name
+        for name, window in reading["windows"].items()
+        if _applies(name, model) and name not in fresh and window["read_at"] < now - READING_TTL
+    )
+    return windows, stale
 
 
 def _limit_window(result: CommandResult) -> tuple[str, int | None]:
@@ -738,6 +754,7 @@ class Steward:
         self.worked = 0.0
         self.admission: Decision | None = None
         self.reading: dict[str, Any] = {}
+        self.set_aside: list[str] = []
         self.notes: list[str] = []
         self.holds: list[Hold] = []
         self.resumes: list[Resume] = []
@@ -775,7 +792,9 @@ class Steward:
         decision = decide(reading, now=now, model=self.model, newer_than=newer_than)
         if admitting:
             self.admission = decision
-            self.reading = _snapshot(reading, now=now, model=self.model)
+            self.reading, self.set_aside = _snapshot(
+                reading, now=now, model=self.model, newer_than=newer_than
+            )
             self.notes = notes
         return decision
 
@@ -934,6 +953,7 @@ class Steward:
             )
             or None,
             "reading": self.reading,
+            "set_aside": list(self.set_aside),
             "holds": list(self.holds),
             "resumes": list(self.resumes),
             "held_window": None if stopped is None else stopped.window,
@@ -950,7 +970,12 @@ class Steward:
         prior: CommandResult | None,
         why: str | None = None,
     ) -> CommandResult:
-        """The step ends `quota_held`, naming the window and the moment it reopens."""
+        """The step ends `quota_held`, naming the window and the moment it reopens.
+
+        A step stopped at admission opened no session, so its sentence leads with that: a
+        reader weighing a re-run of a step that did nothing is asking something different
+        from one weighing a session that ran and was then stopped ([42 A]).
+        """
         allowance = window_phrase(stopped.window)
         state = (
             f"{allowance} at {_percent(stopped.used)}"
@@ -959,6 +984,11 @@ class Steward:
         )
         if why is not None:
             summary = f"{why} — {state}"
+        elif prior is None:
+            reopening = (
+                "" if stopped.until is None else f", reopening {local_moment(stopped.until)}"
+            )
+            summary = f"held before it started — {state}{reopening}; nothing was done"
         elif stopped.until is not None:
             summary = f"held until {local_moment(stopped.until)} — {state}"
         else:

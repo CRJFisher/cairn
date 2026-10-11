@@ -80,6 +80,7 @@ from cairn.record.vocabulary import (
     INTEGRITY_REPORT_UNREADABLE,
     INTEGRITY_REPORT_WRONG_RUN,
     NEXT_ACTIONS,
+    NEXT_AWAIT_ALLOWANCE,
     NEXT_FIX_ASSERTION,
     NEXT_RERUN,
     NEXT_SETTLE_MERGE,
@@ -124,7 +125,9 @@ from cairn.verify import (
     EXCLUSION_CAUSES,
     NOT_REACHED,
     ORCHESTRATOR_DIED,
+    QUOTA_HELD,
     REPORTED_FAILURE,
+    REPORTED_HELD,
     REPORTED_KILLED,
     TIMED_OUT,
     VERIFY_FAILED,
@@ -148,6 +151,8 @@ SHAPES = (
     "crashed",
     "timed-out",
     "agent",
+    "held-before-session",
+    "held-after-limit",
     "damaged",
 )
 
@@ -811,6 +816,54 @@ class AStepTheEngineKilledIsTimedOut(unittest.TestCase):
         self.assertEqual([item["subject"] for item in failures], ["alpha", "beta"])
         self.assertIn("2 s bound", failures[0]["summary"])
         self.assertEqual(failures[1]["summary"], "never reached behind alpha")
+
+    def test_a_step_held_before_its_session_started_asserted_nothing_and_says_so(
+        self,
+    ) -> None:
+        """[42 A]: a step the allowance stopped four seconds in was recorded as having
+        diverged from its assertion, over 506 seconds of a suite proving work it never did.
+
+        The two recorded shapes are the whole claim, side by side: what separates them is
+        whether a session was ever opened.
+        """
+        record = record_of("held-before-session")
+        by_id = {step["step_id"]: step for step in record["steps"]}
+        beta = by_id["beta"]
+        self.assertEqual((beta["outcome"], beta["cause"]), (OUTCOME_EXCLUDED, QUOTA_HELD))
+        self.assertIsNone(beta["session_id"])
+        self.assertIsNone(beta["assertion_exit"])
+        self.assertIsNone(beta["divergence"])
+        self.assertNotIn(OVERLAY_DIVERGENCE, beta["overlays"])
+        self.assertEqual(by_id["alpha"]["outcome"], OUTCOME_VERIFIED)
+        self.assertEqual(record["verdict"], VERDICT_GREEN_WITH_EXCLUSIONS)
+        self.assertEqual(record["next_action"]["action"], NEXT_AWAIT_ALLOWANCE)
+        self.assertEqual(
+            [(item["kind"], item["subject"]) for item in record["attention"]],
+            [("excluded", "beta")],
+        )
+        said = record["attention"][0]["summary"]
+        self.assertIn("held before it started", said)
+        self.assertIn("nothing was done", said)
+
+    def test_a_step_held_after_its_session_met_a_limit_keeps_its_divergence(self) -> None:
+        """The other half of [42 A]: that session did work, so the assertion over what it
+        left is a true account and the divergence between the two stands."""
+        record = record_of("held-after-limit")
+        beta = {step["step_id"]: step for step in record["steps"]}["beta"]
+        self.assertEqual((beta["outcome"], beta["cause"]), (OUTCOME_EXCLUDED, QUOTA_HELD))
+        self.assertIsNotNone(beta["session_id"])
+        self.assertEqual(beta["assertion_exit"], 0)
+        self.assertEqual(beta["divergence"], {"reported": REPORTED_HELD, "asserted": True})
+        self.assertIn(OVERLAY_DIVERGENCE, beta["overlays"])
+        self.assertEqual(record["verdict"], VERDICT_GREEN_WITH_EXCLUSIONS)
+        self.assertEqual(record["next_action"]["action"], NEXT_AWAIT_ALLOWANCE)
+        self.assertEqual(
+            [(item["kind"], item["subject"]) for item in record["attention"]],
+            [("excluded", "beta"), ("divergence", "beta")],
+        )
+        summaries = {item["kind"]: item["summary"] for item in record["attention"]}
+        self.assertIn("held until", summaries["excluded"])
+        self.assertIn("passed over the work it left", summaries["divergence"])
 
     def test_a_run_that_halted_in_two_places_names_neither_as_the_others_cause(self) -> None:
         """One collapsed line for the steps a halt left behind is the right shape for one

@@ -1,0 +1,21 @@
+{
+  "shape": "held-before-session",
+  "run_id": "fixture-heldbeforesession",
+  "engine": "2.18.2",
+  "why": "the subscription's weekly allowance was past its hold threshold when the second step was admitted, and reopens days later \u2014 further ahead than the step may wait \u2014 so the step ended `quota_held` four seconds in, with no session opened and nothing in the tree changed. Its assertion was declined for having nothing to assert, and its gate closed with no divergence",
+  "hand_set_fields": {},
+  "seeded": {
+    "reading": {
+      "seven_day": {
+        "used": 0.98,
+        "status": "allowed_warning",
+        "reopens_in": 259200
+      }
+    },
+    "provider": "a stub claude first on PATH, which fails if anything opens a session"
+  },
+  "normalised": {
+    "interpreter": "python3"
+  },
+  "damage": {}
+}

@@ -693,7 +693,8 @@ writing one somewhere nothing will look.
 
 `fixtures/runs/<shape>/` holds `status.jsonl` written by a real Dagu 2.18.2 run, that run's
 own step reports, and a `recording.json` naming the engine version, why the shape exists,
-any field set by hand, and the one normalisation every recording carries: the engine writes
+any field set by hand, anything the shape was seeded with before the run, and the one
+normalisation every recording carries: the engine writes
 a step's command into its state file exactly as it ran it, so the recording machine's
 absolute interpreter path is replaced by the bare name `python3` — a checked-in fixture
 carries no path belonging to the machine that recorded it ([16]).
@@ -715,10 +716,19 @@ and not a plan.
 | `crashed`               | the orchestrator was killed; the engine's record still says `running` with no finish time                                                                                                                                                                                                                                                  |
 | `timed-out`             | the engine killed a step at its bound with no report written, so nothing asserted over what it left — its assertion's own gate declined and the step behind it was skipped: the record reads the kill over the gate's `not_reached`, and the halt over the engine's `skipped`, and the step carries no assertion verdict and no divergence |
 | `agent`                 | one real agent step, so a step's receipts — turns, session identity, transcript, resume command — are carried populated rather than only absent                                                                                                                                                                                            |
+| `held-before-session`   | the allowance stopped a step before its session opened: nothing was done, its assertion was declined for having nothing to assert, and its gate closed with no divergence                                                                                                                                                                  |
+| `held-after-limit`      | the same cause from the other side: the step's session ran and met the limit mid-turn, so the assertion ran over the work it left and the gate recorded the divergence                                                                                                                                                                     |
 | `damaged`               | a run the engine and the gates recorded as entirely verified, whose evidence was then broken in five declared ways: nothing refused raises anything, every refusal is named, and the run is not a clean success                                                                                                                            |
 
 `green`, `all-no-op` and `blocked` all carry engine run status `4`. That they extract to
 `green`, `all_no_op` and `blocked` is what proves the verdict is not read off the engine.
+
+`held-before-session` and `held-after-limit` are a pair, and what separates them is whether
+a session was ever opened. Neither spends an allowance: each is seeded with a shared
+headroom reading written in the gauge's own format, and run against a stub provider first on
+`PATH` — one that meets the limit on its first turn, and one that fails if anything opens a
+session at all. Both inputs are named in each `recording.json` under `seeded`; everything
+downstream of them is the real admission, the real gates and the real record.
 
 `damaged` is the one shape whose evidence was broken on purpose, because none of these
 documents can be recorded: the engine and Cairn's own gates are built so that nothing

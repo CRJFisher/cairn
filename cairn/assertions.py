@@ -2,12 +2,15 @@
 
 A step's assertion is the plan's own command, emitted bare ([verify-gate.md]). What Cairn
 owns is whether it is worth running, and this is the precondition that decides. It says no
-in two cases. The step's work node left no report of this run — a step an upstream halt
+in three cases. The step's work node left no report of this run — a step an upstream halt
 skipped, whose assertion would run against a tree the step never touched and whose gate
 would close `not_reached` regardless ([24 B]). A step the engine killed at its bound leaves
 no report either, so its assertion is declined on the same rule and the record carries no
 verdict over what it left; the two are indistinguishable from here, and letting the wrong
-one through would assert over a tree its step never touched. Or the same command has already been proven,
+one through would assert over a tree its step never touched. Or the subscription's allowance
+stopped the step before its session opened: it did nothing, so there is nothing of its to
+assert, and an assertion run here would prove the tree its predecessor left and be filed as
+this step's verdict ([42 A]). Or the same command has already been proven,
 in this run, against exactly this tree: a recovery no-ops every finished step in
 milliseconds and then re-proves one command fourteen times, half an hour of the same suite
 over the same bytes ([24 A]). A marker no-op leaves its `noop` report and keeps its
@@ -59,6 +62,7 @@ from cairn.core import (
     CairnError,
     CommandResult,
     RuntimeContext,
+    held_before_session,
     read_step_report,
     survive_termination,
     write_json,
@@ -91,11 +95,16 @@ DECISION_SKIPPED_UPSTREAM = "skipped_upstream"
 # A remedied step's second assertion, declined because no remedy session reported doing
 # anything: running it again over an unchanged tree would only ask the first question twice.
 DECISION_NOT_REMEDIED = "not_remedied"
+# A step the subscription's allowance stopped before its session opened. It did nothing, so
+# there is nothing of its to assert, and an assertion run here would prove the tree its
+# predecessor left and be filed as this step's verdict ([42 A]).
+DECISION_NOTHING_TO_ASSERT = "nothing_to_assert"
 DECISIONS: tuple[str, ...] = (
     DECISION_RUN,
     DECISION_SHARED,
     DECISION_SKIPPED_UPSTREAM,
     DECISION_NOT_REMEDIED,
+    DECISION_NOTHING_TO_ASSERT,
 )
 
 # The remedy gate's two answers. It fails **closed**, the opposite of the assertion's own
@@ -267,8 +276,11 @@ def _decide(
             None,
             detail,
         )
+    work: dict[str, Any] | None = None
     try:
-        read_step_report(context.report_path.parent, f"{WORK_PREFIX}{step_id}", context.run_id)
+        work = read_step_report(
+            context.report_path.parent, f"{WORK_PREFIX}{step_id}", context.run_id
+        )
     except CairnError as exc:
         if exc.cause == "missing_report":
             detail[DECISION_KEY] = DECISION_SKIPPED_UPSTREAM
@@ -283,6 +295,18 @@ def _decide(
             )
         # An account the gate cannot read is the mark gate's to refuse; the assertion still
         # runs, because running one that need not run is the cheap mistake.
+    if held_before_session(work):
+        detail[DECISION_KEY] = DECISION_NOTHING_TO_ASSERT
+        return NEEDED_SKIP_IT, CommandResult(
+            NEEDED_SKIP_IT,
+            "noop",
+            "the allowance held the step before its session started, so nothing was done "
+            "and there is nothing to assert",
+            [],
+            False,
+            None,
+            detail,
+        )
     tree = tree_digest(context.working_directory, runs_root=context.runs_root)
     detail[TREE_KEY] = tree
     proof = (
@@ -628,6 +652,7 @@ __all__ = [
     "COMMAND_KEY",
     "DECISIONS",
     "DECISION_KEY",
+    "DECISION_NOTHING_TO_ASSERT",
     "DECISION_NOT_REMEDIED",
     "DECISION_RUN",
     "DECISION_SHARED",

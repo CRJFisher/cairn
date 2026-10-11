@@ -233,7 +233,9 @@ SENTENCE_BY_CAUSE: dict[str, str] = {
         "the step stopped at the subscription's allowance — held longer than it may wait, or "
         "met the limit and could not resume its session. Its work was not judged wrong; the "
         "step names the window and when it reopens, and a re-run after that moment skips "
-        "everything already landed"
+        "everything already landed. Where it was held before its session started, no session "
+        "ran, nothing changed and no assertion was run over it; where it was held after one, "
+        "the assertion ran over the work that session left"
     ),
     CAUSE_PROVIDER_FAILED: (
         "the step's session ended on a fault of the provider's own process — a crash, a "

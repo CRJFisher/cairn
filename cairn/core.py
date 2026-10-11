@@ -39,6 +39,12 @@ STATUSES = ("done", "noop", "failed")
 # failing — the gate would silently fall back to its broader sentence for ever.
 ENDED_WITHOUT_REPORTING = "ended_without_reporting"
 
+# The admission a step records when the subscription's allowance stopped it before its
+# session. Minted here rather than in [headroom.py], which writes it, because the readers
+# that key on it — the assertion's gate, the verify gate, the run record — all sit below
+# that module and a second spelling of the word would drift with nothing failing.
+HELD = "held"
+
 
 class CommandResult(NamedTuple):
     """What one subcommand decided, before it becomes a report and an exit status."""
@@ -455,6 +461,27 @@ def read_step_report(directory: Path, step_id: str, run_id: str) -> dict[str, An
     return cast(dict[str, Any], raw)
 
 
+def held_before_session(report: dict[str, Any] | None) -> bool:
+    """Whether the allowance stopped this step before any session of its opened.
+
+    One fact, read the same way by every gate and by the record, because the three of them
+    must never disagree about whether a step did anything: its admission held it, and it
+    names no session. Nothing ran, nothing in the tree changed, and there is no work for an
+    assertion to prove or for a divergence to weigh ([headroom.py], [42 A]).
+    """
+    detail = report.get("detail") if isinstance(report, dict) else None
+    if not isinstance(detail, dict):
+        return False
+    found = cast(dict[str, Any], detail)
+    headroom = found.get("headroom")
+    if not isinstance(headroom, dict):
+        return False
+    session = found.get("session_id")
+    return cast(dict[str, Any], headroom).get("admission") == HELD and not (
+        isinstance(session, str) and session
+    )
+
+
 def sweep_stale_reports(context: RuntimeContext) -> None:
     """Clear temp files a killed predecessor left beside the reports a router globs."""
     directory = context.report_path.parent
@@ -472,6 +499,7 @@ __all__ = [
     "EXIT_FAILED",
     "EXIT_OK",
     "EXIT_RATE_LIMITED",
+    "HELD",
     "STATUSES",
     "CairnError",
     "Cancelled",
@@ -481,6 +509,7 @@ __all__ = [
     "ReportFault",
     "RuntimeContext",
     "cancel_on_termination",
+    "held_before_session",
     "launch",
     "read_standard_json",
     "read_step_report",

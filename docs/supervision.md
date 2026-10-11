@@ -389,6 +389,11 @@ A per-model weekly window (`seven_day_opus`, `seven_day_sonnet`) holds only a st
 is of that family. Where several windows are closed, the hold lasts until the last of them
 reopens.
 
+The step records the reading its admission rested on, which is exactly the windows the
+decision could rest on: each one with its age, and the names — never the figures — of any
+window set aside as older than 10 minutes. A measurement admission ignored is never shown as
+the reading a step was admitted against.
+
 **Unknown admits.** A guard that blocked on its own blindness would stall a queue for a fault
 in the instrument, and the backstop below makes a wrong admission a short wait rather than a
 lost step. This is the inverse of the verify gate on purpose: nothing durable depends on this
@@ -408,10 +413,18 @@ window — and a step may spend at most `HOLD_BUDGET`, **18 hours**, held in all
 windows, which covers a hold before the session and two limits met in it. Each hold is
 bounded on its own, so a step held at admission still waits out a whole window when its
 session meets the limit later. A hold that would end later than either allows, typically a
-weekly window days away, does not sleep a worker for days: the step ends **`quota_held`**, exit **75**, and its summary names the moment
-and the window — _held until Thu 08 Oct 04:00 BST — the weekly allowance at 97%_. The run's
+weekly window days away, does not sleep a worker for days: the step ends **`quota_held`**,
+exit **75**. The run's
 next action is then `await_allowance`, whose recovery command is the one to run after that
 moment; the committed markers mean it skips every step that already landed.
+
+A step stopped at **admission** opened no session, so its summary says what it did rather
+than when it stopped — _held before it started — the weekly allowance at 97%, reopening Thu
+08 Oct 05:13 BST; nothing was done_. Nothing in the tree changed, so its assertion is
+declined and its verify gate closes with no divergence ([verify-gate.md](verify-gate.md)).
+A step stopped **after** its session met a limit names the moment instead — _held until Thu
+08 Oct 04:00 BST — the weekly allowance at 97%_ — and its assertion runs over the work that
+session left.
 
 ### The backstop: a limit met mid-session
 

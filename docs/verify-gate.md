@@ -50,17 +50,23 @@ of Cairn's between it and the engine. It runs in the same working directory as t
 asserts, and it **never retries**: a fact check asked twice is a different question.
 
 **Whether it runs at all is Cairn's, and that is its precondition.** `cairn verify needed`
-declines the assertion in two cases, and the first is this: the step's work node left no
+declines the assertion in three cases, and the first is this: the step's work node left no
 report of this run, which is a step an upstream halt skipped — or one the engine killed
 before it could write one, which is why such a step carries no assertion verdict
 ([run-model.md](run-model.md)). Its assertion would run against a tree the step
 never touched and its gate would close `not_reached` regardless — measured, thirteen
-full-suite executions past one fault, half an hour proving nothing a gate could read. A
+full-suite executions past one fault, half an hour proving nothing a gate could read. The
+second is a step the subscription's allowance stopped before its session opened: its report
+says its admission was `held` and names no session, so nothing ran and nothing in the tree
+changed, and an assertion here would prove its predecessor's work and be filed as this
+step's verdict — measured, 506 seconds of a full suite over a step that lived four seconds
+([supervision.md](supervision.md)). A
 marker no-op leaves its `noop` report and keeps its assertion, which is the recovery
 guarantee: a step already done still has its end state asserted on today's tree. The gate
 fails open like the marker gate, because running an assertion that need not run takes
 minutes and skipping one that must run loses the step its record; and it writes its
-decision — `run`, `shared` or `skipped_upstream` — to the assertion node's own report
+decision — `run`, `shared`, `skipped_upstream` or `nothing_to_assert` — to the assertion
+node's own report
 before it answers, on every path. The verify gate below trusts the engine's exit-status reference
 only where that decision says the assertion ran: measured against Dagu 2.18.2,
 `${<id>.exit_code}` resolves to `0` for a node its precondition skipped, and a gate that
@@ -68,7 +74,8 @@ read it would record a marker over an assertion that never ran. The assertion no
 `continue_on: {skipped: true}` beside `failure: true` so a declined assertion still lets the
 marker's gate run and record the halt; a precondition skip cascades otherwise.
 
-**One proof per command per tree, within a run.** The same gate declines an assertion whose
+**One proof per command per tree, within a run.** The third case: the same gate declines an
+assertion whose
 exact command has already been proven, in this run, against exactly this tree — a recovery
 no-ops every finished step in milliseconds and would otherwise re-prove one command
 fourteen times, half an hour of the same suite over the same bytes ([24 A]). The key is the
@@ -175,22 +182,23 @@ actually there could never be told from one that did nothing.
 
 The gate reads two things and opens only when both agree:
 
-| The assertion  | The step's report                           | The gate | Cause                    | Divergence                                                                   |
-| -------------- | ------------------------------------------- | -------- | ------------------------ | ---------------------------------------------------------------------------- |
-| exit 0         | `done` or `noop`                            | opens    | —                        | —                                                                            |
-| either         | `failed` with `cause: provider_protocol`    | closes   | `provider_protocol`      | **yes** where the assertion passed — verified true, reported nothing         |
-| either         | `failed` with `cause: timed_out`            | closes   | `timed_out`              | **yes** where the assertion passed — verified true, stopped before reporting |
-| either         | `failed` with `cause: quota_held`           | closes   | `quota_held`             | **yes** where the assertion passed — verified true, held before reporting    |
-| either         | `failed` with `cause: provider_unreachable` | closes   | `provider_unreachable`   | **yes** where the assertion passed — verified true, reported nothing         |
-| either         | `failed` with a provider fault              | closes   | `provider_failed`        | **yes** where the assertion passed — verified true, reported nothing         |
-| exit 0         | `failed`                                    | closes   | `reported_failure`       | **yes** — verified true, reported failed                                     |
-| nonzero        | `done` or `noop`                            | closes   | `verify_failed`          | **yes** — reported done, verified false                                      |
-| nonzero        | `failed`                                    | closes   | `reported_failure`       | — they agree                                                                 |
-| either         | `needs_user_decision`                       | closes   | `user_decision_required` | —                                                                            |
-| either         | none from this run                          | closes   | `not_reached`            | —                                                                            |
-| unreadable     | any                                         | closes   | `gate_indeterminate`     | —                                                                            |
-| any            | unreadable                                  | closes   | `gate_indeterminate`     | —                                                                            |
-| _(unverified)_ | `done` or `noop`                            | opens    | —                        | —                                                                            |
+| The assertion  | The step's report                                    | The gate | Cause                    | Divergence                                                                   |
+| -------------- | ---------------------------------------------------- | -------- | ------------------------ | ---------------------------------------------------------------------------- |
+| exit 0         | `done` or `noop`                                     | opens    | —                        | —                                                                            |
+| either         | `failed` with `cause: provider_protocol`             | closes   | `provider_protocol`      | **yes** where the assertion passed — verified true, reported nothing         |
+| either         | `failed` with `cause: timed_out`                     | closes   | `timed_out`              | **yes** where the assertion passed — verified true, stopped before reporting |
+| none ran       | `failed` with `cause: quota_held`, held at admission | closes   | `quota_held`             | — nothing ran and nothing asserted over it                                   |
+| either         | `failed` with `cause: quota_held`                    | closes   | `quota_held`             | **yes** where the assertion passed — verified true, held before reporting    |
+| either         | `failed` with `cause: provider_unreachable`          | closes   | `provider_unreachable`   | **yes** where the assertion passed — verified true, reported nothing         |
+| either         | `failed` with a provider fault                       | closes   | `provider_failed`        | **yes** where the assertion passed — verified true, reported nothing         |
+| exit 0         | `failed`                                             | closes   | `reported_failure`       | **yes** — verified true, reported failed                                     |
+| nonzero        | `done` or `noop`                                     | closes   | `verify_failed`          | **yes** — reported done, verified false                                      |
+| nonzero        | `failed`                                             | closes   | `reported_failure`       | — they agree                                                                 |
+| either         | `needs_user_decision`                                | closes   | `user_decision_required` | —                                                                            |
+| either         | none from this run                                   | closes   | `not_reached`            | —                                                                            |
+| unreadable     | any                                                  | closes   | `gate_indeterminate`     | —                                                                            |
+| any            | unreadable                                           | closes   | `gate_indeterminate`     | —                                                                            |
+| _(unverified)_ | `done` or `noop`                                     | opens    | —                        | —                                                                            |
 
 A report can carry `failed` **and** a cause that is the runtime's account of a session that
 gave none — `provider_protocol`, `timed_out`, `quota_held`, `provider_unreachable`, or a
@@ -255,6 +263,17 @@ never reached from one killed before it could write.
 whose session met the limit and could not be resumed. Its work was not judged; its own report
 names the window and the moment it reopens, and the run's next action is `await_allowance`
 ([run-model.md](run-model.md)).
+
+**A step held before its session started did nothing, and the record says so.** Its
+admission reads `held` and it names no session: no session opened, nothing in the tree
+changed. Its assertion is declined, so the step carries no assertion verdict and no
+`verify_<id>` duration beyond its precondition; the gate closes `quota_held` with **no
+divergence**, because a divergence weighs a session's account against an assertion over that
+session's work and here there is neither. Its summary is the step's own — _held before it
+started — the weekly allowance at 98%, reopening Tue 13 Oct 06:00 BST; nothing was done_. A
+step held _after_ its session met a limit is the other case entirely: that session did work,
+the assertion runs over what it left, and the divergence is the truthful account of a step
+that stopped without reporting.
 
 `provider_unreachable` is a step whose session lost the model provider — no connection, an
 edge or server error, a credential refused — and which held, probing, for the 4 hours it may

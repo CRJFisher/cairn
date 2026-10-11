@@ -86,9 +86,8 @@ Then [20](20-watching-a-live-session.md) adds live session breadcrumbs, and
 
 Two runs of `remaining-plans-3` stopped at the subscription's allowance. In order:
 
-1. [42](42-a-step-held-before-it-started.md) first, because it is a false claim in the record: a
-   step held before it started is reported as having diverged from its assertion, over work it
-   never did.
+1. [42](42-a-step-held-before-it-started.md) is done: a step held before it started asserts
+   nothing, diverges from nothing, and reads as having done nothing.
 2. [43](43-the-allowance-belongs-to-an-account.md) next, because [44] acts on a held moment, and
    that moment has to belong to the account the resume will run under.
 3. [44](44-a-held-run-resumes-itself.md) removes the stall itself: the run resumes when the

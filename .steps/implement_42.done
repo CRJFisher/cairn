@@ -1,0 +1,7 @@
+{
+  "key": "once",
+  "run_id": "20261012T083259Z-0a1251e8",
+  "scope": "once",
+  "step_id": "implement_42",
+  "summary": "Every acceptance criterion in planning/42-a-step-held-before-it-started.md now holds. The tree was clean at \"Pause before 42\" with none of this work present, so all of it is new. Functionality: a ste\u2026"
+}

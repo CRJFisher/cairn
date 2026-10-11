@@ -93,11 +93,16 @@ class Headroom(TypedDict):
 
     `holding` is the hold the step is in right now, read from its announcement while the
     step is still running; it is what keeps a held run from reading as a stalled one.
+
+    `reading` is what admission actually rested on, and `set_aside` names the windows it
+    ignored as too old to rest on. The two are kept apart so a stale measurement is never
+    shown as the reading a step was admitted against.
     """
 
     admission: str | None
     reason: str | None
     reading: list[AllowanceWindow]
+    set_aside: list[str]
     holds: list[AllowanceHold]
     resumes: int
     held_window: str | None

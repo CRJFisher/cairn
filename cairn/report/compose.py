@@ -665,6 +665,7 @@ def _receipts(record: RunRecord, view_state: str) -> list[Block]:
                     ("admitted to the allowance", Fact((f"{key}.allowance",))),
                     ("because", Fact((f"{key}.allowance_reason",))),
                     ("the allowance it was admitted on", Fact((f"{key}.allowance_reading",))),
+                    ("windows too old to rest on", Fact((f"{key}.allowance_set_aside",))),
                     ("held", Fact((f"{key}.holds",))),
                     ("resumed after a hold", Fact((f"{key}.resumes",))),
                     ("stopped holding on", Fact((f"{key}.held_window",))),

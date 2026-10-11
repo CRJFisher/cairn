@@ -1,0 +1,34 @@
+{
+  "cause": "quota_held",
+  "detail": {
+    "dirty_before": {},
+    "headroom": {
+      "admission": "held",
+      "held_until": "2026-10-15T08:58:41Z",
+      "held_used": 0.98,
+      "held_window": "seven_day",
+      "holds": [],
+      "reading": {
+        "seven_day": {
+          "age_seconds": 1.7,
+          "read_at": "2026-10-12T08:58:41Z",
+          "resets_at": "2026-10-15T08:58:41Z",
+          "source": "stream",
+          "status": "allowed_warning",
+          "used": 0.98
+        }
+      },
+      "reason": "the weekly allowance is at 98%, past the 95% hold threshold",
+      "resumes": [],
+      "set_aside": []
+    }
+  },
+  "duration": 0.07753708795644343,
+  "follow_up_work": [],
+  "needs_user_decision": false,
+  "run_id": "fixture-heldbeforesession",
+  "status": "failed",
+  "step_id": "work_beta",
+  "summary": "held before it started \u2014 the weekly allowance at 98%, reopening Thu 15 Oct 09:58 BST; nothing was done",
+  "working_directory": "/private/var/folders/tc/95b1f46j1g3cjktn__xcv6z80000gn/T/tmpbmlm88ez/work"
+}

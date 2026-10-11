@@ -20,6 +20,7 @@ from cairn.assertions import (
     BOUND_KEY,
     DECISION_KEY,
     DECISION_NOT_REMEDIED,
+    DECISION_NOTHING_TO_ASSERT,
     DECISION_RUN,
     DECISION_SHARED,
     DECISION_SKIPPED_UPSTREAM,
@@ -77,6 +78,7 @@ from cairn.verify import (
     EXCLUSION_CAUSES,
     GATE_EXCLUDE_IT,
     GATE_RECORD_IT,
+    QUOTA_HELD,
     REPORTED_NOTHING,
     REPORTED_UNREADABLE,
     Divergence,
@@ -470,6 +472,47 @@ class TheAssertionsOwnGateFailsOpen(unittest.TestCase):
         self.assertEqual(code, NEEDED_SKIP_IT)
         self.assertEqual(decision_of(self._decision()), DECISION_SKIPPED_UPSTREAM)
         self.assertIn("skipped_upstream", err)
+
+    def _held(self, *, session: str | None, step_id: str = "a") -> None:
+        """The report a step the allowance stopped leaves, in each of its two shapes."""
+        detail: dict[str, Any] = {
+            "headroom": {"admission": "held" if session is None else "admitted"}
+        }
+        if session is not None:
+            detail["session_id"] = session
+        work_report(
+            self.root, step_id, status="failed", cause=QUOTA_HELD, detail=detail
+        )
+
+    def test_a_step_held_before_its_session_has_nothing_to_assert(self) -> None:
+        """[42 A]: 506 seconds of a full suite ran over a step that lived four seconds and
+        opened no session, and its exit was then filed as that step's verdict."""
+        self._held(session=None)
+        code, _, err = self._needed()
+        self.assertEqual(code, NEEDED_SKIP_IT)
+        self.assertEqual(decision_of(self._decision()), DECISION_NOTHING_TO_ASSERT)
+        self.assertIn("nothing_to_assert", err)
+
+    def test_a_step_held_after_its_session_has_its_assertion_run(self) -> None:
+        """That session did work, and what it left is exactly what an assertion is for."""
+        self._held(session="session-1")
+        self.assertEqual(self._needed()[0], NEEDED_RUN_IT)
+        self.assertEqual(decision_of(self._decision()), DECISION_RUN)
+
+    def test_the_gate_reads_a_declined_assertion_as_the_decision_it_was(self) -> None:
+        """Measured: `${<id>.exit_code}` reads `0` for a skipped node, so a gate that read
+        the reference here would record a passing assertion over work nobody did."""
+        self._held(session=None)
+        self._needed()
+        context = RuntimeContext(
+            run_id="run-1", step_id=mark_name("a"), working_directory=self.root,
+            report_path=reports_of(self.root) / f"{mark_name('a')}.json", runs_root=self.root / "runs",
+        )
+        verdict, detail = run_verify_gate("a", CHAIN, "0", context)
+        self.assertFalse(verdict["record"])
+        self.assertEqual(verdict["cause"], QUOTA_HELD)
+        self.assertIsNone(detail["verify_exit"])
+        self.assertNotIn("divergence", detail)
 
     def test_a_marker_no_ops_assertion_still_runs(self) -> None:
         """The recovery guarantee: a step already done still has its end state asserted."""

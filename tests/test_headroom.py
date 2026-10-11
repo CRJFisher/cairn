@@ -32,6 +32,7 @@ from cairn.core import (
     CairnError,
     CommandResult,
     RuntimeContext,
+    held_before_session,
 )
 from cairn.headroom import (
     ADMITTED,
@@ -338,6 +339,49 @@ class AdmissionReadsTheReadingAndNeverTheClock(Fixture):
         self.assertEqual(self.decided(), INERT)
 
 
+class TheAdmissionSnapshotIsWhatAdmissionRead(Fixture):
+    """[42 B]: a step's recorded reading listed a window read five hours before it, past its
+    own reset, which admission had ignored — and the report showed it as a reading."""
+
+    def test_a_window_too_old_to_rest_on_is_named_rather_than_shown_as_a_reading(
+        self,
+    ) -> None:
+        self.gauge.observe(event("five_hour", status="rejected", utilization=0.99))
+        self.clock.now += READING_TTL + 1
+        self.gauge.observe(
+            event("seven_day", utilization=0.98, resets_at=int(self.clock.now) + 3 * 86400)
+        )
+        result = self.run_step(lambda _deadline: done())
+        headroom = result.detail["headroom"]
+        self.assertEqual(list(headroom["reading"]), ["seven_day"])
+        self.assertEqual(headroom["set_aside"], ["five_hour"])
+
+    def test_every_window_the_decision_rested_on_is_in_the_reading_with_its_age(
+        self,
+    ) -> None:
+        self.gauge.observe(event("five_hour", utilization=0.4))
+        self.clock.now += 120
+        result = self.run_step(lambda _deadline: done())
+        headroom = result.detail["headroom"]
+        self.assertEqual(headroom["reading"]["five_hour"]["age_seconds"], 120.0)
+        self.assertEqual(headroom["set_aside"], [])
+
+    def test_a_record_of_a_set_aside_window_never_prints_it_as_a_measurement(self) -> None:
+        state, reports = held_run()
+        headroom = reports["work_alpha"]["detail"]["headroom"]
+        headroom["set_aside"] = ["five_hour"]
+        record = extract(state, reports, run_id="run-held")
+        step = record["steps"][0]
+        assert step["headroom"] is not None
+        self.assertEqual(step["headroom"]["set_aside"], ["five_hour"])
+        self.assertEqual(
+            [window["window"] for window in record["allowance"]], ["seven_day"]
+        )
+        text = " ".join(render(document(record, VIEW_SERVING), as_mapping(record)).text.split())
+        self.assertIn("five_hour — set aside, older than 10 min", text)
+        self.assertNotIn("five_hour 9", text)
+
+
 class OneMeasurementServesEveryStep(Fixture):
     def test_a_fresh_stream_reading_admits_with_no_probe(self) -> None:
         self.gauge.observe(event(utilization=0.4))
@@ -556,11 +600,34 @@ class AWeeklyHoldEndsTheStepInASentence(Fixture):
         self.assertEqual(self.clock.slept, [])
         self.assertEqual(result.exit_code, EXIT_RATE_LIMITED)
         self.assertEqual(result.cause, QUOTA_HELD)
-        self.assertRegex(result.summary, r"^held until .+ — the weekly allowance at 97%$")
         headroom = result.detail["headroom"]
         self.assertEqual(headroom["held_window"], "seven_day")
         self.assertEqual(headroom["held_until"], "2026-10-07T18:53:20Z")
         self.assertEqual(headroom["admission"], HELD)
+
+    def test_a_step_stopped_at_admission_says_it_did_nothing(self) -> None:
+        """[42 A]: no session opened, so the sentence a person reads is what the step did —
+        nothing — rather than the moment it stopped at."""
+        self.gauge.observe(
+            event("seven_day", utilization=0.97, resets_at=int(NOW) + 3 * 86400)
+        )
+        result = self.run_step(lambda _deadline: done())
+        self.assertRegex(
+            result.summary,
+            r"^held before it started — the weekly allowance at 97%, reopening .+; "
+            r"nothing was done$",
+        )
+        self.assertNotIn("session_id", result.detail)
+        self.assertTrue(held_before_session({"detail": result.detail}))
+
+    def test_a_step_stopped_after_its_session_names_the_moment_instead(self) -> None:
+        """The other case keeps today's sentence: that session ran, and a reader weighing a
+        re-run is asking when it may continue rather than whether anything happened."""
+        self.gauge.observe(event())
+        result = self.run_step(lambda _deadline: limited(int(NOW) + 3 * 86400))
+        self.assertRegex(result.summary, r"^held until .+ — the 5-hour allowance spent$")
+        self.assertEqual(result.detail["session_id"], "session-1")
+        self.assertFalse(held_before_session({"detail": result.detail}))
 
 
 class ALimitMetMidSessionIsAPause(Fixture):
@@ -836,7 +903,11 @@ class AnUnmeteredProviderStartsAsItAlwaysDid(unittest.TestCase):
 
 class TheGateReadsAHeldStepAsHeld(unittest.TestCase):
     def test_a_held_step_is_never_read_as_a_veto(self) -> None:
-        held = {"status": "failed", "cause": QUOTA_HELD, "needs_user_decision": False, "summary": "x"}
+        held = {
+            "status": "failed", "cause": QUOTA_HELD, "needs_user_decision": False,
+            "summary": "x",
+            "detail": {"session_id": "session-1", "headroom": {"admission": ADMITTED}},
+        }
         verdict = judge(0, held)
         self.assertEqual(verdict["cause"], QUOTA_HELD)
         self.assertEqual(verdict["divergence"], {"reported": REPORTED_HELD, "asserted": True})
@@ -846,9 +917,29 @@ class TheGateReadsAHeldStepAsHeld(unittest.TestCase):
         assert divergence is not None
         self.assertIn("held at the subscription's allowance", divergence_line(divergence))
 
+    def test_a_step_held_before_its_session_has_nothing_to_diverge_from(self) -> None:
+        """[42 A]: there is no session's account and no assertion over its work, so the two
+        things a divergence weighs are both absent. The gate says so in one sentence."""
+        held = {
+            "status": "failed", "cause": QUOTA_HELD, "needs_user_decision": False,
+            "summary": "held before it started", "detail": {"headroom": {"admission": HELD}},
+        }
+        verdict = judge(None, held)
+        self.assertEqual(verdict["cause"], QUOTA_HELD)
+        self.assertIsNone(verdict["divergence"])
+        self.assertIn("before it started", verdict["summary"])
+        self.assertIn("nothing was done", verdict["summary"])
+        # Even handed an exit — which no held step's gate is, its assertion having been
+        # declined — the gate records no divergence over work that does not exist.
+        self.assertIsNone(judge(0, held)["divergence"])
+
 
 def held_run(*, running: bool = False) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
-    """One agent step that ended `quota_held`, or one holding right now."""
+    """One agent step the allowance stopped before its session, or one holding right now.
+
+    Its assertion is `skipped`, because a step that opened no session left nothing for one
+    to assert and its own gate declined it ([42 A]).
+    """
     state: dict[str, Any] = {
         "dagRunId": "run-held",
         "name": "plan",
@@ -857,7 +948,7 @@ def held_run(*, running: bool = False) -> tuple[dict[str, Any], dict[str, dict[s
         "paramsList": ["CAIRN_REPOSITORY=/srv/work/product"],
         "nodes": [
             {"step": {"name": "work_alpha"}, "status": 1 if running else 2},
-            {"step": {"name": "verify_alpha", "depends": ["work_alpha"]}, "status": 0 if running else 2},
+            {"step": {"name": "verify_alpha", "depends": ["work_alpha"]}, "status": 0 if running else 5},
             {"step": {"name": "mark_alpha", "depends": ["verify_alpha"]}, "status": 0 if running else 5},
             {"step": {"name": "commit_alpha", "depends": ["mark_alpha"]}, "status": 0 if running else 5},
         ],

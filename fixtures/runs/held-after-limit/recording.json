@@ -1,0 +1,21 @@
+{
+  "shape": "held-after-limit",
+  "run_id": "fixture-heldafterlimit",
+  "engine": "2.18.2",
+  "why": "the second step was admitted against an open 5-hour window, opened its session, and met the weekly limit mid-turn. The window reopens further ahead than the step may wait, so it ended `quota_held` holding a session id \u2014 and because that session did work, its assertion ran over what it left and its gate recorded the divergence between the two",
+  "hand_set_fields": {},
+  "seeded": {
+    "reading": {
+      "five_hour": {
+        "used": 0.1,
+        "status": "allowed",
+        "reopens_in": 9000
+      }
+    },
+    "provider": "a stub claude first on PATH, which meets the seven_day limit on its first turn and ends blocking_limit"
+  },
+  "normalised": {
+    "interpreter": "python3"
+  },
+  "damage": {}
+}

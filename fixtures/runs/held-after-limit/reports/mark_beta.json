@@ -1,0 +1,21 @@
+{
+  "cause": "quota_held",
+  "detail": {
+    "divergence": {
+      "asserted": true,
+      "reported": "held"
+    },
+    "position": "chain",
+    "reported": "failed",
+    "step": "beta",
+    "verify_exit": 0
+  },
+  "duration": 0.008779668947681785,
+  "follow_up_work": [],
+  "needs_user_decision": false,
+  "run_id": "fixture-heldafterlimit",
+  "status": "failed",
+  "step_id": "mark_beta",
+  "summary": "the step was held at the subscription's allowance before it reported, over an assertion that passed",
+  "working_directory": "/private/var/folders/tc/95b1f46j1g3cjktn__xcv6z80000gn/T/tmp42ydlrnt/work"
+}

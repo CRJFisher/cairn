@@ -133,6 +133,8 @@ def work_report(
     run_id: str = "run-1",
     needs_user_decision: bool = False,
     runs_root: Path | None = None,
+    cause: str | None = None,
+    detail: dict[str, Any] | None = None,
 ) -> Path:
     """The account the work step left, which the marker write quotes and the gate reads."""
     name = node_name("work", step_id)
@@ -154,8 +156,8 @@ def work_report(
                 "summary": summary,
                 "follow_up_work": [],
                 "needs_user_decision": needs_user_decision,
-                "cause": None,
-                "detail": {},
+                "cause": cause,
+                "detail": detail or {},
             }
         )
     )

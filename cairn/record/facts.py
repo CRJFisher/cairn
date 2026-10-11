@@ -13,7 +13,7 @@ agreeing with it quietly.
 
 from __future__ import annotations
 
-from cairn.headroom import AFTER_OUTAGE
+from cairn.headroom import AFTER_OUTAGE, READING_TTL
 from cairn.record.model import (
     AllowanceHold,
     AllowanceWindow,
@@ -61,6 +61,17 @@ def _windows(windows: list[AllowanceWindow]) -> str:
     return "; ".join(_window(window) for window in windows) if windows else NONE
 
 
+def _set_aside(names: list[str]) -> str:
+    """Windows admission ignored, said as what they were rather than as a measurement.
+
+    A window too old to rest on is never printed as a reading: a reader shown one would
+    believe the step was admitted against a figure its admission never looked at ([42 B]).
+    """
+    if not names:
+        return NONE
+    return f"{', '.join(names)} — set aside, older than {round(READING_TTL / 60)} min"
+
+
 def _hold(hold: AllowanceHold) -> str:
     held_on = "the model provider" if hold["after"] == AFTER_OUTAGE else hold["window"] or "the allowance"
     return (
@@ -98,6 +109,7 @@ def _headroom(key: str, headroom: Headroom | None) -> list[tuple[str, str]]:
             (f"{key}.allowance", ABSENT),
             (f"{key}.allowance_reason", ABSENT),
             (f"{key}.allowance_reading", ABSENT),
+            (f"{key}.allowance_set_aside", ABSENT),
             (f"{key}.holds", ABSENT),
             (f"{key}.resumes", ABSENT),
             (f"{key}.held_window", ABSENT),
@@ -109,6 +121,7 @@ def _headroom(key: str, headroom: Headroom | None) -> list[tuple[str, str]]:
         (f"{key}.allowance", _value(headroom["admission"])),
         (f"{key}.allowance_reason", _value(headroom["reason"])),
         (f"{key}.allowance_reading", _windows(headroom["reading"])),
+        (f"{key}.allowance_set_aside", _set_aside(headroom["set_aside"])),
         (
             f"{key}.holds",
             "; ".join(_hold(hold) for hold in headroom["holds"]) if headroom["holds"] else NONE,

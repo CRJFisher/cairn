@@ -1,0 +1,60 @@
+{
+  "cause": "quota_held",
+  "detail": {
+    "deny_patterns": [
+      "ScheduleWakeup",
+      "Cron*"
+    ],
+    "dirty_before": {},
+    "generated_session_id": "454ae715-bedd-4cb2-9353-6e94b372c92e",
+    "headroom": {
+      "admission": "admitted",
+      "held_until": "2026-10-15T08:58:43Z",
+      "held_used": null,
+      "held_window": "seven_day",
+      "holds": [],
+      "reading": {
+        "five_hour": {
+          "age_seconds": 2.1,
+          "read_at": "2026-10-12T08:58:43Z",
+          "resets_at": "2026-10-12T11:28:43Z",
+          "source": "stream",
+          "status": "allowed",
+          "used": 0.1
+        }
+      },
+      "reason": null,
+      "resumes": [],
+      "set_aside": []
+    },
+    "model": "sonnet",
+    "permission_denials": [],
+    "permission_mode": "auto",
+    "process_exit": 1,
+    "rate_limits": [
+      {
+        "rate_limit_info": {
+          "isUsingOverage": false,
+          "overageStatus": "rejected",
+          "rateLimitType": "seven_day",
+          "resetsAt": 1792054723,
+          "status": "rejected"
+        },
+        "type": "rate_limit_event"
+      }
+    ],
+    "resets_at": "2026-10-15T08:58:43Z",
+    "session_id": "454ae715-bedd-4cb2-9353-6e94b372c92e",
+    "subtype": "error_during_execution",
+    "terminal_reason": "blocking_limit",
+    "turn_count": 3
+  },
+  "duration": 0.37307400500867516,
+  "follow_up_work": [],
+  "needs_user_decision": false,
+  "run_id": "fixture-heldafterlimit",
+  "status": "failed",
+  "step_id": "work_beta",
+  "summary": "held until Thu 15 Oct 09:58 BST \u2014 the weekly allowance spent",
+  "working_directory": "/private/var/folders/tc/95b1f46j1g3cjktn__xcv6z80000gn/T/tmp42ydlrnt/work"
+}

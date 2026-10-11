@@ -333,6 +333,7 @@ def _headroom(work_report: dict[str, Any] | None, holding: object) -> Headroom |
         return None
     account = account or {}
     reading: Any = account.get("reading")
+    set_aside: Any = account.get("set_aside")
     holds: Any = account.get("holds")
     resumes: Any = account.get("resumes")
     return Headroom(
@@ -344,6 +345,13 @@ def _headroom(work_report: dict[str, Any] | None, holding: object) -> Headroom |
             if (window := _allowance_window(name, entry)) is not None
         ]
         if isinstance(reading, dict)
+        else [],
+        set_aside=sorted(
+            flatten(name, limit=LINE_LIMIT)
+            for name in cast(list[Any], set_aside)
+            if isinstance(name, str)
+        )
+        if isinstance(set_aside, list)
         else [],
         holds=[
             hold

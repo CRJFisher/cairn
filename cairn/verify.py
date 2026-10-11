@@ -16,6 +16,7 @@ import traceback
 from typing import Any, TypedDict, cast
 
 from cairn.assertions import (
+    DECISION_NOTHING_TO_ASSERT,
     DECISION_RUN,
     DECISION_SHARED,
     DECISION_SKIPPED_UPSTREAM,
@@ -35,6 +36,7 @@ from cairn.core import (
     CairnError,
     CommandResult,
     RuntimeContext,
+    held_before_session,
     read_step_report,
     survive_termination,
     write_report,
@@ -283,9 +285,10 @@ def judge(verify_exit: int | None, report: dict[str, Any] | None) -> Verdict:
     """Decide whether this step's work may be recorded as verified.
 
     Verify owns the green light and self-report owns the veto, so the two are read
-    together and neither can raise what the other lowered. `verify_exit` is None exactly
-    where the plan declared the step has no checkable effect, and there the step's own
-    report is the only routing signal there is.
+    together and neither can raise what the other lowered. `verify_exit` is None where no
+    assertion decided anything — the plan declared the step has no checkable effect, or the
+    allowance stopped the step before it did any work for one to run over — and there the
+    step's own report is the only routing signal there is.
     """
     if report is None:
         # A cascade-skipped step evaluates no precondition and runs no body, while its
@@ -335,6 +338,20 @@ def judge(verify_exit: int | None, report: dict[str, Any] | None) -> Verdict:
             ),
         )
     cause = report.get("cause")
+    if reported == "failed" and cause == QUOTA_HELD and held_before_session(report):
+        # A divergence pairs a session's account of itself with an assertion over that
+        # session's work, and a step the allowance stopped before it started has neither.
+        # Its assertion was declined for the same reason ([assertions.py]), so there is no
+        # exit here to weigh against anything ([42 A]).
+        return Verdict(
+            record=False,
+            cause=QUOTA_HELD,
+            divergence=None,
+            summary=(
+                "the step was held at the subscription's allowance before it started, so "
+                "nothing was done and nothing asserted over it"
+            ),
+        )
     stopped = _STOPPED_BEFORE_REPORTING.get(cause) if isinstance(cause, str) else None
     if reported == "failed" and stopped is not None:
         # Stopped at the step's own bound, held at the allowance, or cut off by the provider:
@@ -408,6 +425,10 @@ def _assertion_exit(
         return None
     account = assertion_report(context.report_path.parent, step_id, context.run_id)
     decision = decision_of(account)
+    if decision == DECISION_NOTHING_TO_ASSERT:
+        # The precondition's own decision, not a fault: the step did nothing, so its
+        # assertion was declined and there is no exit to read ([42 A]).
+        return None
     if decision == DECISION_SHARED and account is not None:
         exit_code = shared_exit(account)
         if exit_code is None:

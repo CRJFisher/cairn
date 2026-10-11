@@ -6,7 +6,8 @@ nothing, and what the allowance read when it stopped. Today a step the allowance
 it started looks like a step that did work and then diverged from its assertion, and the run
 spends minutes proving work that does not exist.
 
-**Status: proposed.** Found in run `20261010T143556Z-93a9629c` of `remaining-plans-3`.
+**Status: done.** Sections A and B are both built. Found in run
+`20261010T143556Z-93a9629c` of `remaining-plans-3`.
 
 **Serves** Run and Report. No invariant moves: the verify gate still fails closed, and a marker
 is still only ever written over an assertion that ran over a session's work.
@@ -20,7 +21,7 @@ session was opened, nothing in the tree changed, and `dirty_before` was empty. E
 correct. What came after it was not:
 
 - **The assertion ran anyway.** `verify_review_29` ran the full suite (`python3 -m unittest
-  discover -s tests -t .`) for 506 seconds over the tree `implement_29` had left. Its exit
+discover -s tests -t .`) for 506 seconds over the tree `implement_29` had left. Its exit
   proves nothing about `review_29`, which did nothing.
 - **The mark recorded a divergence over work that does not exist.** `mark_review_29` filed
   `divergence: {asserted: true, reported: "held"}` with the summary _the step was held at the
@@ -35,7 +36,7 @@ correct. What came after it was not:
   against them.
 
 The same divergence appeared in run `20261009T224737Z-151a689d`, for `implement_16`. That step
-*had* run a session and left work, so the overlay was true there. What separates the two cases
+_had_ run a session and left work, so the overlay was true there. What separates the two cases
 is whether a session was ever opened.
 
 ## What changes
@@ -55,7 +56,7 @@ The work report already says which case it is: `headroom.admission == "held"` an
   so: _held before it started — the weekly allowance at 98%, reopening Tue 13 Oct 06:00 BST;
   nothing was done_.
 
-A step held *after* its session met a limit keeps today's behaviour. Its session did work, the
+A step held _after_ its session met a limit keeps today's behaviour. Its session did work, the
 assertion runs over it, and the divergence overlay is the truthful account of a step that
 stopped without reporting.
 

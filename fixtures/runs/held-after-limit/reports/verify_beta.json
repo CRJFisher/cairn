@@ -1,0 +1,21 @@
+{
+  "cause": null,
+  "detail": {
+    "backed_by": "beta",
+    "bound_seconds": 600,
+    "command_sha256": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b",
+    "decision": "run",
+    "exit": 0,
+    "released_at": 1791795526.300825,
+    "source": "executed",
+    "tree_sha256": "7fd6ad0e47f761c22f9f45c0461fe980dc2efac0d1b53730bff107b138dfba13"
+  },
+  "duration": 0.22989702224731445,
+  "follow_up_work": [],
+  "needs_user_decision": false,
+  "run_id": "fixture-heldafterlimit",
+  "status": "done",
+  "step_id": "verify_beta",
+  "summary": "the assertion exited 0",
+  "working_directory": "/private/var/folders/tc/95b1f46j1g3cjktn__xcv6z80000gn/T/tmp42ydlrnt/work"
+}

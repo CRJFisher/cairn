@@ -39,6 +39,9 @@ from pathlib import Path
 from typing import Any
 
 from cairn.assertions import command_digest
+from cairn.core import write_json
+from cairn.headroom import READING_FILE
+from cairn.layout import headroom_directory
 from cairn.locks import acquire_run_lock
 from cairn.workflow.gate import EngineUnavailable, assert_pinned
 from cairn.workflow.schema import ENGINE_VERSION
@@ -99,7 +102,20 @@ def step(
     return body
 
 
-def workflow(steps: list[dict[str, Any]]) -> dict[str, Any]:
+def workflow(steps: list[dict[str, Any]], *, provider_on_path: Path | None) -> dict[str, Any]:
+    """The document the engine runs. `provider_on_path` puts a shape's own `claude` first.
+
+    The engine hands a step a curated environment, so a shape that must not reach the real
+    provider says so here rather than relying on whatever the recorder's shell had.
+    """
+    environment: list[dict[str, str]] = [
+        {"PYTHONPATH": str(PACKAGE_ROOT)},
+        {"CAIRN_RUNS_DIR": "{RUNS}"},
+    ]
+    if provider_on_path is not None:
+        environment.append(
+            {"PATH": f"{provider_on_path}:{os.environ.get('PATH', '')}"}
+        )
     return {
         "type": "graph",
         "max_active_steps": max(len(steps), 1),
@@ -109,10 +125,7 @@ def workflow(steps: list[dict[str, Any]]) -> dict[str, Any]:
             {"CAIRN_PARENT_BRANCH": "main"},
             {"CAIRN_OCCASION": "20260810T120000Z-fixture"},
         ],
-        "env": [
-            {"PYTHONPATH": str(PACKAGE_ROOT)},
-            {"CAIRN_RUNS_DIR": "{RUNS}"},
-        ],
+        "env": environment,
         "steps": steps,
     }
 
@@ -152,6 +165,129 @@ def _excluded_step(name: str, *, after: list[str] | None = None) -> list[dict[st
             continue_on={"skipped": True},
         ),
     ]
+
+
+# How far ahead a seeded window reopens. Past `QUOTA_WAIT`, so a step that meets it is
+# stopped there rather than held, and a recording takes seconds instead of days.
+SEEDED_RESET_SECONDS = 3 * 86400
+# The assertion both held shapes carry, and the bound their gate records for it.
+HELD_ASSERTION = "true"
+HELD_ASSERTION_BOUND = 600
+
+
+def _held_step(name: str, *, after: list[str]) -> list[dict[str, Any]]:
+    """One agent step's four nodes, laid out exactly as the emitter lays them out.
+
+    The gates are the real ones, reading the real report the real `cairn agent run` left:
+    what a held fixture has to record is what those gates do with it.
+    """
+    return [
+        step(
+            f"work_{name}",
+            cairn(
+                "agent", "run", "--provider", "claude", "--model", "sonnet",
+                "--prompt", "Bring this directory to a state where note.txt holds hello.",
+            ),
+            depends=after,
+            precondition=cairn("marker", "absent", "--step", name, "--scope", "once"),
+            continue_on={"failure": True, "skipped": True},
+        ),
+        step(
+            f"verify_{name}",
+            HELD_ASSERTION,
+            depends=[f"work_{name}"],
+            identifier=f"verify_{name}",
+            precondition=cairn(
+                "verify", "needed", "--step", name,
+                "--command-digest", command_digest(HELD_ASSERTION),
+                "--bound", str(HELD_ASSERTION_BOUND),
+            ),
+            continue_on={"failure": True, "skipped": True},
+        ),
+        step(
+            f"mark_{name}",
+            cairn("exec", "--command", "true"),
+            depends=[f"verify_{name}"],
+            precondition=cairn(
+                "verify", "gate", "--step", name, "--position", "chain",
+                "--verify-exit", f"${{verify_{name}.exit_code}}",
+            ),
+        ),
+        step(
+            f"commit_{name}",
+            cairn("exec", "--command", "true"),
+            depends=[f"mark_{name}"],
+            continue_on={"skipped": True},
+        ),
+    ]
+
+
+def _seed_reading(runs: Path, windows: dict[str, dict[str, Any]], now: float) -> None:
+    """Leave the shared reading the recorded run will find, in the gauge's own format.
+
+    An allowance that is spent cannot be recorded: it is somebody's subscription running
+    out. The reading is the one input these two shapes are given; the admission read off it,
+    the hold, the gates and the record are all the real code on a real file.
+    """
+    write_json(
+        headroom_directory(runs) / READING_FILE,
+        {
+            "windows": {
+                name: {
+                    "used": window.get("used"),
+                    "status": window["status"],
+                    "resets_at": int(now) + int(window["reopens_in"]),
+                    "source": "stream",
+                    "read_at": now,
+                }
+                for name, window in windows.items()
+            },
+            "api_key_source": None,
+            "funding_read_at": None,
+            "endpoint_called_at": None,
+            "endpoint_failures": 0,
+        },
+    )
+
+
+def _provider_stub(directory: Path, limit: tuple[str, int] | None) -> Path:
+    """A `claude` on `PATH` for the length of one recording, and what it says.
+
+    `limit` is the window a session meets mid-turn: the stub speaks the provider's own
+    stream protocol — one `rate_limit_event` and one `result` ending `blocking_limit` — and
+    nothing else, because a real account meeting a real limit is not something a recording
+    can arrange. Given none, the stub is there to be caught: a shape whose step must be
+    stopped before any session opens records a provider fault instead if one ever is.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    if limit is None:
+        body = (
+            'import sys\n'
+            'print("cairn fixture: no session should have been opened", file=sys.stderr)\n'
+            'sys.exit(9)\n'
+        )
+    else:
+        window, resets_at = limit
+        body = (
+            "import json, sys\n"
+            "arguments = sys.argv[1:]\n"
+            'session = arguments[arguments.index("--session-id") + 1]\n'
+            "sys.stdin.read()\n"
+            "for message in (\n"
+            '    {"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", '
+            f'"rateLimitType": "{window}", "resetsAt": {resets_at}, '
+            '"overageStatus": "rejected", "isUsingOverage": False}},\n'
+            '    {"type": "result", "subtype": "error_during_execution", '
+            '"session_id": session, "num_turns": 3, "permission_denials": [], '
+            '"terminal_reason": "blocking_limit", "result": "limit reached"},\n'
+            "):\n"
+            "    print(json.dumps(message), flush=True)\n"
+            "sys.exit(1)\n"
+        )
+    stub = directory / "claude"
+    stub.write_text(f"#!{sys.executable}\n{body}", encoding="utf-8")
+    stub.chmod(0o755)
+    return directory
 
 
 SHAPES: dict[str, dict[str, Any]] = {
@@ -352,6 +488,30 @@ SHAPES: dict[str, dict[str, Any]] = {
             "truncate": ["commit_alpha"],
         },
     },
+    "held-before-session": {
+        "why": (
+            "the subscription's weekly allowance was past its hold threshold when the "
+            "second step was admitted, and reopens days later — further ahead than the step "
+            "may wait — so the step ended `quota_held` four seconds in, with no session "
+            "opened and nothing in the tree changed. Its assertion was declined for having "
+            "nothing to assert, and its gate closed with no divergence"
+        ),
+        "reading": {"seven_day": {"used": 0.98, "status": "allowed_warning", "reopens_in": SEEDED_RESET_SECONDS}},
+        "provider": None,
+        "steps": [*_verified_step("alpha"), *_held_step("beta", after=["commit_alpha"])],
+    },
+    "held-after-limit": {
+        "why": (
+            "the second step was admitted against an open 5-hour window, opened its "
+            "session, and met the weekly limit mid-turn. The window reopens further ahead "
+            "than the step may wait, so it ended `quota_held` holding a session id — and "
+            "because that session did work, its assertion ran over what it left and its "
+            "gate recorded the divergence between the two"
+        ),
+        "reading": {"five_hour": {"used": 0.1, "status": "allowed", "reopens_in": 9000}},
+        "provider": ("seven_day", SEEDED_RESET_SECONDS),
+        "steps": [*_verified_step("alpha"), *_held_step("beta", after=["commit_alpha"])],
+    },
     "agent": {
         "why": (
             "one real agent step, so the corpus carries a step's receipts — its session "
@@ -418,9 +578,27 @@ def record(shape: str, definition: dict[str, Any]) -> None:
         (home / "base.yaml").write_text(
             "retry_policy:\n  limit: 0\n  interval_sec: 1\n", encoding="utf-8"
         )
+        now = time.time()
+        seeded: dict[str, Any] = definition.get("reading", {})
+        if seeded:
+            _seed_reading(runs, seeded, now)
+        limit: tuple[str, int] | None = definition.get("provider")
+        provider_on_path = (
+            _provider_stub(
+                root / "bin",
+                None if limit is None else (limit[0], int(now) + limit[1]),
+            )
+            if "provider" in definition
+            else None
+        )
         path = root / f"{shape}.yaml"
         path.write_text(
-            _render(workflow(definition["steps"]), workdir, runs), encoding="utf-8"
+            _render(
+                workflow(definition["steps"], provider_on_path=provider_on_path),
+                workdir,
+                runs,
+            ),
+            encoding="utf-8",
         )
         environment = {**os.environ, "DAGU_HOME": str(home)}
         command = [ENGINE, "start", "--run-id", run_id, str(path)]
@@ -459,8 +637,22 @@ def record(shape: str, definition: dict[str, Any]) -> None:
             shape,
             augment,
             definition.get("damage", {}),
+            _seeded(seeded, limit) if "provider" in definition or seeded else {},
         )
         _damage(target, definition.get("damage", {}))
+
+
+def _seeded(reading: dict[str, Any], limit: tuple[str, int] | None) -> dict[str, Any]:
+    """What this shape was given before the run, so no reader has to guess at it."""
+    return {
+        "reading": reading,
+        "provider": (
+            "a stub claude first on PATH, which meets the "
+            f"{limit[0]} limit on its first turn and ends blocking_limit"
+            if limit is not None
+            else "a stub claude first on PATH, which fails if anything opens a session"
+        ),
+    }
 
 
 def _seed_repository(workdir: Path, markers: tuple[str, ...]) -> None:
@@ -584,6 +776,7 @@ def _publish(
     shape: str,
     augmented: dict[str, dict[str, Any]] | None = None,
     damage: dict[str, Any] | None = None,
+    seeded: dict[str, Any] | None = None,
 ) -> None:
     # Only what a recording writes is replaced. The README beside it is a person's account of
     # the shape, and a re-recording that took it along would leave the fixture unexplained.
@@ -607,6 +800,7 @@ def _publish(
                 "engine": ENGINE_VERSION,
                 "why": why,
                 "hand_set_fields": augmented or {},
+                "seeded": seeded or {},
                 "normalised": {"interpreter": RECORDED_INTERPRETER},
                 "damage": damage or {},
             },
