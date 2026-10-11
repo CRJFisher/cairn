@@ -69,6 +69,7 @@ from cairn.verify import (
 )
 from tests.ownership import own_repository
 from tests.processes import reap
+from tests.test_run_record import turn
 from tests.test_step_protocol import plan_step
 
 
@@ -2275,28 +2276,15 @@ class EmitterContract(unittest.TestCase):
         self.assertEqual(seen, ["someone_else"])
 
 
-def turn_line(action: str, arguments: dict[str, Any], *, parent: str | None = None) -> str:
-    """One stream line in which a session takes a turn and calls `action`."""
-    return json.dumps(
-        {
-            "type": "assistant",
-            "parent_tool_use_id": parent,
-            "message": {
-                "content": [{"type": "tool_use", "name": action, "input": arguments}]
-            },
-        }
-    ) + "\n"
-
-
 class WorkingProcess(FakeProcess):
     """A session that reads a file, dispatches a subagent, and then reports."""
 
     def __init__(self, command: list[str], **kwargs: object) -> None:
         super().__init__(command, **kwargs)
         self.stdout = FakeOutput(
-            turn_line("Read", {"file_path": "/repo/alpha.py"})
-            + turn_line("Grep", {"pattern": "cairn"}, parent="toolu_1")
-            + turn_line("Bash", {"command": "pytest -q"})
+            turn("Read", {"file_path": "/repo/alpha.py"})
+            + turn("Grep", {"pattern": "cairn"}, parent="toolu_1")
+            + turn("Bash", {"command": "pytest -q"})
             + session_stream(self.output())
         )
 
