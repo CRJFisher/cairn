@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from collections.abc import Callable
 from pathlib import Path
@@ -63,10 +64,12 @@ from tests.test_run_record import (
     alive_copy,
     halted_chain,
     killed_chain,
+    live_transcript,
     load,
     plan_graph_named,
     record_of,
     record_of_named_steps,
+    turn,
 )
 
 DOCUMENT = PACKAGE_ROOT / "docs" / "report.md"
@@ -1703,6 +1706,73 @@ class TheCommandRendersAndExitsOnTheRunsVerdict(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True), self.assertRaises(SystemExit) as caught:
             cairn_main(["report", "--help"])
         self.assertEqual(caught.exception.code, 0)
+
+
+class AReportSaysWhereALiveSessionIs(unittest.TestCase):
+    """[20 A]: every rendering carries one line per running node, above the fold.
+
+    The question a person opens a running run with is whether it is stuck, so the line sits
+    in the verdict section beside the hold — not in the receipts, which can be scrolled
+    past. Nothing here starts an engine server: the line is derived from the transcript the
+    step is writing.
+    """
+
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        transcript = Path(self.directory.name) / "work_alpha.out"
+        transcript.write_text(
+            turn("Edit", {"file_path": "/repo/beta.py"}), encoding="utf-8"
+        )
+        stale = time.time() - 600
+        os.utime(transcript, (stale, stale))
+        state, reports, run_id = load("mid-run")
+        self.record = extract(
+            live_transcript(state, "work_alpha", transcript), reports, run_id=run_id
+        )
+
+    def test_every_rendering_states_the_line(self) -> None:
+        stated = as_mapping(self.record)["step.alpha.where"]
+        for sink in SINKS:
+            with self.subTest(sink=sink):
+                self.assertIn(loose(stated), loose(rendered(self.record, sink).text))
+
+    def test_the_line_names_the_turn_the_action_its_object_and_the_age(self) -> None:
+        shown = next(
+            item.shown
+            for item in rendered(self.record, "terminal").stated
+            if item.keys == ("step.alpha.where",)
+        )
+        for part in ("turn 1", "Edit", "/repo/beta.py", "10m ago"):
+            with self.subTest(part=part):
+                self.assertIn(part, shown)
+
+    def test_it_is_in_the_verdict_section_rather_than_the_receipts(self) -> None:
+        sections = {
+            item.section
+            for item in rendered(self.record, "terminal").stated
+            if item.keys == ("step.alpha.where",)
+        }
+        self.assertEqual(sections, {SECTION_VERDICT})
+
+    def test_a_run_with_nothing_running_states_no_such_line(self) -> None:
+        for shape in SHAPES:
+            with self.subTest(shape=shape):
+                stated = {
+                    key
+                    for item in rendered(record_of(shape), "terminal").stated
+                    for key in item.keys
+                }
+                self.assertNotIn("step.alpha.where", stated)
+
+    def test_the_view_being_served_or_not_changes_nothing_about_it(self) -> None:
+        """The line is read from a file on this machine; no engine server is in it ([20 A])."""
+        for state in (VIEW_SERVING, VIEW_ABSENT, VIEW_FOREIGN):
+            with self.subTest(view_state=state):
+                self.assertIn(
+                    loose(as_mapping(self.record)["step.alpha.where"]),
+                    loose(rendered(self.record, "terminal", state).text),
+                )
 
 
 if __name__ == "__main__":

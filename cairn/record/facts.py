@@ -14,8 +14,15 @@ agreeing with it quietly.
 from __future__ import annotations
 
 from cairn.headroom import AFTER_OUTAGE
-from cairn.record.model import AllowanceHold, AllowanceWindow, Headroom, RunRecord
+from cairn.record.model import (
+    AllowanceHold,
+    AllowanceWindow,
+    Headroom,
+    RunRecord,
+    Where,
+)
 from cairn.record.vocabulary import PROVENANCE_ABSENT, STEP_OUTCOMES
+from cairn.text import since
 
 ABSENT = PROVENANCE_ABSENT
 NONE = "none"
@@ -60,6 +67,28 @@ def _hold(hold: AllowanceHold) -> str:
         f"{held_on} from {hold['started'] or 'an unrecorded time'} "
         f"until {hold['until'] or 'an unrecorded time'}: {hold['why'] or 'no reason recorded'}"
     )
+
+
+def _where(where: Where | None) -> str:
+    """Where one running session is, as the one line every rendering states.
+
+    The age is always in it, because it is the half that does not depend on the events
+    being legible. A transcript that held nothing readable says so and keeps the age,
+    rather than leaving a reader to read an absent line as a quiet run ([20 A]).
+    """
+    if where is None:
+        return ABSENT
+    age = f"last event {since(where['last_event_age_seconds'])} ago"
+    turns = where["turns"]
+    if turns is None:
+        return f"nothing readable in its transcript, {age}"
+    action = where["action"]
+    subject = where["object"]
+    if action is None:
+        did = "no tool call yet"
+    else:
+        did = f"last did {action}" + (f" {subject}" if subject is not None else "")
+    return f"turn {turns}, {did}, {age}"
 
 
 def _headroom(key: str, headroom: Headroom | None) -> list[tuple[str, str]]:
@@ -165,6 +194,9 @@ def canonical_facts(record: RunRecord) -> list[tuple[str, str]]:
                     ABSENT if divergence is None else _value(divergence["asserted"]),
                 ),
                 (f"{key}.turns", _value(step["turns"])),
+                # Where a running session is, which is the one fact about a step in flight
+                # that is not in the engine's own status ([20 A]).
+                (f"{key}.where", _where(step["where"])),
                 (f"{key}.model", _value(step["model"])),
                 (f"{key}.session", _value(step["session_id"])),
                 (f"{key}.transcript", _value(step["transcript"])),

@@ -334,8 +334,8 @@ Each step carries `step_id`, `title`, `slug`, `outcome`, `overlays`, `cause`, `p
 `commit`, `diffstat`, `left_uncommitted`, `turns`, `session_id`, `model`, `transcript`,
 `stderr_log`, `resume_command`, `follow_up_work`, `started_at`, `finished_at`, `exit_code`,
 `assertion_exit`, `assertion_source`, `assertion_backed_by`, `timeout_seconds`,
-`elapsed_seconds`, `assertion_stdout`, `assertion_stderr`, `remedy`, `headroom`, `nodes`
-and `provenance`.
+`elapsed_seconds`, `assertion_stdout`, `assertion_stderr`, `remedy`, `headroom`, `where`,
+`nodes` and `provenance`.
 
 `title` and `slug` are what the plan document calls the step: its title, and the name it was
 written under. `step_id` is that name sanitised into the engine's identifier grammar, with a
@@ -357,6 +357,20 @@ after a hold, and, on a step that stopped at the allowance, the `held_window` an
 `runs/<run-id>/holds/` and only while the engine still calls the step running — which is what
 lets a run waiting hours for a window, or for the provider to answer again, read as waiting
 rather than stalled.
+
+`where` is on a step that is running now, and only on one: which turn its session is on
+(`turns`, counted from the transcript, and the session's own turns rather than a subagent's —
+the step's settled `turns` is the provider's own count, which does not exist until the session
+has ended), the last tool it called (`action`), what it called it on (`object`), and
+`last_event_age_seconds` — the transcript file's last write against the moment the record was
+built. It is `derived`, read from the transcript the step is still writing rather than
+reported by the session that would otherwise report it, and it is what lets a report say that
+a live session has been silent for ten minutes instead of only that its node is running. A
+settled step has none: its own report is a fuller account than a log tail, and a second answer
+to an answered question is a second opinion. `turns`, `action` and `object` are absent
+together where the transcript held nothing this could read — the age still stands, because it
+is the file's own and does not depend on the events being legible — and a transcript that is
+not on disk yields no `where` at all rather than an age nothing measured.
 
 `assertion_exit` is what the step's assertion exited, and `assertion_source` says which
 execution backed it — `executed` by the step's own assertion node, or `shared` from the

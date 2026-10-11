@@ -43,6 +43,7 @@ from cairn.protocol import (
     compose_prompt,
     compose_refile,
 )
+from cairn.transcript import Trail
 from cairn.verify import (
     PROVIDER_FAILED,
     PROVIDER_PROTOCOL,
@@ -178,8 +179,14 @@ def _parse_lines(
     *,
     tee: TextIO | None = None,
     observe: Observer | None = None,
+    trail: Trail | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """The session's result message and its rate-limit warnings.
+
+    `trail` is the breadcrumb: the same events, one legible line per turn, on the channel
+    the engine's view renders live while the step runs ([20 A]). It is written from here
+    because here is where the events are already parsed; the tee above keeps the whole
+    unabridged stream on standard output, and the breadcrumb replaces none of it.
 
     The result's `structured_output` is replaced by the **last** report the session filed
     that has the report's shape. Measured: the provider's result carries the *first* report
@@ -205,6 +212,8 @@ def _parse_lines(
             ) from exc
         message_type = message.get("type")
         filed.extend(_filed_reports(message))
+        if trail is not None:
+            trail.turn(message)
         if message_type == "result":
             # The result is terminal. Reading on would wait for EOF, which needs every
             # inheritor of the pipe to close it — a provider's own children can hold it
@@ -448,6 +457,7 @@ def _session_in(
     *,
     deadline_seconds: float | None = None,
     observe: Observer | None = None,
+    trail: Trail | None = None,
 ) -> tuple[int, dict[str, Any], list[dict[str, Any]], bool]:
     """One provider invocation, drained to its result message.
 
@@ -497,7 +507,9 @@ def _session_in(
             target=_send_prompt, args=(process.stdin, prompt), daemon=True
         )
         writer.start()
-        result, rate_limits = _parse_lines(process.stdout, tee=sys.stdout, observe=observe)
+        result, rate_limits = _parse_lines(
+            process.stdout, tee=sys.stdout, observe=observe, trail=trail
+        )
         # The provider has answered, so the bound has nothing left to stop. Cancelled here
         # rather than in `finally`: a timer firing during the exit wait below would stop a
         # session that had already reported, and its negative exit status would be read as
@@ -637,6 +649,10 @@ def run_claude(
     """
     session_id = resume_session or str(uuid.uuid4())
     started = time.monotonic()
+    # One trail for the whole step, so its turns are numbered once across however many
+    # passes the session takes. It writes to the wrapper's own standard error, which the
+    # engine captures to the node's `.err` file beside the transcript ([20 A]).
+    trail = Trail(sys.stderr)
     # The plan's own list **adds** to Cairn's; it never replaces it. A plan cannot hand a
     # step back a tool whose contract the session cannot keep.
     denied = [*NEVER_DELIVERED, *tools]
@@ -689,6 +705,7 @@ def run_claude(
             deny_patterns=denied,
             model=model,
             observe=observe,
+            trail=trail,
         )
         return stopped._replace(detail={**stopped.detail, **led})
 
@@ -717,6 +734,7 @@ def run_claude(
                 popen_factory,
                 deadline_seconds=deadline_seconds,
                 observe=observe,
+                trail=trail,
             )
         except Deadline:
             return stopped_at_deadline()
@@ -746,6 +764,7 @@ def run_claude(
             popen_factory,
             deadline_seconds=remaining,
             observe=observe,
+            trail=trail,
         )
     except Deadline:
         return stopped_at_deadline()
@@ -801,6 +820,7 @@ def run_claude(
                 # loss the rescue exists to prevent ([22 B]).
                 deadline_seconds=resume_bound_seconds(),
                 observe=observe,
+                trail=trail,
             )
         except Deadline:
             # Stopped at its bound before it answered: as silent as a resume that answered
@@ -874,6 +894,7 @@ def run_claude(
                 popen_factory,
                 deadline_seconds=resume_bound_seconds(),
                 observe=observe,
+                trail=trail,
             )
         except (Deadline, CairnError):
             rescue["refiled"] = RESUME_FAILED
@@ -927,6 +948,7 @@ def _report_after_deadline(
     deny_patterns: list[str],
     model: str | None,
     observe: Observer | None,
+    trail: Trail | None = None,
 ) -> CommandResult:
     """The one resume a session stopped by the hang guard is given, and what it comes to.
 
@@ -966,6 +988,7 @@ def _report_after_deadline(
             popen_factory,
             deadline_seconds=resume_bound_seconds(),
             observe=observe,
+            trail=trail,
         )
     except Deadline:
         return silence(RESUME_STILL_SILENT, {})

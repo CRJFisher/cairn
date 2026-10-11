@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import time
 from collections.abc import Container, Mapping, Sequence
 from pathlib import Path
 from typing import Any, NamedTuple, cast
@@ -56,6 +57,7 @@ from cairn.record.model import (
     StepRecord,
     Trigger,
     WaveCensus,
+    Where,
 )
 from cairn.record.vocabulary import (
     ATTENTION_BLOCKED,
@@ -130,6 +132,7 @@ from cairn.topology import (
     node_name,
     step_of_branch,
 )
+from cairn.transcript import read as read_transcript
 from cairn.verify import (
     ASSERTION_INTERRUPTED,
     EXCLUSION_CAUSES,
@@ -1231,6 +1234,7 @@ def _step_record(
         "remedy": _remedy(remedy_report, reports.get(f"verify_{step_id}")),
         "divergence": divergence,
         "headroom": _headroom(work_report, _holding(step_id, outcome, nodes, holds, orchestrator_gone)),
+        "where": _where(work, outcome),
     }
     record = StepRecord(
         step_id=step_id,
@@ -1255,6 +1259,10 @@ def _step_record(
                 # rather than from any evidence the run itself left ([_plan_names]).
                 "title",
                 "slug",
+                # Read off the transcript file as the report was built, rather than
+                # reported by the session it describes — which is still running and has
+                # reported nothing ([_where]).
+                "where",
                 *(("divergence",) if divergence_is_derived else ()),
             ),
         ),
@@ -1263,6 +1271,39 @@ def _step_record(
     return record, [
         _refused(f"{WORK_ROLE}_{step_id}", fault) for fault in refusals
     ]
+
+
+def _where(work: dict[str, Any] | None, outcome: str) -> Where | None:
+    """Where a running step's session has got to, from the transcript it is writing now.
+
+    Only a running step has one. A settled step's account of itself is its report, which is
+    richer than anything a log tail could say, and reading the file back for a finished step
+    would be a second answer to a question already answered.
+
+    The age is the file's own last-write time against now, so a session that has gone silent
+    reads as silent for as long as it has been. It is stated even where nothing in the file
+    could be parsed, because "nothing has happened for ten minutes" is the whole of what a
+    person watching a live run is asking, and it is true whether or not the events are
+    legible ([20 A]).
+    """
+    if outcome != OUTCOME_RUNNING or work is None:
+        return None
+    path = engine.text(work.get("stdout"))
+    if path is None:
+        return None
+    try:
+        written = os.stat(path).st_mtime
+    except OSError:
+        return None
+    reading = read_transcript(path)
+    return Where(
+        turns=None if reading is None else reading.turns,
+        action=None if reading is None else reading.action,
+        object=None if reading is None else reading.object,
+        # A clock skew between the writer and this reader is the only way a transcript is
+        # written in the future, and an age that read as negative would be read as a bug.
+        last_event_age_seconds=max(0.0, time.time() - written),
+    )
 
 
 def _remedy(

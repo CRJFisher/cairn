@@ -52,6 +52,21 @@ class Remedy(TypedDict):
     resumed_session: str | None
 
 
+class Where(TypedDict):
+    """Where a running step's session is, read from the transcript it is still writing.
+
+    Present only on a step the record holds at `running`, and only where its transcript is
+    on disk. `turns`, `action` and `object` are absent together where the file held nothing
+    this could read — the age still stands, because it is the file's own last-write time
+    and is what says a session has gone quiet ([20 A]).
+    """
+
+    turns: int | None
+    action: str | None
+    object: str | None
+    last_event_age_seconds: float
+
+
 class AllowanceWindow(TypedDict):
     """One window of the subscription's allowance as one measurement saw it."""
 
@@ -150,6 +165,10 @@ class StepRecord(TypedDict):
     remedy: Remedy | None
     # Present on an agent step that reached its session's admission, or is holding now.
     headroom: Headroom | None
+    # Present only while the step is running: which turn its session is on, what it last
+    # called and on what, and how long since its transcript was last written. It is what
+    # lets a report say where a live session is rather than only that it is live ([20 A]).
+    where: Where | None
     nodes: list[str]
     provenance: dict[str, str]
 
@@ -357,4 +376,5 @@ __all__ = [
     "StepRecord",
     "Trigger",
     "WaveCensus",
+    "Where",
 ]

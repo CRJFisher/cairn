@@ -147,6 +147,19 @@ reads as running as far as the record shows. It never calls the process gone: th
 and the `orchestrator_died` it comes with, belong to a probe that succeeded and found
 nothing. The engine's own record is the better witness, and the report says so.
 
+## A run that is still going
+
+Each running node gets one line in the first section, beside the sentence a held step gets:
+which turn its session is on, the last tool it called and what it called it on, and how long
+ago its last event was. "Is it stuck" is the question a person opens a running run with, so
+the answer is above the fold rather than in the receipts.
+
+The line is read from the transcript the step is writing, so it needs no engine server and no
+poller. Where the transcript holds nothing readable the line is the age alone and says so —
+how long nothing has happened is true whether or not the events are legible — and where the
+file is not on disk there is no line, because an age nothing measured is a guess
+([run-model.md](run-model.md)).
+
 ## Which step a row is about
 
 Every step is named twice, in every rendering: the engine's id, which is what its nodes, its

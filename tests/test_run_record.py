@@ -52,7 +52,7 @@ from cairn.record.extract import (
     step_order,
 )
 from cairn.record.facts import ABSENT, as_mapping, canonical_facts
-from cairn.record.model import RunRecord, Trigger
+from cairn.record.model import RunRecord, StepRecord, Trigger, Where
 from cairn.record.runs import latest_run, list_runs
 from cairn.record.store import read_record, write_record
 from cairn.record.vocabulary import (
@@ -3016,6 +3016,183 @@ class ARunCanBeFoundByThePlanAPersonHas(unittest.TestCase):
         self._said("latest", "--plan", "alpha-plan")
         after = {path: path.stat().st_mtime_ns for path in sorted(self.runs.rglob("*"))}
         self.assertEqual(before, after)
+
+
+def turn(action: str, arguments: dict[str, Any], *, parent: str | None = None) -> str:
+    """One stream line in which a session takes a turn and calls `action`.
+
+    `parent` is the call a subagent was started by; a session's own turns carry none.
+    """
+    return json.dumps(
+        {
+            "type": "assistant",
+            "parent_tool_use_id": parent,
+            "message": {
+                "content": [{"type": "tool_use", "name": action, "input": arguments}]
+            },
+        }
+    ) + "\n"
+
+
+def live_transcript(state: dict[str, Any], node: str, path: Path) -> dict[str, Any]:
+    """The same snapshot with one node's transcript pointed at a file that is still here.
+
+    A recorded run's log paths are its own machine's temporary directories, gone long
+    before anything reads the fixture — so the only way to read those bytes against a
+    transcript is to name one. The node, its status and the reading are the corpus's.
+    """
+    alive = alive_copy(state)
+    return {
+        **alive,
+        "nodes": [
+            {**entry, "stdout": str(path)}
+            if entry["step"]["name"] == node
+            else entry
+            for entry in cast(list[dict[str, Any]], alive["nodes"])
+        ],
+    }
+
+
+class ALiveSessionSaysWhereItIs(unittest.TestCase):
+    """[20 A]: a running node says which turn it is on, what it last did, and how long ago.
+
+    The engine's own status says a node is running and nothing else, so a session that has
+    been silent for ten minutes reads as healthy unless the transcript it is writing is
+    read back. Nothing here needs an engine server.
+    """
+
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.transcript = Path(self.directory.name) / "work_alpha.out"
+
+    def _record(self) -> RunRecord:
+        state, reports, run_id = load("mid-run")
+        return extract(
+            live_transcript(state, "work_alpha", self.transcript),
+            reports,
+            run_id=run_id,
+        )
+
+    def _step(self, record: RunRecord, step_id: str) -> StepRecord:
+        return next(step for step in record["steps"] if step["step_id"] == step_id)
+
+    def _where(self, step_id: str = "alpha") -> Where:
+        """The line this suite is about, from a record built against the transcript above."""
+        found = self._step(self._record(), step_id)["where"]
+        assert found is not None, f"{step_id} derived no line"
+        return found
+
+    def _quiet_for(self, seconds: float) -> None:
+        stale = time.time() - seconds
+        os.utime(self.transcript, (stale, stale))
+
+    def test_a_running_step_names_its_turn_its_last_action_and_that_actions_object(
+        self,
+    ) -> None:
+        self.transcript.write_text(
+            turn("Read", {"file_path": "/repo/alpha.py"})
+            + turn("Edit", {"file_path": "/repo/beta.py"}),
+            encoding="utf-8",
+        )
+        where = self._where()
+        self.assertEqual(where["turns"], 2)
+        self.assertEqual(where["action"], "Edit")
+        self.assertEqual(where["object"], "/repo/beta.py")
+        self.assertLess(where["last_event_age_seconds"], 60)
+
+    def test_a_turn_that_called_nothing_leaves_the_last_call_that_was_made(self) -> None:
+        """The question is what the session last did, not what its last turn happened to be."""
+        self.transcript.write_text(
+            turn("Bash", {"command": "pytest -q"})
+            + json.dumps(
+                {
+                    "type": "assistant",
+                    "parent_tool_use_id": None,
+                    "message": {"content": [{"type": "text", "text": "thinking"}]},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        where = self._where()
+        self.assertEqual(where["turns"], 2)
+        self.assertEqual(where["action"], "Bash")
+        self.assertEqual(where["object"], "pytest -q")
+
+    def test_a_subagents_turns_are_not_counted_as_the_sessions_own(self) -> None:
+        """One `Agent` call fans out into a second stream; counting it reports a session
+        twenty turns further on than it is."""
+        self.transcript.write_text(
+            turn("Agent", {"description": "find the caller"})
+            + turn("Grep", {"pattern": "cairn"}, parent="toolu_1")
+            + turn("Read", {"file_path": "/repo/a.py"}, parent="toolu_1"),
+            encoding="utf-8",
+        )
+        where = self._where()
+        self.assertEqual(where["turns"], 1)
+        self.assertEqual(where["action"], "Agent")
+
+    def test_a_transcript_nothing_has_written_for_ten_minutes_reports_that_age(self) -> None:
+        """Silent for ten minutes reads as silent for ten minutes, never as healthy."""
+        self.transcript.write_text(turn("Edit", {"file_path": "/repo/beta.py"}), encoding="utf-8")
+        self._quiet_for(600)
+        where = self._where()
+        self.assertGreaterEqual(where["last_event_age_seconds"], 600)
+        self.assertEqual(where["turns"], 1)
+
+    def test_an_unreadable_transcript_reports_the_age_and_derives_nothing(self) -> None:
+        self.transcript.write_text("not an event stream\n", encoding="utf-8")
+        self._quiet_for(600)
+        where = self._where()
+        self.assertGreaterEqual(where["last_event_age_seconds"], 600)
+        self.assertIsNone(where["turns"])
+        self.assertIsNone(where["action"])
+        self.assertIsNone(where["object"])
+
+    def test_a_half_written_last_event_costs_the_line_nothing_but_that_event(self) -> None:
+        """A live transcript is a file being appended to, so its tail is routinely partial."""
+        self.transcript.write_text(
+            turn("Edit", {"file_path": "/repo/beta.py"}) + '{"type":"assis',
+            encoding="utf-8",
+        )
+        where = self._where()
+        self.assertEqual(where["turns"], 1)
+        self.assertEqual(where["action"], "Edit")
+
+    def test_a_transcript_that_is_not_there_derives_no_line_at_all(self) -> None:
+        """An absent file has no age either, and a guess would be indistinguishable from one."""
+        self.assertIsNone(self._step(self._record(), "alpha")["where"])
+
+    def test_only_a_running_step_has_one(self) -> None:
+        self.transcript.write_text(turn("Edit", {"file_path": "/repo/beta.py"}), encoding="utf-8")
+        record = self._record()
+        self.assertEqual(self._step(record, "alpha")["outcome"], OUTCOME_RUNNING)
+        self.assertEqual(self._step(record, "gamma")["outcome"], OUTCOME_PENDING)
+        self.assertIsNone(self._step(record, "gamma")["where"])
+        for shape in ("green", "red", "crashed", "timed-out"):
+            with self.subTest(shape=shape):
+                for step in record_of(shape)["steps"]:
+                    self.assertIsNone(step["where"])
+
+    def test_the_line_is_derived_rather_than_reported(self) -> None:
+        """It is read off a file while the session that would report it is still running."""
+        self.transcript.write_text(turn("Edit", {"file_path": "/repo/beta.py"}), encoding="utf-8")
+        step = self._step(self._record(), "alpha")
+        self.assertEqual(step["provenance"]["where"], PROVENANCE_DERIVED)
+
+    def test_the_projection_states_the_turn_the_action_its_object_and_the_age(self) -> None:
+        self.transcript.write_text(turn("Edit", {"file_path": "/repo/beta.py"}), encoding="utf-8")
+        self._quiet_for(600)
+        stated = as_mapping(self._record())["step.alpha.where"]
+        self.assertIn("turn 1", stated)
+        self.assertIn("Edit", stated)
+        self.assertIn("/repo/beta.py", stated)
+        self.assertIn("10m ago", stated)
+
+    def test_a_step_with_no_transcript_states_the_absence_rather_than_a_zero(self) -> None:
+        self.assertEqual(as_mapping(self._record())["step.alpha.where"], ABSENT)
+
 
 if __name__ == "__main__":
     unittest.main()

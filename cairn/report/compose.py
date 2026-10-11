@@ -236,6 +236,22 @@ def _verdict(record: RunRecord) -> list[Block]:
                     ),
                 )
             )
+    # Where each live session actually is. The engine's own status says a node is running
+    # and nothing more; this says which turn it is on, what it last did and how long ago —
+    # so a session that has been silent for ten minutes reads as silent rather than as
+    # healthy ([20 A]). Above the fold for the same reason the hold is.
+    for step in record["steps"]:
+        if step["where"] is not None:
+            blocks.append(
+                Statement(
+                    "statement",
+                    (
+                        Chrome(f"{step['step_id']} is at"),
+                        Fact((f"step.{step['step_id']}.where",)),
+                        Chrome("."),
+                    ),
+                )
+            )
     blocks.append(
         Fields(
             "fields",

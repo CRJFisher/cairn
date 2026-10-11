@@ -106,6 +106,23 @@ def as_count(value: object) -> int | None:
     return value
 
 
+def since(seconds: float) -> str:
+    """An age as a person says it: seconds under a minute, then minutes, then hours.
+
+    Rounded down at every step, so the number is always an age the thing has actually
+    reached. A session quiet for 119 seconds reads as `1m`: the question this answers is
+    how long nothing has happened, and an answer that rounded up would be a claim the
+    clock does not yet support ([20 A]).
+    """
+    whole = max(0, int(seconds))
+    if whole < 60:
+        return f"{whole}s"
+    minutes = whole // 60
+    if minutes < 60:
+        return f"{minutes}m"
+    return f"{minutes // 60}h {minutes % 60}m"
+
+
 __all__ = [
     "ELLIPSIS",
     "KEPT_CONTROLS",
@@ -116,4 +133,5 @@ __all__ = [
     "flatten",
     "normalise",
     "normalise_all",
+    "since",
 ]

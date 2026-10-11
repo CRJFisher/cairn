@@ -25,11 +25,16 @@ facts below that it does not restate were not re-measured.
   to per-node files as they happen, and — where a server runs — serves per-node status mid-run
   (`GET /api/v1/dag-runs/{name}/{runId}`, `…/steps/{step}/log?tail=N`). The view already links
   there ([13](13-triggers-and-schedules.md)), and `cairn/record/engine.py` names the REST
-  `statusLabel` as the road not taken. **Whether the view renders a node's `.err` file live, as
-  it does `.out`, is not yet measured**, and section A's breadcrumb depends on it — see the gate
-  below. Since 2.11.0 the engine added live step output after a run starts (2.16.5) and streamed
-  per-step log downloads (2.17.0, 2.17.2) ([41](41-dagu-2-18-upgrade.md) O8); the gate measures
-  against 2.18.2.
+  `statusLabel` as the road not taken. **The `.err` channel is live too, and the view serves
+  it.** Measured on 2.18.2: ten seconds into a thirty-second step writing one line to standard
+  error every two seconds, the node's `.err` file holds five lines and
+  `…/steps/{step}/log?stream=stderr` serves the same five, while the node still reads `running`
+  with no finish time. That endpoint is the one the view's own log panel calls — its bundle
+  offers `stdout` and `stderr` as the two streams of a step's log — so a line written there is a
+  line a person watching the node has while the session is still working.
+  `python3 -m scripts.measure_live_stderr` takes the reading again. Since 2.11.0 the engine
+  added live step output after a run starts (2.16.5) and streamed per-step log downloads
+  (2.17.0, 2.17.2) ([41](41-dagu-2-18-upgrade.md) O8).
 - **`handler_on` carries `wait`.** Beside `init`, `success`, `failure`, `abort` and `exit`, the
   2.11.0 lifecycle hooks include `wait`, which fires when the DAG enters the waiting status
   because a step needs human input — an approval gate. `cairn/workflow/build.py` already emits an
@@ -86,11 +91,12 @@ the session is inside the node_, or whether it has gone quiet.
 - **The transcript stays the receipt.** The `.out` file keeps the full, unabridged event stream;
   the breadcrumb is an addition on the other channel, not a replacement.
 
-**The gate before the breadcrumb.** On Dagu 2.11.0, run a step that writes a line to stderr every
-few seconds for a minute, open the node in the engine's view while it runs, and record whether
-the `.err` lines appear live, only at completion, or not at all. The result is written into this
-document's engine facts. If the view does not render `.err` live, the breadcrumb is not built and
-the `where` line in `cairn report` is the whole of Watch.
+**The gate before the breadcrumb: passed, so the breadcrumb is built.** The reading is the
+engine fact above, taken against the pin by `scripts/measure_live_stderr.py` rather than
+assumed: a step writing one prefixed line to standard error every two seconds has those lines
+on disk and served by the view's step-log endpoint ten seconds in, with the node still running.
+What that measures is the file the view reads and the endpoint it reads it through, which is as
+far as a measurement without a browser goes; it does not measure a rendered DOM.
 
 **What must not change.** The report still rebuilds the record fresh on every invocation and holds
 no daemon and no poller; liveness is still decided by the process check; no engine server is
@@ -98,10 +104,13 @@ required for the `where` line — the report reads whether one is serving the ru
 says so, and derives the line either way ([33](33-the-view-link-answers.md)); the emitted
 workflow definitions are unchanged.
 
-**Touches.** `cairn/providers.py` (the breadcrumb beside the tee), `cairn/record/extract.py` (the
-transcript tail and last-event age for running nodes), `cairn/record/facts.py`,
-`cairn/report/compose.py` and `phrases.py`, `capabilities/reading.md`, `fixtures/runs/mid-run/`,
-`tests/test_run_record.py`, `tests/test_report.py`.
+**Touches.** `cairn/transcript.py` (one reader for the event stream, used from both ends of
+it), `cairn/providers.py` (the breadcrumb beside the tee), `cairn/record/extract.py` (the
+transcript read and the last-event age for running nodes), `cairn/record/model.py`,
+`cairn/record/facts.py`, `cairn/record/vocabulary.py` (the record version), `cairn/text.py`
+(an age as a person says it), `cairn/report/compose.py`, `capabilities/reading.md`,
+`docs/run-model.md`, `docs/report.md`, `scripts/measure_live_stderr.py`,
+`tests/test_run_record.py`, `tests/test_report.py`, `tests/test_step_kinds.py`.
 
 ## Acceptance
 
@@ -118,3 +127,40 @@ transcript tail and last-event age for running nodes), `cairn/record/facts.py`,
   stream.
 - The generated workflow files are byte-identical before and after this lands: nothing here
   touches the emitted graph.
+
+## Close-out
+
+Done. The gate passed before the breadcrumb was written, both halves of section A are built,
+and every criterion above holds.
+
+**A person asking where a running session is gets a sentence instead of a log path.**
+`cairn report` on a run that is still going carries one line per running node, above the fold
+beside the hold, in all three renderings: `alpha is at turn 12, last did Edit
+cairn/report/compose.py, last event 3m ago`. The turn count is the session's own turns — a
+subagent's are not counted as the step's — the action is the last tool it called and the
+object is what it called it on, and the age is the transcript file's last write against the
+moment the report was built. A session nothing has written for ten minutes reads as ten
+minutes quiet.
+
+It degrades where its evidence does. A transcript holding nothing readable gives the age and
+says so, because "nothing has happened for ten minutes" is true whether or not the events are
+legible; a transcript that is not on disk gives no line at all rather than a guess. Only a
+running step has one: a settled step's own report is a better account than any log tail, and a
+second answer to an answered question is the thing this repository refuses.
+
+Nothing about the line needs an engine server, a daemon or a poller, and the record is still
+rebuilt fresh on every invocation. The record version moved to `8` for the new field, so a
+record written by the Cairn before this is refused with the rebuild it needs rather than read
+short a fact.
+
+**A person watching the node in the engine's view sees the session turn by turn.** The tee in
+`run_claude` already parsed every event on its way to the node's standard output; beside it,
+one line per turn now goes to the wrapper's standard error — `[cairn] turn 12: Edit
+cairn/report/compose.py` — on the channel the view renders live. The prefix is what tells
+Cairn's lines from whatever Claude writes to the standard error it inherits, and the count
+spans every pass of one step, so a session opened for a command and continued for the work
+numbers its turns once. The transcript on standard output remains the complete, unabridged
+event stream; the breadcrumb replaces none of it.
+
+**Nothing in the emitted graph moved.** The six generated workflow fixtures are byte-identical,
+which the emitter's own suite asserts.

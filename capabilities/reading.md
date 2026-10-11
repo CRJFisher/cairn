@@ -62,6 +62,14 @@ build --run <id>` rather than reporting from the one behind it silently.
    that rather than summarising past it: the facts under a refusal may be missing rather
    than absent, and nothing refused raised any outcome.
 
+8. **On a run that is still going, say where each live session is.** The first screen carries
+   one line per running node — which turn it is on, the last tool it called and on what, and
+   how long ago its last event was — read from the transcript the step is writing. Give the
+   age as the report gives it: a session nothing has written for ten minutes is the answer to
+   "is it stuck", and a report of only the turn is the half that reads as healthy. Where a
+   node has no such line, its transcript is not on disk, which is said rather than filled in.
+   This needs no engine server, like everything else here.
+
 A question about what a run cost is not one Cairn answers; say that in one line and go on
 with what the record does hold.
 
@@ -102,6 +110,11 @@ Watching a run go, and reading its logs and per-step timings afterwards. It draw
 graph live and zoomable, its link survives the run ending, and past eighty nodes Cairn's own
 drawing defers to it outright. Every run record carries that address, so a run is reachable
 from its identity alone.
+
+A work node's two log channels are both live there. Standard output is the session's whole
+event stream, unabridged; standard error carries one line per turn, prefixed `[cairn]`, saying
+what that turn did — so a person who wants to follow a session turn by turn opens the node's
+standard error in the view, and a person who wants one answer now asks for the report.
 
 **The report says what that address is doing.** It checks it as it renders, so a link nothing
 is serving reads as not being served, and names `dagu server` as what serves it; a port

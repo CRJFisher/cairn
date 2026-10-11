@@ -58,6 +58,7 @@ from cairn.providers import (
     run_claude,
     run_provider,
 )
+from cairn.transcript import BREADCRUMB_PREFIX
 from cairn.verify import (
     PROVIDER_FAILED,
     PROVIDER_UNREACHABLE,
@@ -2272,6 +2273,96 @@ class EmitterContract(unittest.TestCase):
         ):
             main(["agent", "run", "--provider", "someone_else", "--prompt", "x"])
         self.assertEqual(seen, ["someone_else"])
+
+
+def turn_line(action: str, arguments: dict[str, Any], *, parent: str | None = None) -> str:
+    """One stream line in which a session takes a turn and calls `action`."""
+    return json.dumps(
+        {
+            "type": "assistant",
+            "parent_tool_use_id": parent,
+            "message": {
+                "content": [{"type": "tool_use", "name": action, "input": arguments}]
+            },
+        }
+    ) + "\n"
+
+
+class WorkingProcess(FakeProcess):
+    """A session that reads a file, dispatches a subagent, and then reports."""
+
+    def __init__(self, command: list[str], **kwargs: object) -> None:
+        super().__init__(command, **kwargs)
+        self.stdout = FakeOutput(
+            turn_line("Read", {"file_path": "/repo/alpha.py"})
+            + turn_line("Grep", {"pattern": "cairn"}, parent="toolu_1")
+            + turn_line("Bash", {"command": "pytest -q"})
+            + session_stream(self.output())
+        )
+
+
+class TheBreadcrumbSaysWhereTheSessionIs(unittest.TestCase):
+    """[20 A]: one legible line per turn on the channel the engine renders live.
+
+    Measured on the pinned engine: a node's `.err` file is written as the step runs and the
+    view's own step-log endpoint serves it mid-run, so a line written there is a line a
+    person watching sees while the session is still working
+    ([planning/20-watching-a-live-session.md]).
+    """
+
+    def _session(self, prompt: StepPrompt) -> tuple[str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            run_claude(prompt, Path("/tmp"), "auto", None, [], WorkingProcess)
+        return out.getvalue(), err.getvalue()
+
+    def _breadcrumbs(self, written: str) -> list[str]:
+        return [
+            line for line in written.splitlines() if line.startswith(BREADCRUMB_PREFIX)
+        ]
+
+    def test_each_of_the_sessions_turns_writes_one_line_naming_what_it_did(self) -> None:
+        _, written = self._session(StepPrompt(None, "do work"))
+        self.assertEqual(
+            self._breadcrumbs(written),
+            [
+                f"{BREADCRUMB_PREFIX} turn 1: Read /repo/alpha.py",
+                f"{BREADCRUMB_PREFIX} turn 2: Bash pytest -q",
+                f"{BREADCRUMB_PREFIX} turn 3: StructuredOutput",
+            ],
+        )
+
+    def test_a_subagents_turn_is_not_one_of_the_sessions(self) -> None:
+        """A `Grep` a subagent ran is not a turn the step took, and numbering it as one
+        would report the session further on than it is."""
+        _, written = self._session(StepPrompt(None, "do work"))
+        self.assertNotIn("Grep", written)
+
+    def test_the_turns_are_numbered_once_across_the_passes_of_one_step(self) -> None:
+        """A prompt that leads with a command opens the session twice; it is one session."""
+        _, written = self._session(StepPrompt("/review", "do work"))
+        numbers = [line.split()[2] for line in self._breadcrumbs(written)]
+        self.assertEqual(numbers, ["1:", "2:", "3:", "4:", "5:", "6:"])
+
+    def test_the_transcript_on_standard_output_is_still_the_whole_event_stream(
+        self,
+    ) -> None:
+        """The breadcrumb is an addition on the other channel, never a replacement."""
+        transcript, written = self._session(StepPrompt(None, "do work"))
+        events = [json.loads(line) for line in transcript.splitlines() if line.strip()]
+        self.assertEqual(
+            [event["type"] for event in events],
+            ["assistant", "assistant", "assistant", "assistant", "result"],
+        )
+        self.assertNotIn(BREADCRUMB_PREFIX, transcript)
+        self.assertTrue(self._breadcrumbs(written))
+
+    def test_the_prefix_is_what_tells_cairns_lines_from_the_sessions_own(self) -> None:
+        """Claude inherits the wrapper's standard error, so the two share the file."""
+        _, written = self._session(StepPrompt(None, "do work"))
+        for line in self._breadcrumbs(written):
+            with self.subTest(line=line):
+                self.assertTrue(line.startswith(BREADCRUMB_PREFIX))
 
 
 if __name__ == "__main__":
