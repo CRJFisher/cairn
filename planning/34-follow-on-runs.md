@@ -21,7 +21,7 @@ node, or a run. And the graph layer is built so nothing can: the root key set is
 frozenset, a step body must be one quoted invocation, `action:`/`with:` are refused by preflight,
 the build path runs at authoring time only, and the body digest turns any runtime rewrite into
 recorded divergence. The engine's dynamic primitives — `repeat_policy`, `parallel` over a
-`dag.run` action, inline `foreach`, all present in 2.11.0 — are structurally excluded, and that
+`dag.run` action, inline `foreach`, all present on the pinned engine — are structurally excluded, and that
 exclusion is load-bearing for every promise the preflight makes.
 
 ## The shape rejected: a loop node
