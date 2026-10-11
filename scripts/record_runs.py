@@ -40,7 +40,7 @@ from typing import Any
 
 from cairn.assertions import command_digest
 from cairn.core import write_json
-from cairn.headroom import READING_FILE
+from cairn.headroom import ACCOUNT_UNKNOWN, READING_FILE
 from cairn.layout import headroom_directory
 from cairn.locks import acquire_run_lock
 from cairn.workflow.gate import EngineUnavailable, assert_pinned
@@ -228,24 +228,32 @@ def _seed_reading(runs: Path, windows: dict[str, dict[str, Any]], now: float) ->
     An allowance that is spent cannot be recorded: it is somebody's subscription running
     out. The reading is the one input these two shapes are given; the admission read off it,
     the hold, the gates and the record are all the real code on a real file.
+
+    Filed under the unknown account, because the `claude` on `PATH` for the length of a
+    recording is a stub that names no organisation — which is the same key the step reading
+    it will compose for itself.
     """
     write_json(
         headroom_directory(runs) / READING_FILE,
         {
-            "windows": {
-                name: {
-                    "used": window.get("used"),
-                    "status": window["status"],
-                    "resets_at": int(now) + int(window["reopens_in"]),
-                    "source": "stream",
-                    "read_at": now,
+            "accounts": {
+                ACCOUNT_UNKNOWN: {
+                    "windows": {
+                        name: {
+                            "used": window.get("used"),
+                            "status": window["status"],
+                            "resets_at": int(now) + int(window["reopens_in"]),
+                            "source": "stream",
+                            "read_at": now,
+                        }
+                        for name, window in windows.items()
+                    },
+                    "api_key_source": None,
+                    "funding_read_at": None,
+                    "endpoint_called_at": None,
+                    "endpoint_failures": 0,
                 }
-                for name, window in windows.items()
-            },
-            "api_key_source": None,
-            "funding_read_at": None,
-            "endpoint_called_at": None,
-            "endpoint_failures": 0,
+            }
         },
     )
 

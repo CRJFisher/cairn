@@ -33,6 +33,7 @@ from cairn.record.vocabulary import (
     ATTRIBUTION_WEBHOOK,
     ATTRIBUTIONS,
     NEXT_ACTIONS,
+    NEXT_ALLOWANCE_ELSEWHERE,
     NEXT_AWAIT_ALLOWANCE,
     NEXT_DECIDE,
     NEXT_FIX_ASSERTION,
@@ -155,6 +156,11 @@ SENTENCE_BY_ACTION: dict[str, str] = {
     NEXT_AWAIT_ALLOWANCE: (
         "Run it again as a recovery once the allowance it was held on reopens: every step "
         "already done no-ops, and the held step starts again over the tree its session left."
+    ),
+    NEXT_ALLOWANCE_ELSEWHERE: (
+        "Run it again as a recovery now: the hold was another account's week, and the "
+        "account in use has not been measured. Every step already done no-ops, and the held "
+        "step is admitted, or held again on a reading of its own."
     ),
     NEXT_START_SCHEDULER: "Start a scheduler: this run is queued and nothing is draining the queue.",
     NEXT_WAIT: "Wait: this run is still going.",

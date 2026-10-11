@@ -7,9 +7,12 @@ step **holds** instead
 and after it, when the session meets the limit mid-turn — and then resumes that session once
 the window reopens. A limit is a pause in the run, never the end of it.
 
-**One reading, three feeders.** Every step and every session reads and writes one file under
-the runs root, so concurrent steps share one fact and no step measures on its own account.
-The feeders run cheapest first. The stream: every session already emits a `rate_limit_event`,
+**One reading per account, three feeders.** Every step and every session reads and writes one
+file under the runs root, so concurrent steps share one fact and no step measures on its own.
+The reading inside it is keyed by the organisation the provider is logged in to, because a
+window is a statement about one subscription's week: after a credential switch the new
+account has been measured by nothing, which is _unknown_, and unknown admits. The feeders run
+cheapest first. The stream: every session already emits a `rate_limit_event`,
 free, and it is the only feeder that sees `rejected`. The usage endpoint, off unless the owner
 sets `CAIRN_HEADROOM_USAGE_ENDPOINT=1`, because it reads a credential Cairn did not create.
 And a probe: one settings-free haiku turn read for its event and discarded, spent only when
@@ -68,10 +71,12 @@ from cairn.providers import (
     METERED_PROVIDERS,
     RATE_LIMITED,
     USAGE_TIMEOUT,
+    Account,
     EndpointRefused,
     Unmeasured,
     iso_moment,
     provider_answered,
+    read_account,
     read_usage,
     reset_epoch,
     run_probe,
@@ -128,6 +133,10 @@ RECHECK_BACKOFF: tuple[float, ...] = (300.0, 600.0, 1200.0)
 # session ends, so a blip is often over by then.
 OUTAGE_BACKOFF: tuple[float, ...] = (60.0, 120.0, 300.0, 600.0)
 
+# The key a reading is filed under when nothing could say which account took it. Readings
+# from un-named accounts share it, which is the degraded case the named ones exist to avoid.
+ACCOUNT_UNKNOWN = "unknown"
+
 READING_FILE = "reading.json"
 READING_LOCK = "reading.lock"
 # Held by whichever step is refreshing a stale reading, so concurrent steps that all find it
@@ -158,13 +167,25 @@ class Window(TypedDict):
 
 
 class Reading(TypedDict):
-    """The shared reading: every window last measured, and how the account is funded."""
+    """One account's reading: every window last measured, and how that account is funded."""
 
     windows: dict[str, Window]
     api_key_source: str | None
     funding_read_at: float | None
     endpoint_called_at: float | None
     endpoint_failures: int
+
+
+class Ledger(TypedDict):
+    """Every account's reading, keyed by the organisation whose week it speaks for.
+
+    One reading per organisation rather than one per machine. A window speaks for one
+    subscription's week, so readings merged across a credential switch hold a new account's
+    steps on an old account's figures — and `_merged` keeps the higher of the two for a
+    window whose reset happens to match ([43 A]).
+    """
+
+    accounts: dict[str, Reading]
 
 
 def empty_reading() -> Reading:
@@ -175,6 +196,10 @@ def empty_reading() -> Reading:
         endpoint_called_at=None,
         endpoint_failures=0,
     )
+
+
+def empty_ledger() -> Ledger:
+    return Ledger(accounts={})
 
 
 def _number(value: object) -> float | None:
@@ -228,6 +253,18 @@ def reading_from(raw: object) -> Reading:
     return reading
 
 
+def ledger_from(raw: object) -> Ledger:
+    """A stored ledger, with anything unreadable dropped rather than trusted."""
+    ledger = empty_ledger()
+    if not isinstance(raw, dict):
+        return ledger
+    accounts: object = cast(dict[str, Any], raw).get("accounts")
+    if isinstance(accounts, dict):
+        for name, entry in cast(dict[str, Any], accounts).items():
+            ledger["accounts"][name] = reading_from(entry)
+    return ledger
+
+
 def window_of(
     event: dict[str, Any], *, source: str, read_at: float
 ) -> tuple[str, Window] | None:
@@ -275,35 +312,84 @@ def _merged(previous: Window | None, new: Window) -> Window:
     return new
 
 
-class Gauge:
-    """The shared reading under one runs root, read and replaced whole under a lock."""
+AccountReader = Callable[[], Account | None]
 
-    def __init__(self, directory: Path, *, clock: Callable[[], float] = time.time) -> None:
+
+class Gauge:
+    """The shared ledger under one runs root, read and replaced whole under a lock.
+
+    Every read and every write is of the account the provider is logged in to now, so a step
+    that starts after a credential switch never sees the account before it.
+    """
+
+    def __init__(
+        self,
+        directory: Path,
+        *,
+        clock: Callable[[], float] = time.time,
+        account_reader: AccountReader | None = None,
+    ) -> None:
         self.directory = directory
         self.clock = clock
+        self.account_reader = read_account if account_reader is None else account_reader
+        self.account_read_at: float | None = None
+        self.account_read: Account | None = None
 
     @property
     def path(self) -> Path:
         return self.directory / READING_FILE
 
-    def read(self) -> Reading:
+    def ledger(self) -> Ledger:
         try:
             raw: Any = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return empty_reading()
-        return reading_from(raw)
+            return empty_ledger()
+        return ledger_from(raw)
+
+    def account(self) -> Account | None:
+        """Which account the provider is logged in to, re-read at most every `READING_TTL`.
+
+        Cached on this reader alone, and never in the file beside the readings it keys. A
+        step, a merge resolution and a report are each their own process, so each asks when
+        it starts and sees a switch at once — a shared cache would serve the account before
+        the switch for ten more minutes, which is exactly the window whose figures must stop
+        deciding ([43 A]). Within one reader it is asked once: a session's stream hands over
+        hundreds of messages, and a step that holds for hours re-asks as it measures again.
+        """
+        now = self.clock()
+        if self.account_read_at is None or self.account_read_at < now - READING_TTL:
+            self.account_read = self.account_reader()
+            self.account_read_at = now
+        return self.account_read
+
+    def key(self) -> str:
+        account = self.account()
+        return ACCOUNT_UNKNOWN if account is None else account["org_id"]
+
+    def read(self) -> Reading:
+        """The current account's reading. An account nothing has measured reads as empty,
+        which is `unknown`, which admits."""
+        return self.ledger()["accounts"].get(self.key(), empty_reading())
 
     @contextmanager
-    def _updating(self) -> Generator[Reading]:
+    def _locked(self) -> Generator[Ledger]:
         with exclusive_lock(
             self.directory / READING_LOCK,
             wait_seconds=READING_LOCK_WAIT,
             cause="headroom_unavailable",
             subject="the subscription reading",
         ):
-            reading = self.read()
-            yield reading
-            write_json(self.path, cast(dict[str, Any], reading))
+            ledger = self.ledger()
+            yield ledger
+            write_json(self.path, cast(dict[str, Any], ledger))
+
+    @contextmanager
+    def _updating(self) -> Generator[Reading]:
+        # Resolved before the lock is taken: reading the account takes the same lock to
+        # cache what it found, and a second take inside this one would never come free.
+        key = self.key()
+        with self._locked() as ledger:
+            yield ledger["accounts"].setdefault(key, empty_reading())
 
     def observe(self, message: dict[str, Any], *, source: str = SOURCE_STREAM) -> None:
         """Fold one stream message into the reading: a window's event, or how it is funded."""
@@ -753,6 +839,7 @@ class Steward:
         self.started = gauge.clock()
         self.worked = 0.0
         self.admission: Decision | None = None
+        self.funded: Account | None = None
         self.reading: dict[str, Any] = {}
         self.set_aside: list[str] = []
         self.notes: list[str] = []
@@ -792,11 +879,23 @@ class Steward:
         decision = decide(reading, now=now, model=self.model, newer_than=newer_than)
         if admitting:
             self.admission = decision
+            self.funded = self._funding()
             self.reading, self.set_aside = _snapshot(
                 reading, now=now, model=self.model, newer_than=newer_than
             )
             self.notes = notes
         return decision
+
+    def _funding(self) -> Account | None:
+        """Which account this step's session will spend, for its own report to name.
+
+        Read at admission, which is the moment the session starts: two steps of one run
+        either side of a credential switch each name the account that funded them ([43 A]).
+        """
+        try:
+            return self.gauge.account()
+        except (CairnError, OSError):
+            return None
 
     def wait_until_clear(self, after: str, *, closed: Decision | None = None) -> Decision | None:
         """Hold until a measurement admits. The decision that stopped the step, if it must.
@@ -952,6 +1051,7 @@ class Steward:
                 if part
             )
             or None,
+            "account": None if self.funded is None else dict(self.funded),
             "reading": self.reading,
             "set_aside": list(self.set_aside),
             "holds": list(self.holds),
@@ -1158,25 +1258,43 @@ def session_within_allowance(
     )
 
 
+def current_account() -> Account | None:
+    """Which account the provider is logged in to now, asked where a record is built.
+
+    The record asks it because a hold is a statement about one subscription's week: read
+    under another account, the moment it named is no longer a precondition on running the
+    recovery ([43 B]). Asked outright rather than read from the shared ledger, which caches
+    nothing about the credential — an answer that was true ten minutes ago is exactly the
+    answer this question must not take. A machine that cannot say which account it is on
+    answers nothing, and nothing is what a record unable to tell two accounts apart says.
+    """
+    return read_account()
+
+
 __all__ = [
+    "ACCOUNT_UNKNOWN",
     "ADMISSIONS",
     "AFTER_LIMIT",
     "AFTER_OUTAGE",
     "BEFORE_SESSION",
+    "Account",
     "Decision",
     "Gauge",
     "Hold",
     "Instruments",
+    "Ledger",
     "Reading",
     "Resume",
     "Steward",
     "Unmeasured",
     "Window",
     "announcer",
+    "current_account",
     "decide",
     "default_instruments",
     "endpoint_enabled",
     "fresh_windows",
+    "ledger_from",
     "local_moment",
     "measure",
     "reading_from",

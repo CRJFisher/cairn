@@ -37,6 +37,7 @@ from cairn.plan.schema import normalise as normalise_graph
 from cairn.providers import resume_command
 from cairn.record import engine
 from cairn.record.model import (
+    AllowanceAccount,
     AllowanceHold,
     AllowanceWindow,
     Attention,
@@ -83,6 +84,7 @@ from cairn.record.vocabulary import (
     INTEGRITY_GATE_CONTRADICTS_WORK,
     INTEGRITY_REPORT_CONTRADICTS_ENGINE,
     INTEGRITY_REPORT_UNREADABLE,
+    NEXT_ALLOWANCE_ELSEWHERE,
     NEXT_AWAIT_ALLOWANCE,
     NEXT_DECIDE,
     NEXT_FIX_ASSERTION,
@@ -324,6 +326,19 @@ def _allowance_hold(raw: object) -> AllowanceHold | None:
     )
 
 
+def _allowance_account(raw: object) -> AllowanceAccount | None:
+    if not isinstance(raw, dict):
+        return None
+    entry = cast(dict[str, Any], raw)
+    organisation = _reported_text(entry.get("org_id"))
+    if organisation is None:
+        return None
+    return AllowanceAccount(
+        org_id=organisation,
+        subscription_type=_reported_text(entry.get("subscription_type")),
+    )
+
+
 def _headroom(work_report: dict[str, Any] | None, holding: object) -> Headroom | None:
     """An agent step's dealings with the allowance, from its report and its announcement."""
     found: Any = _detail(work_report).get("headroom")
@@ -339,6 +354,7 @@ def _headroom(work_report: dict[str, Any] | None, holding: object) -> Headroom |
     return Headroom(
         admission=_reported_text(account.get("admission")),
         reason=_reported_text(account.get("reason")),
+        account=_allowance_account(account.get("account")),
         reading=[
             window
             for name, entry in sorted(cast(dict[str, Any], reading).items())
@@ -389,6 +405,21 @@ def _holding(
     ):
         return holds.get(f"remedy_{step_id}")
     return None
+
+
+def _funding(steps: list[StepRecord]) -> list[AllowanceAccount]:
+    """Every subscription this run's sessions were funded by, each named once.
+
+    A run whose steps ran either side of a credential switch was funded by two, and its
+    holds are then statements about two different weeks ([43 A]).
+    """
+    found: dict[str, AllowanceAccount] = {}
+    for step in steps:
+        headroom = step["headroom"]
+        account = None if headroom is None else headroom["account"]
+        if account is not None:
+            found.setdefault(account["org_id"], account)
+    return [found[organisation] for organisation in sorted(found)]
 
 
 def _latest_allowance(steps: list[StepRecord]) -> list[AllowanceWindow]:
@@ -951,6 +982,7 @@ def derive_next_action(
     waves: list[WaveCensus],
     infrastructure: list[Infrastructure],
     order: list[str],
+    account_in_use: AllowanceAccount | None,
 ) -> NextAction:
     """What a reader does now, in one value plus the command that does it.
 
@@ -959,6 +991,10 @@ def derive_next_action(
     carried only where one can be spelled correctly and completely: the recovery command
     needs the plan and the repository as well as the run, and one missing any of them
     fails when it is pasted, which is worse than the report saying plainly it has none.
+
+    `account_in_use` is which account the provider is logged in to where this is derived. It
+    decides one thing only: whether a hold is still a precondition, or a statement about a
+    subscription no session would spend ([43 B]).
     """
     by_id = {step["step_id"]: step for step in steps}
     if verdict == VERDICT_BLOCKED:
@@ -989,7 +1025,7 @@ def derive_next_action(
             None,
         )
         return NextAction(
-            action=_rerun_or_fix(by_id.get(subject) if subject else None),
+            action=_rerun_or_fix(by_id.get(subject) if subject else None, account_in_use),
             subject=subject,
             command=_recovery_command(run_id, plan, repository),
         )
@@ -1009,21 +1045,44 @@ def derive_next_action(
         if has_merge and not held:
             return NextAction(action=NEXT_SETTLE_MERGE, subject=excluded, command=None)
         return NextAction(
-            action=_rerun_or_fix(by_id.get(excluded) if excluded else None),
+            action=_rerun_or_fix(by_id.get(excluded) if excluded else None, account_in_use),
             subject=excluded,
             command=_recovery_command(run_id, plan, repository),
         )
     return NextAction(action=NEXT_NOTHING, subject=None, command=None)
 
 
-def _rerun_or_fix(subject: StepRecord | None) -> str:
+def _rerun_or_fix(subject: StepRecord | None, account_in_use: AllowanceAccount | None) -> str:
     """A re-run is the remedy unless the step's assertion never got to decide anything, or
     the step is waiting on the subscription rather than on anything a person can change."""
     if subject is not None and subject["cause"] == ASSERTION_INTERRUPTED:
         return NEXT_FIX_ASSERTION
     if subject is not None and subject["cause"] == QUOTA_HELD:
-        return NEXT_AWAIT_ALLOWANCE
+        return (
+            NEXT_ALLOWANCE_ELSEWHERE
+            if _held_on_another_account(subject, account_in_use)
+            else NEXT_AWAIT_ALLOWANCE
+        )
     return NEXT_RERUN
+
+
+def _held_on_another_account(
+    subject: StepRecord, account_in_use: AllowanceAccount | None
+) -> bool:
+    """Whether the hold was taken on a subscription no session would spend now.
+
+    Both accounts have to be known before they can differ. A hold whose account nothing
+    recorded, and a machine that cannot say which account it is on, are each a hold whose
+    moment still stands — saying otherwise would send a person into a window that really is
+    closed ([43 B]).
+    """
+    headroom = subject["headroom"]
+    held_on = None if headroom is None else headroom["account"]
+    return (
+        held_on is not None
+        and account_in_use is not None
+        and held_on["org_id"] != account_in_use["org_id"]
+    )
 
 
 def _recovery_command(run_id: str, plan: str | None, repository: str | None) -> str | None:
@@ -1549,6 +1608,7 @@ def extract(
     in_flight_cause: str | None = None,
     holds: dict[str, dict[str, Any]] | None = None,
     integrity: Sequence[Integrity] = (),
+    account_in_use: AllowanceAccount | None = None,
 ) -> RunRecord:
     """One run's whole record, from the engine's last snapshot and this run's own reports.
 
@@ -1557,7 +1617,9 @@ def extract(
     ([triggers.md]), and nothing else passes it. `holds` is what running steps are
     announcing about their wait at the allowance ([read_holds]). `integrity` is what the
     reading of the reports already refused ([read_reports]); everything this derivation
-    refuses is added to it.
+    refuses is added to it. `account_in_use` is which account the provider is logged in to
+    where the record is being built — about this machine now, like `owner_alive`, and
+    carried in rather than read here for the reason a derivation reads nothing.
     """
     record = status_record if status_record is not None else {}
     refused: list[Integrity] = list(integrity)
@@ -1666,6 +1728,7 @@ def extract(
         "view_url": (
             view_url(name, run_id) if (name := engine.text(record.get("name"))) else None
         ),
+        "account_in_use": account_in_use,
     }
     return RunRecord(
         record_version=RECORD_VERSION,
@@ -1683,6 +1746,7 @@ def extract(
         verdict=verdict,
         exit_code=VERDICT_EXIT_CODES[verdict],
         allowance=_latest_allowance(steps),
+        accounts=_funding(steps),
         trigger=_trigger(record),
         lineage=_lineage(parameters, steps, reports),
         steps=steps,
@@ -1703,8 +1767,11 @@ def extract(
             waves=waves,
             infrastructure=infrastructure,
             order=order,
+            account_in_use=account_in_use,
         ),
-        provenance=_provenance(fields, derived=("owner_alive", "view_url")),
+        provenance=_provenance(
+            fields, derived=("owner_alive", "view_url", "account_in_use")
+        ),
         **cast(Any, fields),
     )
 

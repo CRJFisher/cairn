@@ -19,7 +19,7 @@ import uuid
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, TextIO, cast
+from typing import Any, TextIO, TypedDict, cast
 
 from cairn.commands import stop_child
 from cairn.core import (
@@ -1021,6 +1021,7 @@ def _report_after_deadline(
 
 PROBE_MODEL = "haiku"
 PROBE_PROMPT = "Reply with the single word ok."
+AUTH_STATUS_TIMEOUT = 10.0
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 USAGE_BETA = "oauth-2025-04-20"
 USAGE_TIMEOUT = 10.0
@@ -1108,6 +1109,71 @@ def provider_answered(messages: list[dict[str, Any]]) -> bool:
         or (message.get("type") == "result" and message.get("is_error") is False)
         for message in messages
     )
+
+
+class Account(TypedDict):
+    """Which subscription a session spends: the organisation, and what kind it is.
+
+    The organisation id and the subscription type, and nothing else. The credential also
+    carries the email address it signs in with, which Cairn writes nowhere: telling two
+    accounts apart is the whole of what a reading and a report need, and every one of them
+    is written to a file somebody else may read ([43 A]).
+    """
+
+    org_id: str
+    subscription_type: str | None
+
+
+def auth_status_command() -> list[str]:
+    """What Claude Code answers about its own credential, as JSON."""
+    return [PROVIDER_BINARY, "auth", "status", "--json"]
+
+
+def account_of(body: object) -> Account | None:
+    """The account one `claude auth status` answer names, or None where it names none.
+
+    Measured on Claude Code 2.1.220: `loggedIn`, `authMethod`, `apiProvider`, `email`,
+    `orgId`, `orgName` and `subscriptionType`. An answer with no organisation is a session
+    funded by something other than a subscription, which has no windows to be held on.
+    """
+    if not isinstance(body, dict):
+        return None
+    fields = cast(dict[str, Any], body)
+    organisation: object = fields.get("orgId")
+    if not isinstance(organisation, str) or not organisation:
+        return None
+    kind: object = fields.get("subscriptionType")
+    return Account(
+        org_id=organisation,
+        subscription_type=kind if isinstance(kind, str) and kind else None,
+    )
+
+
+def read_account() -> Account | None:
+    """Which account Claude Code is logged in to now, asked of Claude Code itself.
+
+    Never read from the credential store: the store holds a token, and the question here is
+    only which subscription a session would spend. A provider that cannot be asked answers
+    nothing, which is an unknown account rather than a reason to act.
+    """
+    try:
+        completed = subprocess.run(
+            auth_status_command(),
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=AUTH_STATUS_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    try:
+        parsed: Any = json.loads(completed.stdout)
+    except ValueError:
+        return None
+    return account_of(parsed)
 
 
 def _credential_text() -> str | None:

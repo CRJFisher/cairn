@@ -261,8 +261,9 @@ never reached from one killed before it could write.
 
 `quota_held` is a step held longer than it may wait at the subscription's allowance, or one
 whose session met the limit and could not be resumed. Its work was not judged; its own report
-names the window and the moment it reopens, and the run's next action is `await_allowance`
-([run-model.md](run-model.md)).
+names the window, the moment it reopens and the account it was held on, and the run's next
+action is `await_allowance` — or `allowance_elsewhere`, where the account in use when the
+report is read is a different one ([run-model.md](run-model.md)).
 
 **A step held before its session started did nothing, and the record says so.** Its
 admission reads `held` and it names no session: no session opened, nothing in the tree

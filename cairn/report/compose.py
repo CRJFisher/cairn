@@ -22,6 +22,7 @@ from cairn.record.engine import RUN_RUNNING
 from cairn.record.model import RunRecord, StepRecord
 from cairn.record.vocabulary import (
     ATTENTION_ORDER,
+    NEXT_ALLOWANCE_ELSEWHERE,
     OUTCOME_EXCLUDED,
     OUTCOME_NO_OP,
     OVERLAY_DIVERGENCE,
@@ -308,20 +309,44 @@ def _next_action(record: RunRecord) -> list[Block]:
                 )
             )
         if subject["cause"] == CAUSE_QUOTA_HELD:
-            # The moment is what the whole action turns on: a re-run before it meets the
-            # same closed window.
-            blocks.append(
-                Statement(
-                    "statement",
-                    (
-                        Chrome("It was held on"),
-                        Fact((f"step.{subject['step_id']}.held_window",)),
-                        Chrome(", which reopens"),
-                        Fact((f"step.{subject['step_id']}.held_until",)),
-                        Chrome("."),
-                    ),
+            key = f"step.{subject['step_id']}"
+            if action["action"] == NEXT_ALLOWANCE_ELSEWHERE:
+                # The hold is a statement about a subscription no session would spend now,
+                # so the moment it named is not a precondition on anything ([43 B]). Both
+                # accounts are said, because "another account" a reader cannot identify is
+                # not an answer they can act on.
+                blocks.append(
+                    Statement(
+                        "statement",
+                        (
+                            Chrome("It was held on"),
+                            Fact((f"{key}.held_window",)),
+                            Chrome("of another account —"),
+                            Fact((f"{key}.account",)),
+                            Chrome("— and the account in use now is"),
+                            Fact(("run.account_in_use",)),
+                            Chrome(
+                                ", which nothing has measured. The moment that hold named "
+                                "says nothing about this account's windows."
+                            ),
+                        ),
+                    )
                 )
-            )
+            else:
+                # The moment is what the whole action turns on: a re-run before it meets the
+                # same closed window.
+                blocks.append(
+                    Statement(
+                        "statement",
+                        (
+                            Chrome("It was held on"),
+                            Fact((f"{key}.held_window",)),
+                            Chrome(", which reopens"),
+                            Fact((f"{key}.held_until",)),
+                            Chrome("."),
+                        ),
+                    )
+                )
         blocks.extend(_assertion_output(subject, "its assertion"))
     if action["command"] is not None:
         blocks.append(Verbatim("verbatim", None, Fact(("run.next_command",))))
@@ -630,6 +655,8 @@ def _receipts(record: RunRecord, view_state: str) -> list[Block]:
                 ("the engine's own view", Fact(("run.view_url",), RULE_LINK)),
                 ("engine version", Fact(("run.engine_version",))),
                 ("subscription allowance, latest reading", Fact(("run.allowance",))),
+                ("funded by", Fact(("run.accounts",))),
+                ("the account in use now", Fact(("run.account_in_use",))),
             ),
         )
     ]
@@ -664,6 +691,7 @@ def _receipts(record: RunRecord, view_state: str) -> list[Block]:
                     ("after running for", Fact((f"{key}.elapsed_seconds",))),
                     ("admitted to the allowance", Fact((f"{key}.allowance",))),
                     ("because", Fact((f"{key}.allowance_reason",))),
+                    ("funded by", Fact((f"{key}.account",))),
                     ("the allowance it was admitted on", Fact((f"{key}.allowance_reading",))),
                     ("windows too old to rest on", Fact((f"{key}.allowance_set_aside",))),
                     ("held", Fact((f"{key}.holds",))),

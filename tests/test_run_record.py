@@ -52,9 +52,15 @@ from cairn.record.extract import (
     step_order,
 )
 from cairn.record.facts import ABSENT, as_mapping, canonical_facts
-from cairn.record.model import RunRecord, StepRecord, Trigger, Where
+from cairn.record.model import (
+    AllowanceAccount,
+    RunRecord,
+    StepRecord,
+    Trigger,
+    Where,
+)
 from cairn.record.runs import latest_run, list_runs
-from cairn.record.store import read_record, write_record
+from cairn.record.store import build_run_record, read_record, write_record
 from cairn.record.vocabulary import (
     ATTENTION_INTEGRITY,
     ATTENTION_ORDER,
@@ -1903,6 +1909,78 @@ class AnAgentStepsReceiptsReachTheRecord(unittest.TestCase):
         self.assertEqual(facts["step.alpha.turns"], "7")
         self.assertEqual(facts["step.alpha.diffstat"], "2 files +8 -1")
         self.assertNotEqual(facts["step.alpha.resume_command"], ABSENT)
+
+
+TEAM_ACCOUNT = AllowanceAccount(org_id="org-team", subscription_type="team")
+PERSONAL_ACCOUNT = AllowanceAccount(org_id="org-personal", subscription_type="pro")
+
+
+class TheRecordNamesWhatFundedTheRunAndWhatIsInUse(unittest.TestCase):
+    """[43]: which subscription a session spent is a fact of the run; which one the machine
+    is on is a fact about now, and it is what decides whether a hold still holds."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.runs = Path(self.temporary.name) / "runs"
+        self.run_id = "20260301T090000Z-aaaaaaaa"
+        directory = reports_directory(self.runs, self.run_id)
+        directory.mkdir(parents=True)
+        (directory / "work_alpha.json").write_text(
+            json.dumps(
+                {
+                    "run_id": self.run_id,
+                    "step_id": "work_alpha",
+                    "status": "done",
+                    "cause": None,
+                    "summary": "finished",
+                    "needs_user_decision": False,
+                    "follow_up_work": [],
+                    "detail": {
+                        "headroom": {"admission": "admitted", "account": TEAM_ACCOUNT}
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def _built(self, account: AllowanceAccount | None) -> RunRecord:
+        with patch("cairn.record.store.current_account", return_value=account):
+            record = build_run_record(self.runs, self.runs, self.run_id)
+        assert record is not None
+        return record
+
+    def test_the_one_pipeline_asks_which_account_the_machine_is_on(self) -> None:
+        record = self._built(PERSONAL_ACCOUNT)
+        self.assertEqual(record["account_in_use"], PERSONAL_ACCOUNT)
+        self.assertEqual(record["provenance"]["account_in_use"], PROVENANCE_DERIVED)
+
+    def test_a_machine_that_cannot_name_its_account_records_an_absence(self) -> None:
+        record = self._built(None)
+        self.assertIsNone(record["account_in_use"])
+        self.assertEqual(record["provenance"]["account_in_use"], PROVENANCE_ABSENT)
+
+    def test_the_funding_and_the_account_in_use_both_reach_the_projection(self) -> None:
+        state, reports, run_id = load("green")
+        reports = {name: dict(report) for name, report in reports.items()}
+        reports["work_alpha"] = {
+            **reports["work_alpha"],
+            "detail": {"headroom": {"admission": "admitted", "account": TEAM_ACCOUNT}},
+        }
+        facts = as_mapping(
+            extract(state, reports, run_id=run_id, account_in_use=PERSONAL_ACCOUNT)
+        )
+        self.assertEqual(facts["run.accounts"], "team, organisation org-team")
+        self.assertEqual(facts["run.account_in_use"], "pro, organisation org-personal")
+        self.assertEqual(facts["step.alpha.account"], "team, organisation org-team")
+
+    def test_a_run_no_session_named_an_account_for_says_so_rather_than_guessing(
+        self,
+    ) -> None:
+        facts = as_mapping(record_of("green"))
+        self.assertEqual(facts["run.accounts"], "none")
+        self.assertEqual(facts["run.account_in_use"], ABSENT)
+        self.assertEqual(facts["step.alpha.account"], ABSENT)
 
 
 class TheProjectionIsTheDriftOracle(unittest.TestCase):

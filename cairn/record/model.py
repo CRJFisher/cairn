@@ -67,6 +67,17 @@ class Where(TypedDict):
     last_event_age_seconds: float
 
 
+class AllowanceAccount(TypedDict):
+    """Which subscription funded a session: the organisation, and what kind it is.
+
+    Never the email address the account signs in with. Two accounts have to be tellable
+    apart — a hold taken on one says nothing about the other — and that is all this is for.
+    """
+
+    org_id: str
+    subscription_type: str | None
+
+
 class AllowanceWindow(TypedDict):
     """One window of the subscription's allowance as one measurement saw it."""
 
@@ -97,10 +108,14 @@ class Headroom(TypedDict):
     `reading` is what admission actually rested on, and `set_aside` names the windows it
     ignored as too old to rest on. The two are kept apart so a stale measurement is never
     shown as the reading a step was admitted against.
+
+    `account` is the subscription the session spent. Two steps of one run can be funded by
+    two accounts, and a window one of them was held on says nothing about the other ([43 A]).
     """
 
     admission: str | None
     reason: str | None
+    account: AllowanceAccount | None
     reading: list[AllowanceWindow]
     set_aside: list[str]
     holds: list[AllowanceHold]
@@ -344,6 +359,13 @@ class RunRecord(TypedDict):
     # and the source of each — so a reader can see how full the account was, and how old
     # that knowledge is, without opening a step.
     allowance: list[AllowanceWindow]
+    # Every subscription this run's sessions were funded by, each named once. A run whose
+    # steps ran either side of a credential switch was funded by two.
+    accounts: list[AllowanceAccount]
+    # Which account the provider is logged in to where this record was built — this machine
+    # now, not this run, like `owner_alive`. It is what lets a hold taken on another
+    # account's week be read as the statement about another account that it is ([43 B]).
+    account_in_use: AllowanceAccount | None
     trigger: Trigger
     lineage: Lineage
     steps: list[StepRecord]
@@ -361,6 +383,7 @@ class RunRecord(TypedDict):
 
 
 __all__ = [
+    "AllowanceAccount",
     "AllowanceHold",
     "AllowanceWindow",
     "Attention",

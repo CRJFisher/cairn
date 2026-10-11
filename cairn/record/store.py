@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Union, cast, get_args, get_origin, get_type_hints
 
 from cairn.core import CairnError, write_json
+from cairn.headroom import current_account
 from cairn.layout import RECORD_FILE, holds_directory, record_path, reports_directory
 from cairn.record.engine import RUN_STATUS, TRIGGER_TYPE, find_attempts
 from cairn.record.extract import extract, read_holds, read_reports
@@ -83,6 +84,10 @@ def build_run_record(
     was there to ask for ([triggers.md]). None where neither source holds anything about
     this run at all — which a refused report is not: a document that was there and could
     not be read is evidence that this run existed, and the record says so.
+
+    The account the provider is logged in to is read here, once per record built. It is
+    about this machine now rather than about the run, and it decides one thing: whether a
+    hold the run took is still a precondition on running the recovery ([43 B]).
     """
     attempts = find_attempts(records, run_id)
     found = read_reports(reports_directory(runs_root, run_id), run_id)
@@ -97,6 +102,7 @@ def build_run_record(
         in_flight_cause=in_flight_cause,
         holds=read_holds(holds_directory(runs_root, run_id), run_id),
         integrity=found.integrity,
+        account_in_use=current_account(),
     )
 
 

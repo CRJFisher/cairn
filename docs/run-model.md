@@ -214,16 +214,17 @@ rest is named rather than dropped.
 A report that says a run failed and stops has answered one question of six. The next action
 is derived from the record rather than composed as prose, and is one of:
 
-| Action            | Reached when                                                                         | The command it carries                                                                                     |
-| ----------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
-| `decide`          | a step is blocked on a human decision                                                | none — a person decides, and no command does                                                               |
-| `settle_merge`    | a step or a census exclusion left work unlanded, in a run whose topology has a merge | none                                                                                                       |
-| `rerun`           | the run failed, or a merge-less run left work unlanded                               | `python3 -m cairn run start --plan <plan> --repository <repository> --trigger recovery --recovering <run>` |
-| `fix_assertion`   | as `rerun`, where a signal ended the assertion of the step the fault is at           | the same recovery command, to use once what stopped the assertion has changed                              |
-| `await_allowance` | as `rerun`, where the step the fault is at was held at the subscription's allowance  | the same recovery command, to use once the window the step names has reopened                              |
-| `start_scheduler` | the run is queued and nothing is draining the queue                                  | `python3 -m cairn schedule start`                                                                          |
-| `wait`            | the run is still in flight                                                           | none                                                                                                       |
-| `nothing`         | the run is green, or every step no-opped                                             | none                                                                                                       |
+| Action                | Reached when                                                                                                    | The command it carries                                                                                     |
+| --------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `decide`              | a step is blocked on a human decision                                                                           | none — a person decides, and no command does                                                               |
+| `settle_merge`        | a step or a census exclusion left work unlanded, in a run whose topology has a merge                            | none                                                                                                       |
+| `rerun`               | the run failed, or a merge-less run left work unlanded                                                          | `python3 -m cairn run start --plan <plan> --repository <repository> --trigger recovery --recovering <run>` |
+| `fix_assertion`       | as `rerun`, where a signal ended the assertion of the step the fault is at                                      | the same recovery command, to use once what stopped the assertion has changed                              |
+| `await_allowance`     | as `rerun`, where the step the fault is at was held at the subscription's allowance                             | the same recovery command, to use once the window the step names has reopened                              |
+| `allowance_elsewhere` | as `await_allowance`, where the hold was taken on an account other than the one Claude Code is logged in to now | the same recovery command, to run at once                                                                  |
+| `start_scheduler`     | the run is queued and nothing is draining the queue                                                             | `python3 -m cairn schedule start`                                                                          |
+| `wait`                | the run is still in flight                                                                                      | none                                                                                                       |
+| `nothing`             | the run is green, or every step no-opped                                                                        | none                                                                                                       |
 
 Never the engine's own scheduler command: starting one is where the retry hazard fires, and
 Cairn's own is the one that disables it first ([triggers.md](triggers.md)).
@@ -239,6 +240,14 @@ a merge: a merge node in the engine's record, or a wave's census, which only a j
 isolated wave takes. A chain has neither, and re-running is its whole remedy. A step held at
 the allowance is `await_allowance` in either shape: its branch carried no work to settle,
 and what it waits on is the account rather than a person.
+
+**A hold is a statement about one subscription's week.** A window belongs to the account that
+was measured, so a hold read under a different account is not a precondition on anything: the
+action is `allowance_elsewhere`, carrying the same recovery command to run at once, and the
+held step is admitted — or held again on a reading of the account actually in use. Both
+accounts have to be known before they can differ: a hold whose account nothing recorded, or a
+machine that cannot say which account it is on, keeps `await_allowance` and its moment
+([supervision.md](supervision.md)).
 
 **A command is carried only where it can be spelled completely.** The recovery command names
 the plan, the repository and the run, so a record missing the plan or the repository carries
@@ -301,9 +310,9 @@ Four things the engine never supplies, and where each field's authority sits ins
 Declared in `cairn/record/model.py`. The run carries `record_version`, `run_id`, `plan`,
 `graph_sha256`, `attempt_id`, `attempts`, `engine_version`, `engine_run_status`,
 `engine_run_status_name`, `engine_contradicted`, `owner_alive`, `verdict`, `exit_code`,
-`view_url`, `started_at`, `finished_at`, `allowance`, `trigger`, `lineage`, `steps`,
-`infrastructure`, `nodes`, `edges`, `waves`, `attention`, `integrity`, `git`, `next_action`
-and `provenance`.
+`view_url`, `started_at`, `finished_at`, `allowance`, `accounts`, `account_in_use`,
+`trigger`, `lineage`, `steps`, `infrastructure`, `nodes`, `edges`, `waves`, `attention`,
+`integrity`, `git`, `next_action` and `provenance`.
 
 `integrity` is every piece of this run's own evidence the record refused, and is empty on a
 run whose evidence is whole.
@@ -313,6 +322,13 @@ rested on: how full it was (`used`, a fraction, where the measurement gave one),
 `status`, when it `resets_at`, the `source` that measured it and when (`read_at`). It is how
 a reader sees what the account looked like, and how old that knowledge is, without opening a
 step ([supervision.md](supervision.md)).
+
+`accounts` is every subscription this run's sessions were funded by, each named once by its
+`org_id` and `subscription_type` — two entries for a run whose steps ran either side of a
+credential switch. `account_in_use` is which account Claude Code is logged in to where the
+record was built: a fact about this machine now rather than about the run, like
+`owner_alive`, and `derived` rather than recorded. Neither carries the email address an
+account signs in with, and nothing Cairn writes does.
 
 `view_url` is where the engine's own view serves this run — the same address live and cold,
 which is what makes a finished run readable from the surface that showed it running
@@ -349,7 +365,8 @@ absent rather than naming another plan's steps.
 
 `headroom` is present on an agent step whose session reached admission, and on a step holding
 right now. It carries the `admission` decided — `admitted`, `warned`, `unknown`, `inert` or
-`held` — with the `reason`, the `reading` it rested on, every `holds` entry (window, from,
+`held` — with the `reason`, the `account` whose subscription the session spent, the
+`reading` it rested on, every `holds` entry (window, from,
 until, why, and whether it came before the session, `after` a limit, or `after` an outage —
 a session that lost the model provider, whose hold names no window), the number of `resumes`
 after a hold, and, on a step that stopped at the allowance, the `held_window` and the moment it

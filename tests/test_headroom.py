@@ -35,6 +35,7 @@ from cairn.core import (
     held_before_session,
 )
 from cairn.headroom import (
+    ACCOUNT_UNKNOWN,
     ADMITTED,
     AFTER_LIMIT,
     AFTER_OUTAGE,
@@ -46,6 +47,7 @@ from cairn.headroom import (
     RESET_SETTLE,
     UNKNOWN,
     WARNED,
+    Account,
     Gauge,
     Hold,
     Instruments,
@@ -64,11 +66,14 @@ from cairn.providers import (
     EndpointRefused,
     Unmeasured,
     access_token,
+    account_of,
+    auth_status_command,
     run_claude,
 )
 from cairn.record.extract import extract, read_holds
 from cairn.record.facts import as_mapping
 from cairn.record.vocabulary import (
+    NEXT_ALLOWANCE_ELSEWHERE,
     NEXT_AWAIT_ALLOWANCE,
     NEXT_RERUN,
     OUTCOME_EXCLUDED,
@@ -165,13 +170,38 @@ def limited(resets_at: int, window: str = "five_hour", session: str = "session-1
     )
 
 
+PERSONAL = Account(org_id="org-personal", subscription_type="pro")
+TEAM = Account(org_id="org-team", subscription_type="team")
+
+
 class Fixture(unittest.TestCase):
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.clock = Clock()
-        self.gauge = Gauge(Path(self.directory.name) / ".headroom", clock=self.clock.time)
+        self.logged_in: Account | None = PERSONAL
+        self.gauge = self.gauge_for(Path(self.directory.name) / ".headroom")
         self.announced: list[Hold | None] = []
+
+    def gauge_for(self, directory: Path) -> Gauge:
+        """A gauge reading whichever account the test says Claude Code is logged in to.
+
+        Never the machine's own: an admission that turned on who the developer happens to be
+        signed in as would pass or fail by their credential rather than by the decision.
+        """
+        return Gauge(
+            directory, clock=self.clock.time, account_reader=lambda: self.logged_in
+        )
+
+    def logged_in_as(self, account: Account | None) -> None:
+        """Claude Code is signed in to another account, and a reader starts after it.
+
+        The reader is replaced because every one of them is its own process — a step, a
+        merge resolution, a report — and a process asks which account it is on when it
+        starts.
+        """
+        self.logged_in = account
+        self.gauge = self.gauge_for(self.gauge.directory)
 
     def instruments(self, probe: Probe | None = None) -> Instruments:
         return Instruments(probe=probe or silent_probe(), endpoint=None)
@@ -402,7 +432,8 @@ class OneMeasurementServesEveryStep(Fixture):
         self.assertEqual(self.gauge.read()["windows"]["five_hour"]["source"], "probe")
 
     def test_eight_concurrent_steps_cause_at_most_one_probe(self) -> None:
-        gauge = Gauge(self.gauge.directory)
+        # The machine's own clock, because this one is about eight real threads racing.
+        gauge = Gauge(self.gauge.directory, account_reader=lambda: self.logged_in)
         lock = threading.Lock()
         calls: list[int] = []
 
@@ -934,7 +965,9 @@ class TheGateReadsAHeldStepAsHeld(unittest.TestCase):
         self.assertIsNone(judge(0, held)["divergence"])
 
 
-def held_run(*, running: bool = False) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+def held_run(
+    *, running: bool = False, account: Account | None = None
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     """One agent step the allowance stopped before its session, or one holding right now.
 
     Its assertion is `skipped`, because a step that opened no session left nothing for one
@@ -958,6 +991,7 @@ def held_run(*, running: bool = False) -> tuple[dict[str, Any], dict[str, dict[s
     headroom: dict[str, Any] = {
         "admission": "held",
         "reason": "the weekly allowance is at 97%, past the 95% hold threshold",
+        "account": None if account is None else dict(account),
         "reading": {
             "seven_day": {
                 "used": 0.97, "status": "allowed_warning", "resets_at": "2026-10-08T04:13:20Z",
@@ -1068,6 +1102,183 @@ class TheRecordAndTheReportSayItInASentence(unittest.TestCase):
         [step] = record["steps"]
         assert step["headroom"] is not None and step["headroom"]["holding"] is not None
         self.assertEqual(step["headroom"]["holding"]["until"], "2026-10-05T07:31:00Z")
+
+
+class TheAllowanceBelongsToAnAccount(Fixture):
+    """[43]'s acceptance: a window is a statement about one subscription's week, and a
+    credential switch replaces the account every statement is about."""
+
+    def test_a_switch_measures_the_new_account_rather_than_the_old_accounts_week(
+        self,
+    ) -> None:
+        self.logged_in_as(TEAM)
+        week_away = int(NOW) + 7 * 86400
+        self.gauge.observe(
+            event(window="seven_day", status="rejected", resets_at=week_away, utilization=0.98)
+        )
+        held = self.run_step(lambda _deadline: done())
+        self.assertEqual(held.cause, QUOTA_HELD)
+
+        # No clock has moved: the team account's rejection is as fresh as a reading gets,
+        # and it still decides nothing about the account now logged in.
+        self.logged_in_as(PERSONAL)
+        opened: list[float] = []
+
+        def session(deadline: float) -> CommandResult:
+            opened.append(deadline)
+            return done()
+
+        admitted = self.run_step(session)
+        self.assertEqual((admitted.status, len(opened)), ("done", 1))
+        headroom = admitted.detail["headroom"]
+        self.assertEqual(headroom["admission"], UNKNOWN)
+        self.assertEqual(headroom["reading"], {})
+        self.assertNotIn("seven_day", json.dumps(headroom))
+
+    def test_the_old_accounts_reading_is_kept_rather_than_overwritten(self) -> None:
+        """Keyed, not replaced: switching back finds the week that was measured there."""
+        self.logged_in_as(TEAM)
+        self.gauge.observe(event(window="seven_day", status="rejected", utilization=0.98))
+        self.logged_in_as(PERSONAL)
+
+        self.gauge.observe(event(utilization=0.1))
+        stored = self.gauge.ledger()["accounts"]
+        self.assertEqual(sorted(stored), ["org-personal", "org-team"])
+        self.assertEqual(stored["org-team"]["windows"]["seven_day"]["status"], "rejected")
+        self.assertEqual(list(stored["org-personal"]["windows"]), ["five_hour"])
+
+    def test_an_account_nothing_can_name_keeps_one_reading_of_its_own(self) -> None:
+        self.logged_in_as(None)
+        self.gauge.observe(event(utilization=0.1))
+        self.assertEqual(list(self.gauge.ledger()["accounts"]), [ACCOUNT_UNKNOWN])
+        self.assertEqual(self.gauge.read()["windows"]["five_hour"]["used"], 0.1)
+
+    def test_the_account_is_read_once_per_reading_ttl(self) -> None:
+        reads: list[int] = []
+
+        def reader() -> Account | None:
+            reads.append(1)
+            return self.logged_in
+
+        gauge = Gauge(
+            Path(self.directory.name) / ".headroom",
+            clock=self.clock.time,
+            account_reader=reader,
+        )
+        for _ in range(3):
+            gauge.observe(event(utilization=0.1))
+        self.assertEqual(len(reads), 1)
+        self.clock.now += READING_TTL + 1
+        gauge.observe(event(utilization=0.2))
+        self.assertEqual(len(reads), 2)
+
+    def test_each_session_names_the_account_that_funded_it(self) -> None:
+        self.logged_in_as(TEAM)
+        first = self.run_step(lambda _deadline: done())
+        self.logged_in_as(PERSONAL)
+        second = self.run_step(lambda _deadline: done(session="session-2"))
+        self.assertEqual(first.detail["headroom"]["account"], dict(TEAM))
+        self.assertEqual(second.detail["headroom"]["account"], dict(PERSONAL))
+
+    def test_a_run_funded_by_two_accounts_records_both_and_each_step_names_its_own(
+        self,
+    ) -> None:
+        state, reports = held_run(account=TEAM)
+        state["nodes"].extend(
+            [
+                {"step": {"name": "work_beta"}, "status": 4},
+                {"step": {"name": "verify_beta", "depends": ["work_beta"]}, "status": 4},
+                {"step": {"name": "mark_beta", "depends": ["verify_beta"]}, "status": 4},
+            ]
+        )
+        reports["work_beta"] = {
+            "run_id": "run-held",
+            "step_id": "work_beta",
+            "status": "done",
+            "cause": None,
+            "needs_user_decision": False,
+            "follow_up_work": [],
+            "summary": "finished",
+            "detail": {"headroom": {"admission": ADMITTED, "account": dict(PERSONAL)}},
+        }
+        record = extract(state, reports, run_id="run-held")
+        self.assertEqual(record["accounts"], [dict(PERSONAL), dict(TEAM)])
+        named = {
+            step["step_id"]: (step["headroom"] or {}).get("account")
+            for step in record["steps"]
+        }
+        self.assertEqual(named["alpha"], dict(TEAM))
+        self.assertEqual(named["beta"], dict(PERSONAL))
+
+    def test_a_hold_read_under_another_account_is_runnable_now(self) -> None:
+        state, reports = held_run(account=TEAM)
+        record = extract(state, reports, run_id="run-held", account_in_use=PERSONAL)
+        self.assertEqual(record["next_action"]["action"], NEXT_ALLOWANCE_ELSEWHERE)
+        self.assertIsNotNone(record["next_action"]["command"])
+        text = " ".join(render(document(record, VIEW_SERVING), as_mapping(record)).text.split())
+        self.assertIn(SENTENCE_BY_ACTION[NEXT_ALLOWANCE_ELSEWHERE], text)
+        self.assertIn("held on seven_day of another account — team, organisation org-team", text)
+        self.assertIn("the account in use now is pro, organisation org-personal", text)
+        # The moment is no longer a precondition, so nothing asks a reader to wait for it.
+        self.assertNotIn(SENTENCE_BY_ACTION[NEXT_AWAIT_ALLOWANCE], text)
+        self.assertNotIn("It was held on seven_day, which reopens", text)
+
+    def test_the_same_hold_read_under_its_own_account_still_waits_for_the_window(
+        self,
+    ) -> None:
+        state, reports = held_run(account=TEAM)
+        record = extract(state, reports, run_id="run-held", account_in_use=TEAM)
+        self.assertEqual(record["next_action"]["action"], NEXT_AWAIT_ALLOWANCE)
+        text = " ".join(render(document(record, VIEW_SERVING), as_mapping(record)).text.split())
+        self.assertIn("which reopens 2026-10-08T04:13:20Z", text)
+
+    def test_a_hold_whose_account_nothing_recorded_keeps_its_moment(self) -> None:
+        """Both accounts have to be known before they can differ: a held step from before
+        the account was recorded must not be read as somebody else's week."""
+        state, reports = held_run()
+        record = extract(state, reports, run_id="run-held", account_in_use=PERSONAL)
+        self.assertEqual(record["next_action"]["action"], NEXT_AWAIT_ALLOWANCE)
+        self.assertEqual(record["accounts"], [])
+
+    def test_a_machine_that_cannot_say_which_account_it_is_on_keeps_the_moment(self) -> None:
+        state, reports = held_run(account=TEAM)
+        record = extract(state, reports, run_id="run-held", account_in_use=None)
+        self.assertEqual(record["next_action"]["action"], NEXT_AWAIT_ALLOWANCE)
+
+
+class NoEmailAndNoTokenIsEverWritten(Fixture):
+    """[43]'s fourth acceptance. The provider answers with both; Cairn keeps neither."""
+
+    ANSWER = {
+        "loggedIn": True,
+        "authMethod": "claude.ai",
+        "apiProvider": "firstParty",
+        "email": "someone@example.com",
+        "orgId": "org-team",
+        "orgName": "Example Limited",
+        "subscriptionType": "team",
+    }
+
+    def test_the_account_is_the_organisation_and_the_subscription_type_and_no_more(
+        self,
+    ) -> None:
+        self.assertEqual(account_of(self.ANSWER), TEAM)
+        self.assertEqual(auth_status_command()[1:], ["auth", "status", "--json"])
+
+    def test_an_answer_naming_no_organisation_names_no_account(self) -> None:
+        self.assertIsNone(account_of({"loggedIn": False, "authMethod": "apiKey"}))
+        self.assertIsNone(account_of("not an object"))
+
+    def test_neither_the_reading_nor_the_report_carries_either(self) -> None:
+        self.logged_in_as(account_of(self.ANSWER))
+        self.gauge.observe(event(utilization=0.1))
+        result = self.run_step(lambda _deadline: done())
+        written = self.gauge.path.read_text(encoding="utf-8")
+        reported = json.dumps(result.detail["headroom"])
+        for secret in ("someone@example.com", "Example Limited"):
+            self.assertNotIn(secret, written)
+            self.assertNotIn(secret, reported)
+        self.assertIn("org-team", written)
 
 
 if __name__ == "__main__":

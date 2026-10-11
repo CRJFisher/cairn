@@ -6,7 +6,8 @@ describing the sessions Cairn is about to start. A person who switched to an acc
 headroom should be told that the queue can go on, not that it has to wait for another
 account's week to reset.
 
-**Status: proposed.** Found between runs `20261010T143556Z-93a9629c` and its recovery.
+**Status: done.** Sections A and B are both built. Found between runs
+`20261010T143556Z-93a9629c` and its recovery.
 
 **Serves** Run, Report and Schedule.
 
@@ -44,9 +45,14 @@ Nothing in Cairn can see this:
 ### A — Every reading and every session names its account
 
 The account is read where admission already measures, from `claude auth status` (JSON:
-`orgId`, `subscriptionType`, `authMethod`), cached beside the reading for `READING_TTL`. It is
-never read from the credential store. The identity Cairn keeps is the organisation id and the
-subscription type, never the email.
+`orgId`, `subscriptionType`, `authMethod`). It is never read from the credential store. The
+identity Cairn keeps is the organisation id and the subscription type, never the email.
+
+The answer is cached for `READING_TTL` on the reader that asked, and never in the file beside
+the readings it keys: a step, a merge resolution and a report are each their own process, so
+each asks when it starts and sees a switch at once. A cache shared through the file would
+serve the account from before the switch for ten more minutes — exactly the window whose
+figures the first acceptance below says must stop deciding.
 
 - `reading.json` becomes one reading per account, keyed by organisation id. Admission reads the
   current account's reading only, so a switch starts from _unknown_, and _unknown_ admits by
@@ -57,10 +63,18 @@ subscription type, never the email.
 ### B — `await_allowance` is re-read, never repeated
 
 `cairn report` keeps the held step's account beside its moment. Where the account Claude Code
-is logged in to now differs from it, the next action reads: _held on the weekly allowance of
-another account (team → personal); the account in use now has not been measured — run the
-recovery now, and it will be admitted or held on its own reading_. The recovery command is the
-same command. Only the moment stops being a precondition.
+is logged in to now differs from it, the next action is `allowance_elsewhere` rather than
+`await_allowance`, and reads: _It was held on seven_day of another account — team,
+organisation …— and the account in use now is pro, organisation …, which nothing has measured.
+The moment that hold named says nothing about this account's windows._ The recovery command is
+the same command. Only the moment stops being a precondition.
+
+It is a second frozen word rather than the same one phrased differently, because the action is
+what automation reads and the sentence is what a person reads; a report whose sentence said
+"run it now" under a word that means "wait" would leave the two with nothing checkable to
+agree about. Both accounts have to be known before they can differ, so a hold whose account
+nothing recorded, and a machine that cannot say which account it is on, keep `await_allowance`
+and its moment.
 
 ## Acceptance
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from cairn.headroom import AFTER_OUTAGE, READING_TTL
 from cairn.record.model import (
+    AllowanceAccount,
     AllowanceHold,
     AllowanceWindow,
     Headroom,
@@ -59,6 +60,22 @@ def _window(window: AllowanceWindow) -> str:
 
 def _windows(windows: list[AllowanceWindow]) -> str:
     return "; ".join(_window(window) for window in windows) if windows else NONE
+
+
+def _account(account: AllowanceAccount | None) -> str:
+    """One subscription said so two of them can be told apart, and no further.
+
+    The organisation id is the identity; the subscription type is what a person recognises
+    an account by. The email address the account signs in with is in neither ([43 A]).
+    """
+    if account is None:
+        return ABSENT
+    kind = account["subscription_type"] or "subscription"
+    return f"{kind}, organisation {account['org_id']}"
+
+
+def _accounts(accounts: list[AllowanceAccount]) -> str:
+    return "; ".join(_account(account) for account in accounts) if accounts else NONE
 
 
 def _set_aside(names: list[str]) -> str:
@@ -108,6 +125,7 @@ def _headroom(key: str, headroom: Headroom | None) -> list[tuple[str, str]]:
         return [
             (f"{key}.allowance", ABSENT),
             (f"{key}.allowance_reason", ABSENT),
+            (f"{key}.account", ABSENT),
             (f"{key}.allowance_reading", ABSENT),
             (f"{key}.allowance_set_aside", ABSENT),
             (f"{key}.holds", ABSENT),
@@ -120,6 +138,7 @@ def _headroom(key: str, headroom: Headroom | None) -> list[tuple[str, str]]:
     return [
         (f"{key}.allowance", _value(headroom["admission"])),
         (f"{key}.allowance_reason", _value(headroom["reason"])),
+        (f"{key}.account", _account(headroom["account"])),
         (f"{key}.allowance_reading", _windows(headroom["reading"])),
         (f"{key}.allowance_set_aside", _set_aside(headroom["set_aside"])),
         (
@@ -166,6 +185,8 @@ def canonical_facts(record: RunRecord) -> list[tuple[str, str]]:
         ("run.next_command", _value(record["next_action"]["command"])),
         ("run.view_url", _value(record["view_url"])),
         ("run.allowance", _windows(record["allowance"])),
+        ("run.accounts", _accounts(record["accounts"])),
+        ("run.account_in_use", _account(record["account_in_use"])),
         ("git.repository", _value(record["git"]["repository"])),
         ("git.parent_branch", _value(record["git"]["parent_branch"])),
         ("git.commits", _list(record["git"]["commits"])),

@@ -342,15 +342,34 @@ is bounded by that allowance rather than by what the plan wants to run, so an ag
 **holds** where it would otherwise run into a closed window, and carries on when the window
 reopens ([principle 4](../PRINCIPLES.md)). A limit is a pause in the run, never the end of it.
 
-### One shared reading
+### One shared reading, per account
 
 Every step reads one **headroom reading**, kept at `<runs root>/.headroom/reading.json` and
-replaced whole under a lock, so concurrent steps share one fact and none measures on its own
-account. Each window carries how full it is (`used`, a 0–1 fraction, where a measurement
-gave one), its `status` (`allowed`, `allowed_warning`, `rejected`), when it `resets_at`, the
-`source` that measured it, and when. A window measured more than **10 minutes** ago is
-unknown rather than trusted, and one whose reset has passed is void — except a rejection,
-which is measured again rather than assumed over.
+replaced whole under a lock, so concurrent steps share one fact and none measures on its own.
+Each window carries how full it is (`used`, a 0–1 fraction, where a measurement gave one), its
+`status` (`allowed`, `allowed_warning`, `rejected`), when it `resets_at`, the `source` that
+measured it, and when. A window measured more than **10 minutes** ago is unknown rather than
+trusted, and one whose reset has passed is void — except a rejection, which is measured again
+rather than assumed over.
+
+**The file holds one reading per account, keyed by organisation id**, because a window is a
+statement about one subscription's week. Which account Claude Code is logged in to is asked
+of `claude auth status` — `orgId` and `subscriptionType`, never the email address it signs in
+with and never the credential store. A step reads and writes the current account's reading
+and no other, so a credential switch starts from nothing measured, which is _unknown_, which
+admits. Readings from an account nothing could name share one `unknown` key, which is the
+degraded case the named ones exist to avoid.
+
+**The credential is never cached in the file.** Each step, each merge resolution and each
+report is its own process and asks when it starts, so a switch is seen at once; a cache
+shared through the file would serve the account from before the switch for another 10
+minutes, which is precisely the window whose figures have to stop deciding. Within one
+process the answer is reused for 10 minutes, so a session's stream costs one call and a step
+holding for hours re-asks as it measures again.
+
+Each session's report names the account that funded it, and the run's record lists every
+account its sessions were funded by — two, for a run whose steps ran either side of a switch
+([run-model.md](run-model.md)).
 
 Three feeders write it, cheapest first:
 
@@ -425,6 +444,14 @@ declined and its verify gate closes with no divergence ([verify-gate.md](verify-
 A step stopped **after** its session met a limit names the moment instead — _held until Thu
 08 Oct 04:00 BST — the weekly allowance at 97%_ — and its assertion runs over the work that
 session left.
+
+**A hold read under a different account is not a precondition.** The step names the account
+its session spent, so a report asked while Claude Code is logged in to another one says the
+hold was that other account's and gives the recovery as runnable now: the next action is
+`allowance_elsewhere`, carrying the same command, and the held step is admitted — or held
+again on a reading of the account actually in use. Both accounts have to be known before
+they can differ, so a hold whose account nothing recorded, and a machine that cannot say
+which account it is on, keep `await_allowance` and its moment.
 
 ### The backstop: a limit met mid-session
 

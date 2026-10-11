@@ -194,6 +194,11 @@ NEXT_FIX_ASSERTION = "fix_assertion"
 # The run stopped at a step held at the subscription's allowance. The work is not wrong, so
 # the re-run is worth making once the window it was held on reopens, and not before.
 NEXT_AWAIT_ALLOWANCE = "await_allowance"
+# The same hold, read under a different account. The window belongs to a subscription no
+# session would spend now, so the moment it named is no longer a precondition: the same
+# recovery command is worth running at once, and the held step is admitted or held on the
+# reading of the account that is actually in use.
+NEXT_ALLOWANCE_ELSEWHERE = "allowance_elsewhere"
 NEXT_START_SCHEDULER = "start_scheduler"
 NEXT_WAIT = "wait"
 NEXT_NOTHING = "nothing"
@@ -203,6 +208,7 @@ NEXT_ACTIONS: tuple[str, ...] = (
     NEXT_RERUN,
     NEXT_FIX_ASSERTION,
     NEXT_AWAIT_ALLOWANCE,
+    NEXT_ALLOWANCE_ELSEWHERE,
     NEXT_START_SCHEDULER,
     NEXT_WAIT,
     NEXT_NOTHING,
@@ -247,6 +253,7 @@ __all__ = [
     "INTEGRITY_REPORT_UNREADABLE",
     "INTEGRITY_REPORT_WRONG_RUN",
     "NEXT_ACTIONS",
+    "NEXT_ALLOWANCE_ELSEWHERE",
     "NEXT_AWAIT_ALLOWANCE",
     "NEXT_DECIDE",
     "NEXT_FIX_ASSERTION",
