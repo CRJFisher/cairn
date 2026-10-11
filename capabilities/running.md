@@ -70,9 +70,15 @@ status` answers `serving`, `absent` or `foreign` and starts nothing. It is about
    before anything is written.
 
 7. **Hand over the address.** The command prints five lines — the repository and its
-   provenance, the run id, the branch, where the run can be watched, and the command that
-   reads its record — and it prints them **before it invokes the engine**, so a start killed
-   under a caller's own timeout has still told you the name of the run. The watch line is
+   provenance, the run id under `launching`, the branch, where the run can be watched, and
+   the command that reads its record — and it prints them **before it invokes the engine**,
+   so a start killed under a caller's own timeout has still told you the name of the run.
+
+   **Say `launching`, not `started`, until the command does.** It prints a `started` line of
+   its own once the engine has taken the run on, and that is the only line that claims the
+   run began. The engine can still decline it — a run id it already holds, a definition it
+   will not load — and a reply that announced a start before the refusal is a claim the
+   person acts on and an incident log keeps. The watch line is
    the address step 5 read, so say what that reading was where it was not `serving`. Where the plan has run here before it also states the
    occasion reading it took and what the other reading would have meant; say that too. It
    then returns as soon as the engine has taken the run on, not when the run ends: a long
@@ -94,7 +100,7 @@ status` answers `serving`, `absent` or `foreign` and starts nothing. It is about
    run on. **Do not start the run again** until the report says it did not.
 
 8. **When it ends, report it.** [reading.md](reading.md). The command's own exit status says
-   only that the run was started: a run that dropped a branch exits zero at the engine level,
+   only that the engine took the run on: a run that dropped a branch exits zero at the engine level,
    and the verdict is derived by walking every node, which is `cairn report`'s to give.
 
 ## Recovery is re-running
@@ -152,7 +158,7 @@ sandbox lifted for that one command.
 Those three fail a run that really started, so recovering it is a start with `--trigger
 recovery`. None of them is a thing to retry in a loop.
 
-**A start that died still left a name.** The run id is printed before the engine is invoked,
+**A start that died still left a name.** The run id is printed as `launching` before the engine is invoked,
 so `cairn report --run <run-id>` and `run start --trigger recovery --recovering <run-id>`
 both have something to quote even though the terminal is gone.
 

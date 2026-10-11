@@ -50,6 +50,7 @@ CONFIG_TIMEOUT = 30
 _LABELS = {
     "DAGs directory": "dags_directory",
     "DAG runs": "dag_runs",
+    "Data directory": "data_directory",
 }
 
 REMEDY = (
@@ -62,6 +63,7 @@ class EnginePaths(NamedTuple):
 
     dags_directory: Path
     dag_runs: Path
+    data_directory: Path
 
 
 def _from_home(home: Path) -> EnginePaths:
@@ -73,6 +75,7 @@ def _from_home(home: Path) -> EnginePaths:
     return EnginePaths(
         dags_directory=home / "dags",
         dag_runs=home / "data" / "dag-runs",
+        data_directory=home / "data",
     )
 
 
@@ -159,6 +162,33 @@ def run_records_path(environ: Mapping[str, str] | None = None) -> Path:
     return engine_paths(environ).dag_runs
 
 
+# What the engine itself records about the scheduler, both measured against Dagu 2.18.2 and
+# both inside the data directory, which is why that directory is now read from `dagu config`
+# as well. Neither needs the API, and that is the point: Cairn holds no credential for the
+# engine's API by construction, so a status that could only be answered through it could not
+# be answered at all ([29 C]).
+#
+# One file per scheduler process, written at startup and removed on a clean exit, carrying
+# `pid`, `startedAt` and a status code. Measured: a scheduler killed with `SIGKILL` leaves
+# its file behind, so the file's presence is a claim about a process rather than proof of one
+# — which is exactly why Cairn adjudicates it with its own process check ([liveness.py]).
+SCHEDULER_REGISTRY = ("service-registry", "scheduler")
+# The global pause the engine's own API writes, as `{"paused": bool, "pausedAt": moment}`.
+# Measured: it survives a restart, so a paused scheduler is a live process that is deliberately
+# firing nothing, and reporting that as a dead one would send a person to start a second.
+SCHEDULER_PAUSE = ("scheduler", "paused.json")
+
+
+def scheduler_registry_directory(environ: Mapping[str, str] | None = None) -> Path:
+    """Where the engine records which process is being the scheduler."""
+    return engine_paths(environ).data_directory.joinpath(*SCHEDULER_REGISTRY)
+
+
+def scheduler_pause_path(environ: Mapping[str, str] | None = None) -> Path:
+    """Where the engine records that the scheduler as a whole is paused."""
+    return engine_paths(environ).data_directory.joinpath(*SCHEDULER_PAUSE)
+
+
 def dags_directory(environ: Mapping[str, str] | None = None) -> Path:
     """The directory the scheduler watches.
 
@@ -172,9 +202,13 @@ def dags_directory(environ: Mapping[str, str] | None = None) -> Path:
 __all__ = [
     "CONFIG_TIMEOUT",
     "ENGINE_BINARY",
+    "SCHEDULER_PAUSE",
+    "SCHEDULER_REGISTRY",
     "EnginePaths",
     "dags_directory",
     "engine_paths",
     "forget_engine_paths",
     "run_records_path",
+    "scheduler_pause_path",
+    "scheduler_registry_directory",
 ]

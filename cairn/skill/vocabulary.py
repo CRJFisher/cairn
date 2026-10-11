@@ -189,6 +189,20 @@ DOCUMENT_BY_CAPABILITY: dict[str, str] = {
 }
 
 
+# What each capability is, said as the thing a person asks for rather than as the verb class
+# that routes it. Stated here, beside the vocabulary and total over it, because it is what
+# the command line's own first screen leads with: somebody who went looking for a command
+# line arrived at the wrong door, and the six tasks are what they were looking for ([29 A]).
+TASK_BY_CAPABILITY: dict[str, str] = {
+    CAPABILITY_RUN: "run a plan, now, and watch it",
+    CAPABILITY_SCHEDULE: "put a plan on a schedule, or behind an external trigger",
+    CAPABILITY_EDIT: "change a plan that already has a workflow",
+    CAPABILITY_AUTHOR: "turn a plan document into a workflow",
+    CAPABILITY_REPORT: "read what a past run did",
+    CAPABILITY_EXPLAIN: "ask what a workflow would do, what a verdict means, why a step was excluded",
+}
+
+
 BINDING_CAPABILITY = "capability"
 BINDING_REPOSITORY = "repository"
 BINDING_WORKFLOW = "workflow"
@@ -255,6 +269,7 @@ __all__ = [
     "SHAPE_VERDICT_WORD",
     "SHAPE_WORKFLOW",
     "SUBJECT_SHAPES",
+    "TASK_BY_CAPABILITY",
     "TRIGGER_FRESH",
     "TRIGGER_PINNED",
     "TRIGGER_RECOVERY",

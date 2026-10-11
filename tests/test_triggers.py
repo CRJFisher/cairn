@@ -24,6 +24,7 @@ import os
 import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import unittest
 import warnings
@@ -49,6 +50,8 @@ from cairn.enginehome import (
     engine_paths,
     forget_engine_paths,
     run_records_path,
+    scheduler_pause_path,
+    scheduler_registry_directory,
 )
 from cairn.layout import (
     VIEW_BASE_DEFAULT,
@@ -57,12 +60,27 @@ from cairn.layout import (
     view_health_url,
     view_url,
 )
+from cairn.liveness import PROCESS_LIVE, PROCESS_RECYCLED, process_start_time
 from cairn.marker import OCCASION_PATTERN, mint_occasion, resolve_occasion
 from cairn.parameters import parameter, parent_branch, repository
+from cairn.record.engine import RUN_QUEUED, RUN_STATUS
 from cairn.record.extract import extract
 from cairn.schedule import (
+    DRAINS_NOTHING,
     NAMED_LIMIT,
     RETRY_SCANNER_HOURS,
+    SCHEDULER_INACCESSIBLE,
+    SCHEDULER_PAUSED,
+    SCHEDULER_RUNNING,
+    SCHEDULER_STALE,
+    SCHEDULER_STATES,
+    SCHEDULER_STOPPED,
+    SCHEDULER_UNKNOWN,
+    SENTENCE_BY_SCHEDULER_STATE,
+    SERVICE_LABEL,
+    SERVICE_SYSTEMD,
+    SchedulerStatus,
+    ServicePlan,
     assert_safe_to_start,
     failed_runs_since,
     install,
@@ -71,6 +89,8 @@ from cairn.schedule import (
     queued_runs,
     remove,
     scheduler_command,
+    scheduler_status,
+    service_plan,
 )
 from cairn.topology import WORKTREES_SUFFIX, worktrees_parent
 from cairn.view import (
@@ -95,6 +115,7 @@ from cairn.view import (
     status,
 )
 from cairn.workflow.build import envelope
+from cairn.workflow.pin import package_root
 from cairn.workflow.preflight import RULES, check
 from cairn.workflow.schema import (
     CATCHUP_DISABLED,
@@ -1126,10 +1147,22 @@ class TheEnginesPathsAreAskedOfTheEngine(unittest.TestCase):
             EnginePaths(
                 dags_directory=Path("/opt/dagu/dags"),
                 dag_runs=Path("/opt/dagu/data/dag-runs"),
+                data_directory=Path("/opt/dagu/data"),
             ),
         )
         self.assertEqual(run_records_path({"DAGU_HOME": "/opt/dagu"}),
                          Path("/opt/dagu/data/dag-runs"))
+        # Where the engine records which process is the scheduler, and its global pause:
+        # both are files Cairn reads instead of asking an API it holds no credential for
+        # ([29 C]).
+        self.assertEqual(
+            scheduler_registry_directory({"DAGU_HOME": "/opt/dagu"}),
+            Path("/opt/dagu/data/service-registry/scheduler"),
+        )
+        self.assertEqual(
+            scheduler_pause_path({"DAGU_HOME": "/opt/dagu"}),
+            Path("/opt/dagu/data/scheduler/paused.json"),
+        )
 
     def stub(self, body: str) -> None:
         """Stand a `dagu` on PATH that prints what the test wants it to."""
@@ -1143,7 +1176,10 @@ class TheEnginesPathsAreAskedOfTheEngine(unittest.TestCase):
         """Arithmetic off the configuration directory answers a directory that does not
         exist on this platform, and every reader of it then reports a machine with no runs
         on it."""
-        self.stub('echo "DAG runs:  /nowhere/x"; echo "DAGs directory: /nowhere/dags"')
+        self.stub(
+            'echo "DAG runs:  /nowhere/x"; echo "DAGs directory: /nowhere/dags"; '
+            'echo "Data directory: /nowhere/data"'
+        )
         self.assertEqual(run_records_path({}), Path("/nowhere/x"))
 
     def test_a_label_the_engine_stops_printing_is_a_hard_error(self) -> None:
@@ -1154,12 +1190,15 @@ class TheEnginesPathsAreAskedOfTheEngine(unittest.TestCase):
         self.assertIn("dag_runs", str(caught.exception))
 
     def test_a_path_holding_a_colon_survives_the_parse(self) -> None:
-        self.stub('echo "DAGs directory: /a:b/dags"; echo "DAG runs: /a:b/data/dag-runs"')
+        self.stub(
+            'echo "DAGs directory: /a:b/dags"; echo "DAG runs: /a:b/data/dag-runs"; '
+            'echo "Data directory: /a:b/data"'
+        )
         self.assertEqual(run_records_path({}), Path("/a:b/data/dag-runs"))
 
     def test_a_label_printed_twice_is_refused_rather_than_resolved_last_wins(self) -> None:
-        self.stub('echo "DAGs directory: /a/dags"; echo "DAG runs: /a/x"; '
-                  'echo "DAG runs: /b/x"')
+        self.stub('echo "DAGs directory: /a/dags"; echo "Data directory: /a/data"; '
+                  'echo "DAG runs: /a/x"; echo "DAG runs: /b/x"')
         with self.assertRaises(CairnError):
             engine_paths({})
 
@@ -1765,6 +1804,423 @@ class OneCommandDisarmsBothHazardsWithoutLosingTheUsersFile(unittest.TestCase):
         assert_dag_retry_disabled(self.path)
 
 
+
+
+class ScheduleStatusAnswersWhetherASchedulerExists(unittest.TestCase):
+    """Plan 29 C: the liveness states, and the claim status may not make without one.
+
+    The engine's own registry says which process to ask about and Cairn's process check
+    decides what it is, because the registry outlives the process it names — measured, a
+    scheduler killed outright leaves its entry behind. So every state here is a claim about
+    a probe rather than about a file's existence.
+    """
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        self.registry = self.root / "service-registry" / "scheduler"
+        self.registry.mkdir(parents=True)
+        self.pause = self.root / "scheduler" / "paused.json"
+        self.pause.parent.mkdir(parents=True)
+
+    def _claim(self, name: str, pid: int, started: str | None) -> None:
+        """One registry entry, in the shape the engine writes ([enginehome.py])."""
+        entry: dict[str, Any] = {"id": name, "host": "a-host", "port": 8090, "pid": pid, "status": 1}
+        if started is not None:
+            entry["startedAt"] = started
+        (self.registry / f"{name}.json").write_text(json.dumps(entry), encoding="utf-8")
+
+    def _live(self, name: str = "live-one") -> None:
+        """A claim naming a process that really is the process it names: this one."""
+        started = process_start_time(os.getpid())
+        assert started is not None, "this platform cannot read its own start time"
+        moment = datetime.fromtimestamp(started, tz=UTC).isoformat()
+        self._claim(name, os.getpid(), moment)
+
+    def _paused(self, at: str = "2026-03-01T09:00:00Z") -> None:
+        self.pause.write_text(json.dumps({"paused": True, "pausedAt": at}), encoding="utf-8")
+
+    def _status(self) -> SchedulerStatus:
+        return scheduler_status(registry=self.registry, pause=self.pause)
+
+    def test_no_record_of_a_scheduler_is_unknown_and_not_a_dead_one(self) -> None:
+        """A scheduler keeping its state under another DAGU_HOME looks exactly like this."""
+        found = self._status()
+        self.assertEqual(found.state, SCHEDULER_UNKNOWN)
+        self.assertFalse(found.drains)
+        self.assertNotIn(found.state, DRAINS_NOTHING)
+
+    def test_a_registry_this_shell_may_not_read_is_inaccessible(self) -> None:
+        """A reader that could not look is never a machine with no scheduler on it."""
+        if os.geteuid() == 0:
+            self.skipTest("a superuser can read a directory with no permissions")
+        self._claim("live-one", os.getpid(), None)
+        os.chmod(self.registry, 0o000)
+        self.addCleanup(os.chmod, self.registry, 0o700)
+        found = scheduler_status(registry=self.registry, pause=self.pause)
+        self.assertEqual(found.state, SCHEDULER_INACCESSIBLE)
+        self.assertNotIn(found.state, DRAINS_NOTHING)
+
+    def test_a_registry_directory_that_is_not_there_is_unknown(self) -> None:
+        """A machine whose engine has never registered a scheduler, which is not evidence
+        that none is running — one under another DAGU_HOME registers somewhere else."""
+        found = scheduler_status(registry=self.root / "nowhere", pause=self.pause)
+        self.assertEqual(found.state, SCHEDULER_UNKNOWN)
+        self.assertNotIn(found.state, DRAINS_NOTHING)
+
+    def test_a_live_recorded_process_is_running(self) -> None:
+        self._live()
+        found = self._status()
+        self.assertEqual(found.state, SCHEDULER_RUNNING)
+        self.assertTrue(found.drains)
+        self.assertEqual([process.reading for process in found.processes], [PROCESS_LIVE])
+
+    def test_a_process_that_has_ended_is_stopped(self) -> None:
+        self._claim("gone-one", 999999, "2026-03-01T09:00:00+00:00")
+        found = self._status()
+        self.assertEqual(found.state, SCHEDULER_STOPPED)
+        self.assertIn(found.state, DRAINS_NOTHING)
+
+    def test_an_identifier_that_now_belongs_to_something_else_is_stale(self) -> None:
+        """What a scheduler killed outright leaves: its entry, and an identifier the kernel
+        has since handed to somebody else."""
+        self._claim("recycled-one", os.getpid(), "2001-01-01T09:00:00+00:00")
+        found = self._status()
+        self.assertEqual(found.state, SCHEDULER_STALE)
+        self.assertEqual([process.reading for process in found.processes], [PROCESS_RECYCLED])
+
+    def test_an_entry_cairn_cannot_adjudicate_says_nothing_either_way(self) -> None:
+        (self.registry / "broken.json").write_text("{not json", encoding="utf-8")
+        found = self._status()
+        self.assertEqual(found.state, SCHEDULER_INACCESSIBLE)
+        self.assertNotIn(found.state, DRAINS_NOTHING)
+
+    def test_a_stale_entry_beside_a_live_one_still_reads_as_running(self) -> None:
+        """Measured against Dagu 2.18.2: a killed scheduler's entry survives, so a machine
+        that has restarted one holds both."""
+        self._claim("gone-one", 999999, "2026-03-01T09:00:00+00:00")
+        self._live()
+        self.assertEqual(self._status().state, SCHEDULER_RUNNING)
+
+    def test_a_paused_scheduler_is_its_own_state_and_never_a_dead_one(self) -> None:
+        self._live()
+        self._paused()
+        found = self._status()
+        self.assertEqual(found.state, SCHEDULER_PAUSED)
+        self.assertEqual(found.paused_since, "2026-03-01T09:00:00Z")
+        self.assertFalse(found.drains)
+        self.assertNotIn(found.state, DRAINS_NOTHING)
+
+    def test_a_pause_that_was_lifted_is_not_a_pause(self) -> None:
+        self._live()
+        self.pause.write_text(
+            json.dumps({"paused": False, "pausedAt": "0001-01-01T00:00:00Z"}), encoding="utf-8"
+        )
+        found = self._status()
+        self.assertEqual(found.state, SCHEDULER_RUNNING)
+        self.assertIsNone(found.paused_since)
+
+    def test_every_state_has_a_sentence_of_its_own(self) -> None:
+        self.assertEqual(set(SENTENCE_BY_SCHEDULER_STATE), set(SCHEDULER_STATES))
+        self.assertEqual(len(set(SENTENCE_BY_SCHEDULER_STATE.values())), len(SCHEDULER_STATES))
+
+
+class ScheduleStatusClaimsOnlyWhatItMeasured(unittest.TestCase):
+    """The queued line, which is where the wrong claim actually reached a person.
+
+    "Nothing is draining the queue" sends somebody to start a second scheduler beside the one
+    already running — and the scheduler is the one daemon on this machine whose retry scanner
+    re-executes failed runs.
+    """
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        self.repository = repository_at(self.root)
+        self.dags = self.root / "dags"
+        self.dags.mkdir()
+        self.registry = self.root / "service-registry" / "scheduler"
+        self.registry.mkdir(parents=True)
+        self.pause = self.root / "scheduler" / "paused.json"
+        self.pause.parent.mkdir(parents=True)
+        self.records = self.root / "dag-runs"
+        self.base = self.root / "base.yaml"
+        self.base.write_text(
+            "retry_policy:\n  limit: 0\n  interval_sec: 1\n", encoding="utf-8"
+        )
+
+    def _queued(self) -> None:
+        """One run the engine has accepted and not started, which is what a webhook leaves."""
+        directory = self.records / "queued-run"
+        directory.mkdir(parents=True)
+        (directory / "status.jsonl").write_text(
+            json.dumps(
+                {
+                    "dagRunId": "queued-run",
+                    "name": "nightly",
+                    # The engine's own integer for a run it has accepted and not started.
+                    "status": next(
+                        status for status, name in RUN_STATUS.items() if name == RUN_QUEUED
+                    ),
+                    "nodes": [],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    def _live(self) -> None:
+        started = process_start_time(os.getpid())
+        assert started is not None
+        (self.registry / "live.json").write_text(
+            json.dumps(
+                {
+                    "id": "live",
+                    "pid": os.getpid(),
+                    "startedAt": datetime.fromtimestamp(started, tz=UTC).isoformat(),
+                    "status": 1,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def _status(self) -> tuple[int, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = cairn_main(
+                [
+                    "schedule",
+                    "status",
+                    "--dags",
+                    str(self.dags),
+                    "--base-config",
+                    str(self.base),
+                    "--engine-records",
+                    str(self.records),
+                    "--scheduler-registry",
+                    str(self.registry),
+                    "--scheduler-pause",
+                    str(self.pause),
+                ]
+            )
+        return code, out.getvalue() + err.getvalue()
+
+    def test_the_first_line_is_whether_a_scheduler_exists(self) -> None:
+        code, said = self._status()
+        self.assertEqual(code, 0)
+        self.assertTrue(said.startswith("scheduler "), said[:80])
+
+    def test_a_queued_run_is_never_said_to_be_draining_into_nothing_unprovenly(self) -> None:
+        self._queued()
+        code, said = self._status()
+        self.assertEqual(code, 0)
+        self.assertIn("queued-run", said)
+        self.assertNotIn("nothing is draining the queue", said)
+        self.assertIn("not established", said)
+
+    def test_a_queued_run_under_a_running_scheduler_is_said_to_be_queued(self) -> None:
+        self._queued()
+        self._live()
+        _, said = self._status()
+        self.assertIn("queued behind other work", said)
+        self.assertNotIn("nothing is draining the queue", said)
+
+    def test_a_queued_run_with_every_recorded_process_gone_is_stranded_and_says_so(
+        self,
+    ) -> None:
+        self._queued()
+        (self.registry / "gone.json").write_text(
+            json.dumps({"id": "gone", "pid": 999999, "startedAt": "2026-03-01T09:00:00+00:00"}),
+            encoding="utf-8",
+        )
+        _, said = self._status()
+        self.assertIn("nothing is draining the queue", said)
+
+    def test_each_installed_definition_names_its_trigger_and_whether_its_link_resolves(
+        self,
+    ) -> None:
+        """A link whose target was pruned is refused at load, which is a schedule that
+        silently never fires — the failure this namespace exists to prevent."""
+        workflow = self.repository / ".git" / "cairn" / "workflows" / "nightly.yaml"
+        workflow.parent.mkdir(parents=True)
+        scheduled = document(schedule="0 3 * * *")
+        scheduled["env"][0]["PYTHONPATH"] = str(CAIRN_ROOT)
+        workflow.write_text(serialise(scheduled), encoding="utf-8")
+        install(self.repository, "nightly", dags=self.dags)
+        _, said = self._status()
+        self.assertIn("nightly.yaml", said)
+        self.assertIn("cron '0 3 * * *'", said)
+        self.assertIn("resolves", said)
+        self.assertNotIn("DOES NOT RESOLVE", said)
+        # The snapshot the link points at, taken away under it.
+        target = (self.dags / "nightly.yaml").readlink()
+        target.chmod(0o600)
+        target.unlink()
+        _, broken = self._status()
+        self.assertIn("DOES NOT RESOLVE", broken)
+
+    def test_it_names_this_machines_own_way_of_keeping_a_scheduler_alive(self) -> None:
+        _, said = self._status()
+        self.assertIn("service", said)
+        self.assertIn(service_plan(dags=self.dags).manager, said)
+
+
+class KeepingASchedulerAliveIsTheMachinesJob(unittest.TestCase):
+    """Plan 29 C: a foreground `execvp` is not an operational story — it dies with the
+    terminal. The unit is composed from this process rather than described, because a unit
+    naming a bare `python3` or a guessed checkout starts something else, or nothing."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        self.dags = self.root / "dags"
+        self.dags.mkdir()
+        self.home = self.root / "home"
+
+    def _plan(self) -> ServicePlan:
+        return service_plan(dags=self.dags, home=self.home)
+
+    def test_the_unit_runs_cairns_own_command_and_never_the_engines(self) -> None:
+        """The hazard assertion is Cairn's: a unit running `dagu scheduler` directly would
+        arm, at every boot, the retry scanner that re-executes agent sessions."""
+        unit = self._plan().unit
+        self.assertIn("cairn", unit)
+        self.assertIn("schedule", unit)
+        self.assertIn(str(self.dags), unit)
+        self.assertNotIn("dagu scheduler", unit)
+
+    def test_the_unit_names_this_interpreter_and_this_cairn(self) -> None:
+        unit = self._plan().unit
+        self.assertIn(sys.executable, unit)
+        self.assertIn(str(package_root()), unit)
+
+    def test_it_is_a_user_service_and_never_a_system_one(self) -> None:
+        """It runs agent sessions against the repositories of the person who installed it,
+        as that person's own agent installation."""
+        plan = self._plan()
+        self.assertTrue(plan.unit_path.is_relative_to(self.home))
+        for command in (plan.install, plan.status, plan.stop):
+            with self.subTest(command=command[0]):
+                self.assertNotIn("sudo", command)
+        if plan.manager == SERVICE_SYSTEMD:
+            self.assertIn("--user", plan.install)
+
+    def test_install_status_and_stop_are_all_three_stated(self) -> None:
+        plan = self._plan()
+        for command in (plan.install, plan.status, plan.stop):
+            with self.subTest(command=command[0]):
+                self.assertTrue(command)
+                self.assertIn(SERVICE_LABEL, " ".join(command))
+
+    def _service(self, *extra: str) -> tuple[int, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = cairn_main(
+                ["schedule", "service", "--dags", str(self.dags), "--home", str(self.home), *extra]
+            )
+        return code, out.getvalue() + err.getvalue()
+
+    def test_reading_the_guidance_writes_nothing(self) -> None:
+        code, said = self._service()
+        self.assertEqual(code, 0)
+        self.assertFalse(self._plan().unit_path.exists())
+        for stated in ("manager", "unit", "install", "status", "stop"):
+            with self.subTest(stated=stated):
+                self.assertIn(stated, said)
+
+    def test_writing_the_unit_still_leaves_loading_it_to_the_person(self) -> None:
+        code, said = self._service("--write")
+        self.assertEqual(code, 0)
+        self.assertEqual(self._plan().unit_path.read_text(encoding="utf-8"), self._plan().unit)
+        self.assertIn("nothing is running yet", said)
+        self.assertIn(" ".join(self._plan().install), said)
+
+    def test_writing_twice_is_one_installation(self) -> None:
+        self._service("--write")
+        code, said = self._service("--write")
+        self.assertEqual(code, 0)
+        self.assertIn("already exactly this", said)
+
+    def test_a_unit_cairn_did_not_write_is_refused_rather_than_replaced(self) -> None:
+        path = self._plan().unit_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("somebody else's service", encoding="utf-8")
+        code, said = self._service("--write")
+        self.assertEqual(code, 1)
+        self.assertIn("already exists", said)
+        self.assertEqual(path.read_text(encoding="utf-8"), "somebody else's service")
+
+
+class AnInstallIsOneActOrNone(unittest.TestCase):
+    """Plan 29 C: a sidecar claiming a published schedule that does not exist.
+
+    The sidecar records what was installed against a plan and where a webhook's bearer token
+    went. Written ahead of the link, a refusal between the two leaves a note the next reader
+    cannot tell from a schedule that fires.
+    """
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        self.repository = repository_at(self.root)
+        self.dags = self.root / "dags"
+        self.workflow = self.repository / ".git" / "cairn" / "workflows" / "nightly.yaml"
+        self.workflow.parent.mkdir(parents=True)
+        scheduled = document(schedule="0 3 * * *")
+        scheduled["env"][0]["PYTHONPATH"] = str(CAIRN_ROOT)
+        self.workflow.write_text(serialise(scheduled), encoding="utf-8")
+
+    @property
+    def sidecar(self) -> Path:
+        return self.workflow.with_name("nightly.triggers.json")
+
+    def _install(self, *extra: str) -> tuple[int, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = cairn_main(
+                [
+                    "schedule",
+                    "install",
+                    "--plan",
+                    "nightly",
+                    "--repository",
+                    str(self.repository),
+                    "--dags",
+                    str(self.dags),
+                    *extra,
+                ]
+            )
+        return code, out.getvalue() + err.getvalue()
+
+    def test_a_refused_name_leaves_no_sidecar_claiming_a_schedule(self) -> None:
+        published_path("nightly", dags=self.dags).parent.mkdir(parents=True)
+        published_path("nightly", dags=self.dags).write_text("someone else's", encoding="utf-8")
+        code, said = self._install("--webhook-token-sink", "1password: cairn/hooks")
+        self.assertEqual(code, 1)
+        self.assertIn("fork one DAG history", said)
+        self.assertFalse(self.sidecar.exists())
+
+    def test_a_refusal_leaves_the_sidecar_of_the_install_that_did_hold(self) -> None:
+        """The one from before is this plan's own account of a link that is still there."""
+        self.assertEqual(self._install()[0], 0)
+        recorded = self.sidecar.read_text(encoding="utf-8")
+        link = published_path("nightly", dags=self.dags)
+        link.unlink()
+        link.write_text("someone else's", encoding="utf-8")
+        self.assertEqual(self._install()[0], 1)
+        self.assertEqual(self.sidecar.read_text(encoding="utf-8"), recorded)
+
+    def test_a_sidecar_that_cannot_be_written_takes_the_link_back_out(self) -> None:
+        with patch("cairn.schedule_cli.write_json", side_effect=OSError("no room")):
+            code, said = self._install()
+        self.assertEqual(code, 1)
+        self.assertIn("no room", said)
+        self.assertEqual(installed(dags=self.dags), [])
+        self.assertFalse(self.sidecar.exists())
 
 if __name__ == "__main__":
     unittest.main()

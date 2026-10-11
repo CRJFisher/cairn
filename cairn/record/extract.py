@@ -28,8 +28,11 @@ from pathlib import Path
 from typing import Any, NamedTuple, cast
 
 from cairn.assertions import ASSERTION_SOURCES, BACKED_BY_KEY, EXIT_KEY, SOURCE_KEY
-from cairn.core import ReportFault, validate_step_report
+from cairn.core import CairnError, ReportFault, validate_step_report
 from cairn.layout import view_url
+from cairn.plan.home import graph_path
+from cairn.plan.schema import SchemaError
+from cairn.plan.schema import normalise as normalise_graph
 from cairn.providers import resume_command
 from cairn.record import engine
 from cairn.record.model import (
@@ -142,6 +145,7 @@ from cairn.verify import (
 from cairn.verify import (
     divergence_line as _divergence_line,
 )
+from cairn.workflow.build import graph_digest
 from cairn.workflow.schema import (
     CAIRN_INVOCATION,
     ENGINE_VERSION,
@@ -1055,6 +1059,53 @@ def _resume_command(session_id: str | None, working_directory: str | None) -> st
     return resume_command(session_id, working_directory)
 
 
+class PlanName(NamedTuple):
+    """What the plan document calls one step: its title, and the name it was written under."""
+
+    title: str
+    slug: str
+
+
+def _plan_names(
+    repository: str | None, plan: str | None, graph_sha256: str | None
+) -> dict[str, PlanName]:
+    """What the plan called each of its steps, from the graph this run was generated from.
+
+    The engine knows a step by the id the plan contract sanitised its name into, and two
+    steps whose names sanitise alike are told apart by a numeric suffix — so `work_alpha_2`
+    on its own sends a reader to the graph to find out which step it is. Reading the names
+    here is what keeps that lookup out of every report ([29 B]).
+
+    **Guarded by the digest the run's own lock recorded.** A graph is a file the next
+    authoring rewrites, so one that does not hash to what this run ran is a different plan
+    under the same name: it contributes nothing, and every step reads as having no recorded
+    plan name rather than carrying another plan's.
+    """
+    if repository is None or plan is None or graph_sha256 is None:
+        return {}
+    try:
+        raw: Any = json.loads(
+            graph_path(Path(repository), plan).read_text(encoding="utf-8")
+        )
+        # Normalised before it is hashed, because the digest the authoring recorded is of
+        # the normalised graph and a raw document carrying none of its defaults hashes to
+        # something else entirely.
+        graph = normalise_graph(raw)
+        if graph_digest(graph) != graph_sha256:
+            return {}
+    except (CairnError, OSError, SchemaError, TypeError, ValueError):
+        return {}
+    # A graph is Cairn's own state, written by a derivation that read somebody's plan
+    # document, so its strings are as untrusted as an agent's own account of itself.
+    return {
+        step["id"]: PlanName(
+            title=flatten(step["title"], limit=LINE_LIMIT),
+            slug=flatten(step["slug"], limit=LINE_LIMIT),
+        )
+        for step in graph["steps"]
+    }
+
+
 def _step_record(
     step_id: str,
     *,
@@ -1063,6 +1114,7 @@ def _step_record(
     holds: dict[str, dict[str, Any]],
     run_settled: bool,
     orchestrator_gone: bool,
+    plan_name: PlanName | None,
 ) -> tuple[StepRecord, list[Integrity]]:
     """One step, assembled from the nodes it became and the accounts they left.
 
@@ -1104,8 +1156,8 @@ def _step_record(
         engine_killed=killed is not None,
     )
     divergence = _divergence(mark_report)
-    assertion_tail = (
-        _assertion_tail(assertion_tail_node)
+    failed_assertion = (
+        assertion_tail_node
         if assertion_tail_node is not None
         and _status(assertion_tail_node) == engine.NODE_STATUS_FAILED
         else None
@@ -1139,6 +1191,11 @@ def _step_record(
     freshness = _freshness(work_report) if outcome == OUTCOME_NO_OP else None
 
     fields: dict[str, object] = {
+        # What the plan document calls this step, beside the engine id it was sanitised into.
+        # A reader looking at `work_alpha_2` otherwise has to open the graph to find out
+        # which of two similarly named steps this is ([29 B]).
+        "title": None if plan_name is None else plan_name.title,
+        "slug": None if plan_name is None else plan_name.slug,
         "cause": cause,
         "position": _reported_text(mark_detail.get("position")),
         # The command the engine recorded, which for an agent step carries the whole prompt
@@ -1165,7 +1222,12 @@ def _step_record(
         "assertion_backed_by": _reported_text(assertion_account.get(BACKED_BY_KEY)),
         "timeout_seconds": None if killed is None else killed.bound_seconds,
         "elapsed_seconds": None if killed is None else killed.elapsed_seconds,
-        "assertion_tail": assertion_tail,
+        "assertion_stdout": (
+            None if failed_assertion is None else _assertion_tail(failed_assertion, "stdout")
+        ),
+        "assertion_stderr": (
+            None if failed_assertion is None else _assertion_tail(failed_assertion, "stderr")
+        ),
         "remedy": _remedy(remedy_report, reports.get(f"verify_{step_id}")),
         "divergence": divergence,
         "headroom": _headroom(work_report, _holding(step_id, outcome, nodes, holds, orchestrator_gone)),
@@ -1189,6 +1251,10 @@ def _step_record(
                 "resume_command",
                 "timeout_seconds",
                 "elapsed_seconds",
+                # Read from the plan's own graph against the digest this run recorded,
+                # rather than from any evidence the run itself left ([_plan_names]).
+                "title",
+                "slug",
                 *(("divergence",) if divergence_is_derived else ()),
             ),
         ),
@@ -1221,28 +1287,29 @@ def _remedy(
 ASSERTION_TAIL_BYTES = 8192
 
 
-def _assertion_tail(assertion: dict[str, Any]) -> str | None:
-    """The end of what a failed assertion printed, from the logs the engine kept for it.
+def _assertion_tail(assertion: dict[str, Any], channel: str) -> str | None:
+    """The end of one channel of what a failed assertion printed, from the engine's log.
 
-    Standard output first — a test runner's verdict and a type checker's findings land
-    there — and standard error where that is empty. The logs live in the engine's home and
-    outlive the run; where they are gone the record says so by carrying nothing.
+    Each channel is read on its own and recorded on its own. Reading them in order and
+    keeping the first that had anything in it — which is what this did — loses the failure
+    whenever the command chatters harmlessly on standard output and names what went wrong
+    on standard error, which is where a type checker, a linter and a compiler all put it
+    ([29 D]).
+
+    The logs live in the engine's home and outlive the run; where one is gone the record
+    says so by carrying nothing for that channel.
     """
-    for channel in ("stdout", "stderr"):
-        path = engine.text(assertion.get(channel))
-        if path is None:
-            continue
-        try:
-            with open(path, "rb") as handle:
-                handle.seek(0, os.SEEK_END)
-                handle.seek(max(0, handle.tell() - ASSERTION_TAIL_BYTES))
-                text = handle.read().decode("utf-8", errors="replace")
-        except OSError:
-            continue
-        tail = normalise(text[-TEXT_LIMIT:], limit=TEXT_LIMIT)
-        if tail:
-            return tail
-    return None
+    path = engine.text(assertion.get(channel))
+    if path is None:
+        return None
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            handle.seek(max(0, handle.tell() - ASSERTION_TAIL_BYTES))
+            text = handle.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    return normalise(text[-TEXT_LIMIT:], limit=TEXT_LIMIT) or None
 
 
 def _asserted_over_a_killed_step(assertion: dict[str, Any] | None) -> Divergence | None:
@@ -1481,6 +1548,16 @@ def extract(
         for name in nodes
         if (naming := engine.classify(name)) is not None and naming.role == WORK_ROLE
     )
+    # Resolved before the steps are assembled, because each step carries what the plan
+    # called it. The three are read off the run's own lock report and its parameters.
+    parameters = _parameters(record)
+    lock_detail = _detail(reports.get("lock_acquire"))
+    plan = engine.text(lock_detail.get("plan")) or engine.text(record.get("name"))
+    waves = _census(reports)
+    git = _git(parameters, reports, waves)
+    names = _plan_names(
+        git["repository"], plan, engine.text(lock_detail.get("graph_sha256"))
+    )
     steps: list[StepRecord] = []
     for step_id in step_ids:
         step, step_refusals = _step_record(
@@ -1490,6 +1567,7 @@ def extract(
             holds={} if holds is None else holds,
             run_settled=run_settled,
             orchestrator_gone=orchestrator_gone,
+            plan_name=names.get(step_id),
         )
         steps.append(step)
         refused.extend(step_refusals)
@@ -1515,7 +1593,6 @@ def extract(
         _engine_node(engine.node_name(node), node, step_ids) for node in recorded
     ]
     edges = _edges(nodes)
-    waves = _census(reports)
     order = step_order(nodes, step_ids)
     refused = refused[:LIST_LIMIT]
     verdict = derive_verdict(
@@ -1527,10 +1604,6 @@ def extract(
     )
     attention = derive_attention(steps, infrastructure, waves, order, refused)
 
-    parameters = _parameters(record)
-    lock_detail = _detail(reports.get("lock_acquire"))
-    plan = engine.text(lock_detail.get("plan")) or engine.text(record.get("name"))
-    git = _git(parameters, reports, waves)
     fields: dict[str, object] = {
         "plan": plan,
         "graph_sha256": engine.text(lock_detail.get("graph_sha256")),

@@ -165,7 +165,11 @@ python3 -m cairn workflow author <graph> --repository <path> --source-root <plan
                                [--schedule <cron>]
 python3 -m cairn workflow check  <workflow.yaml>
 python3 -m cairn record build   --run <id> [--repository <path>] [--engine-records <path>]
+                                [--reports <runs-root>]
 python3 -m cairn record facts   --run <id> [--repository <path>] [--engine-records <path>]
+                                [--reports <runs-root>]
+python3 -m cairn record list    [--plan <slug>] [--repository <path>] [--reports <runs-root>]
+python3 -m cairn record latest  --plan <slug> [--repository <path>] [--reports <runs-root>]
 python3 -m cairn report         --run <id> [--repository <path>]
                                 [--format terminal|markdown|html] [--out <path>]
 ```
@@ -270,8 +274,8 @@ workflow check` reads one and writes nothing. Both run at authoring time and are
 [workflow.md](workflow.md).
 
 `cairn run start` hands the engine one execution of a definition: a request to run is the
-go-ahead, and nothing is quoted or asked first. It prints the run id and the engine's view
-address, launches the engine detached, and records the run id and the engine invocation in
+go-ahead, and nothing is quoted or asked first. It prints the durable identity as
+`launching`, with the engine's view address beside it, launches the engine detached, and records the run id and the engine invocation in
 the run's directory, so a start whose process died still left a name a recovery can quote.
 Every refusal — a definition that no longer matches its plan, an engine that is not the
 pin, a shell the engine cannot start a run from, and an engine that cannot say where it
@@ -279,6 +283,13 @@ keeps its run history — happens before anything starts. `start` exits `1` on a
 `0` once the engine has been handed the run **and** where the engine has neither taken it on
 nor exited within its bound, because in that case the run may still begin — whether a run
 worked is the record's answer and not this command's ([run-model.md](run-model.md)).
+
+**`started` is printed only once the engine has registered the run**, and the line before the
+launch says `launching`. The identity, the branch and both addresses are known before the
+engine is invoked and are printed then, so a caller killed mid-launch has still been told the
+name of the run — but an affirmative start claim is a line automation and an incident log keep
+forever, and the engine may still decline the run. Where it declines, the output carries no
+claim that the run started; where it has neither registered nor exited, the line is `waiting`.
 
 `cairn explain repository|workflow|word|exclusion` answers which repository a request is
 about, what a definition would do, what one of Cairn's frozen words means, and why a step
@@ -298,6 +309,15 @@ Cairn's checkout whatever repository the person is in.
 verdict rather than their own health, on the codes [run-model.md](run-model.md) freezes, so a
 run with exclusions exits 3 whatever either of them printed. `cairn report --format` chooses
 between the terminal, markdown and HTML renderings, which are [report.md](report.md)'s.
+
+`record list` and `record latest` are the two verbs that take a plan rather than a run id,
+because "how did the last run of plan A go" is asked with the plan's name and nothing else.
+`list` builds nothing: it reads the records already on disk and names each run's plan, id,
+start moment, trigger and verdict, newest first. `latest` resolves one run — the newest
+readable run of that plan, ties broken by run id — and exits on **that run's** verdict, so
+the question can be asked by a script; it exits on the code no verdict owns where the plan
+has no readable run. A run whose record cannot be read appears in the listing with the fault
+and the rebuild command, and is never what `latest` returns ([triggers.md](triggers.md)).
 
 What doc 05 does not build, and who owns it, is the ownership table in
 [step-kinds.md](step-kinds.md).

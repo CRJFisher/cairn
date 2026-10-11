@@ -262,9 +262,13 @@ def _cmd_start(args: argparse.Namespace) -> int:
     # invocation it was about to make ([19 B]).
     where = address(launch, run_id, runs_root(repository))
 
-    # **Printed before the launch.** These lines are known before the engine is invoked, and
-    # a caller killed while the engine is starting has still been told the name of the run.
-    print(f"started  {where.run_id}")
+    # **Printed before the launch, and never as a start.** The identity, the branch and the
+    # addresses are all known before the engine is invoked, so a caller killed while the
+    # engine is starting has still been told the name of the run. What is *not* known yet is
+    # whether the engine will take the run on at all — so the word here is `launching`, and
+    # `started` is printed below, once registration is confirmed. An affirmative start claim
+    # followed by a refusal is a line automation and an incident log keep forever ([29 E]).
+    print(f"launching {where.run_id}")
     print(f"branch   verified work lands on {launch.parent_branch}")
     print(f"watch    {where.view}")
     print(f"read     python3 -m cairn report --run {where.run_id} --repository {repository}")
@@ -292,6 +296,9 @@ def _cmd_start(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return EXIT_REFUSED
+    # The one line that claims the run started, printed only where the engine's own records
+    # hold it: registration is the fact `started` names ([29 E]).
+    print(f"started  {where.run_id} — the engine has taken the run on")
     if args.wait:
         print(
             f"engine   exited {started.exit_code}; the verdict is the record's, not this "

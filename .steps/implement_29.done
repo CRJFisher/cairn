@@ -1,0 +1,7 @@
+{
+  "key": "once",
+  "run_id": "20261010T143556Z-93a9629c",
+  "scope": "once",
+  "step_id": "implement_29",
+  "summary": "Every acceptance criterion in `planning/29-operator-and-report-ergonomics.md` now holds, and the plan document carries a Close-out recording all five sections as done. Gates: 1710 tests pass (`python\u2026"
+}

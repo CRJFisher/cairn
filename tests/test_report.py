@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, ClassVar, cast
 from unittest.mock import patch
@@ -54,6 +55,7 @@ from cairn.report.spine import (
     SECTIONS,
     SINKS,
 )
+from cairn.report.width import display_width, pad
 from cairn.view import VIEW_ABSENT, VIEW_FOREIGN, VIEW_SERVING
 from tests.test_run_record import (
     PACKAGE_ROOT,
@@ -62,7 +64,9 @@ from tests.test_run_record import (
     halted_chain,
     killed_chain,
     load,
+    plan_graph_named,
     record_of,
+    record_of_named_steps,
 )
 
 DOCUMENT = PACKAGE_ROOT / "docs" / "report.md"
@@ -952,8 +956,50 @@ class ABrokenRunReadsAsWhatHappened(unittest.TestCase):
         for sink in SINKS:
             with self.subTest(sink=sink):
                 text = rendered(record, sink).text
-                self.assertIn("what its assertion said", text)
+                self.assertIn("what its assertion printed on standard output", text)
                 self.assertIn("thing.test.ts", text)
+
+    def test_harmless_output_never_hides_the_failure_on_standard_error(self) -> None:
+        """Plan 29 D. A type checker chatters on stdout and names the fault on stderr, and a
+        report that quoted the first channel with anything in it would quote the chatter."""
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary) / "verify_b.out"
+            out.write_text("checking 412 files...\n", encoding="utf-8")
+            error = Path(temporary) / "verify_b.err"
+            error.write_text("src/thing.ts(4,9): error TS2345: no.\n", encoding="utf-8")
+            state, reports = halted_chain(
+                ("a", "b", "c"),
+                fails_at="b",
+                assertion_log=str(out),
+                assertion_error_log=str(error),
+            )
+            record = extract(state, reports, run_id="run-halt")
+        step = next(entry for entry in record["steps"] if entry["step_id"] == "b")
+        self.assertIn("checking 412 files", str(step["assertion_stdout"]))
+        self.assertIn("TS2345", str(step["assertion_stderr"]))
+        for sink in SINKS:
+            with self.subTest(sink=sink):
+                text = rendered(record, sink).text
+                self.assertIn("what its assertion printed on standard error", text)
+                self.assertIn("TS2345", text)
+                self.assertIn("checking 412 files", text)
+
+    def test_a_channel_that_printed_nothing_is_no_block_at_all(self) -> None:
+        """An empty log is an absence, and an empty labelled block would read as evidence."""
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary) / "verify_b.out"
+            out.write_text("FAIL\n", encoding="utf-8")
+            state, reports = halted_chain(("a", "b"), fails_at="b", assertion_log=str(out))
+            record = extract(state, reports, run_id="run-halt")
+        step = next(entry for entry in record["steps"] if entry["step_id"] == "b")
+        self.assertIsNone(step["assertion_stderr"])
+        self.assertEqual(step["provenance"]["assertion_stderr"], ABSENT)
+        for sink in SINKS:
+            with self.subTest(sink=sink):
+                self.assertNotIn(
+                    "what its assertion printed on standard error",
+                    rendered(record, sink).text,
+                )
 
 
 class TheNextActionIsRendered(unittest.TestCase):
@@ -1033,7 +1079,7 @@ class UntrustedTextIsEscapedAtEachSink(unittest.TestCase):
         rows = [line for line in text.splitlines() if line.startswith("|")]
         for row in rows:
             with self.subTest(row=row[:40]):
-                self.assertIn(row.count("|") - row.count("\\|"), (3, 4, 6))
+                self.assertIn(row.count("|") - row.count("\\|"), (3, 4, 6, 7))
         self.assertNotIn("<script>", text)
         self.assertIsNone(re.search(r"(?<!\\)\]\(", text))
 
@@ -1075,6 +1121,185 @@ class UntrustedTextIsEscapedAtEachSink(unittest.TestCase):
         broken = f'<svg xmlns="http://www.w3.org/2000/svg"><text>{self.PAYLOAD}</text></svg>'
         with self.assertRaises(ElementTree.ParseError):
             ElementTree.fromstring(broken)
+
+
+class AVerbatimBlockIsTheTextItself(unittest.TestCase):
+    """Plan 29 D: a block labelled verbatim that was reshaped on the way out is not the
+    payload any more, and the two things a reader does with one are paste it and compare it.
+
+    The payload carries everything the three sinks could be tempted to do something about: a
+    line break that ends a markdown table, a tab that a prose escape would squeeze, a run of
+    backticks that could close a fence early, an ampersand an HTML escape would entitise,
+    and a leading `#` that forges a heading.
+    """
+
+    PAYLOAD = (
+        "cd /srv/work && claude --resume s-1\n"
+        "\twith a tab, `one`, ``two``, ``` three ```\n"
+        "# not a heading & not an entity <not a tag>"
+    )
+
+    def _record(self) -> RunRecord:
+        record = record_of("green")
+        record["next_action"]["command"] = self.PAYLOAD
+        return record
+
+    def test_the_terminal_hands_over_the_payloads_own_lines_unindented(self) -> None:
+        text = rendered(self._record(), "terminal").text
+        for line in self.PAYLOAD.split("\n"):
+            with self.subTest(line=line[:30]):
+                self.assertIn(f"\n{line}\n", text)
+
+    def test_markdown_fences_it_long_enough_to_survive_its_own_backticks(self) -> None:
+        text = rendered(self._record(), "markdown").text
+        fenced = re.search(r"^(`{3,})\n(.*?)\n\1$", text, re.DOTALL | re.MULTILINE)
+        assert fenced is not None, "the payload is not in a fenced block"
+        self.assertEqual(fenced.group(2), self.PAYLOAD)
+        self.assertNotIn(fenced.group(1), self.PAYLOAD)
+
+    def test_the_html_carries_it_as_character_data_and_gives_it_back_whole(self) -> None:
+        page = rendered(self._record(), "html").text
+        blocks = re.findall(r"<pre><code>(.*?)</code></pre>", page, re.DOTALL)
+        self.assertTrue(blocks, "the payload is not in a code block")
+        recovered = [
+            "".join(ElementTree.fromstring(f"<code>{block}</code>").itertext())
+            for block in blocks
+        ]
+        self.assertIn(self.PAYLOAD, recovered)
+
+    @staticmethod
+    def _from_terminal(text: str) -> str:
+        return text
+
+    @staticmethod
+    def _from_markdown(text: str) -> str:
+        return "\n".join(
+            match.group(2)
+            for match in re.finditer(
+                r"^(`{3,})\n(.*?)\n\1$", text, re.DOTALL | re.MULTILINE
+            )
+        )
+
+    @staticmethod
+    def _from_html(text: str) -> str:
+        return "\n".join(
+            "".join(ElementTree.fromstring(f"<code>{block}</code>").itertext())
+            for block in re.findall(r"<pre><code>(.*?)</code></pre>", text, re.DOTALL)
+        )
+
+    def test_every_sink_gives_the_payload_back_exactly(self) -> None:
+        """One assertion over all three, so no sink can be the exception to the rule."""
+        recovery: dict[str, Callable[[str], str]] = {
+            "terminal": self._from_terminal,
+            "markdown": self._from_markdown,
+            "html": self._from_html,
+        }
+        self.assertEqual(set(recovery), set(SINKS))
+        for sink, recover in recovery.items():
+            with self.subTest(sink=sink):
+                self.assertIn(self.PAYLOAD, recover(rendered(self._record(), sink).text))
+
+    def test_a_payload_with_a_table_breaking_line_leaves_the_tables_whole(self) -> None:
+        """The control on the markdown half: the fenced block is outside the table grammar,
+        so a payload line beginning with a pipe cannot be read as a row of one."""
+        record = record_of("green")
+        record["next_action"]["command"] = "a | b\n| c | d |"
+        text = rendered(record, "markdown").text
+        fenced = re.search(r"^(`{3,})\n(.*?)\n\1$", text, re.DOTALL | re.MULTILINE)
+        assert fenced is not None
+        self.assertEqual(fenced.group(2), "a | b\n| c | d |")
+
+
+class EveryReportNamesAStepTheWayThePlanDoes(unittest.TestCase):
+    """Plan 29 B's second acceptance, in the three renderings rather than in the record.
+
+    The id is what the nodes, the branch and the worktree are called and the plan's name is
+    what the person who wrote the plan will recognise; a report carrying only the first sends
+    them to the graph. Both are shown in all three, because a reader has whichever surface
+    they opened.
+    """
+
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.repository = self.root / "product"
+        self.repository.mkdir()
+        subprocess.run(("git", "init", "-q"), cwd=self.repository, check=True)
+        # Two names that sanitise to one id, which is the case the engine id cannot answer.
+        self.record = record_of_named_steps(
+            self.repository, plan_graph_named("1. Build the thing", "Build the thing")
+        )
+
+    def test_both_names_of_every_step_reach_every_rendering(self) -> None:
+        for sink in SINKS:
+            text = rendered(self.record, sink).text
+            with self.subTest(sink=sink):
+                for step in self.record["steps"]:
+                    self.assertIn(step["step_id"], text)
+                    self.assertIn(str(step["slug"]), loose(text))
+                    self.assertIn(str(step["title"]), loose(text))
+
+    def test_the_step_account_carries_the_plans_name_in_a_column_of_its_own(self) -> None:
+        for sink in SINKS:
+            with self.subTest(sink=sink):
+                self.assertIn("the plan calls it", rendered(self.record, sink).text)
+
+    def test_a_run_whose_plan_cannot_be_matched_says_so_rather_than_guessing(self) -> None:
+        """The column stands in every rendering of every run; what it says where the names
+        were not established is that they were not recorded."""
+        unmatched = record_of_named_steps(
+            self.repository, plan_graph_named("1. Build the thing"), digest="0" * 64
+        )
+        for sink in SINKS:
+            text = rendered(unmatched, sink).text
+            with self.subTest(sink=sink):
+                self.assertIn("the plan calls it", text)
+                self.assertIn(phrases.NOT_RECORDED, text)
+
+
+class TheDrawnGraphCanBeReadWithoutSeeingIt(unittest.TestCase):
+    """Plan 29 D: a figure of boxes and lines answers nothing to a reader who cannot see it."""
+
+    def test_the_drawing_carries_an_accessible_name(self) -> None:
+        page = rendered(record_of("green"), "html").text
+        drawing = re.search(r"<svg.*?</svg>", page, re.DOTALL)
+        assert drawing is not None
+        self.assertIn(f'aria-label="{html.GRAPH_NAME}"', drawing.group(0))
+        tree = ElementTree.fromstring(drawing.group(0))
+        titles = tree.findall("{http://www.w3.org/2000/svg}title")
+        self.assertEqual([node.text for node in titles], [html.GRAPH_NAME])
+
+    def test_every_node_its_status_and_every_edge_are_in_the_page_as_text(self) -> None:
+        record = record_of("green-with-exclusions")
+        page = rendered(record, "html").text
+        section = re.search(r"<details>.*?</details>", page, re.DOTALL)
+        assert section is not None, "the graph has no textual equivalent"
+        text = "".join(ElementTree.fromstring(section.group(0)).itertext())
+        for node in record["nodes"]:
+            with self.subTest(node=node["name"]):
+                self.assertIn(node["name"], text)
+                self.assertIn(node["status_name"], text)
+        for edge in record["edges"]:
+            with self.subTest(edge=(edge["upstream"], edge["downstream"])):
+                self.assertIn(edge["upstream"], text)
+                self.assertIn(edge["downstream"], text)
+
+    def test_the_equivalent_states_no_fact_the_drawing_does_not(self) -> None:
+        """It is read off the figure the composition placed, so the three renderings still
+        agree about every fact: a page that stated one twice would log it twice."""
+        record = record_of("green")
+        logged = {
+            sink: [item.keys for item in rendered(record, sink).stated] for sink in SINKS
+        }
+        self.assertEqual(logged["html"], logged["terminal"])
+
+    def test_a_run_with_no_graph_has_nothing_to_say_about_one(self) -> None:
+        record = record_of("green")
+        record["nodes"] = []
+        record["edges"] = []
+        page = rendered(record, "html").text
+        self.assertNotIn("<svg", page)
+        self.assertNotIn("<details>", page)
 
 
 class TheHtmlIsSelfContainedAndOffline(unittest.TestCase):
@@ -1153,23 +1378,91 @@ class TheTerminalRenderingIsTheDefault(unittest.TestCase):
             with self.subTest(shape=shape):
                 self.assertNotIn("\x1b[", rendered(record_of(shape), "terminal").text)
 
-    def test_no_line_runs_past_the_column_bound_but_a_receipt(self) -> None:
+    @staticmethod
+    def _copied(record: RunRecord) -> set[str]:
+        """Every payload a `verbatim` block carries, which no line of it may be folded at."""
+        return (
+            {str(step["resume_command"]) for step in record["steps"]}
+            | {str(step["asked"]) for step in record["steps"]}
+            | {str(step["assertion_stdout"]) for step in record["steps"]}
+            | {str(step["assertion_stderr"]) for step in record["steps"]}
+            | {str(record["next_action"]["command"])}
+        )
+
+    def _overruns(self, text: str, record: RunRecord, width: int) -> list[str]:
+        """Every line wider than `width` cells that is not a payload or one long word.
+
+        A word wider than the whole line is left whole on purpose: breaking a path, an
+        identifier or a URL leaves a reader unable to paste or search for either half.
+        """
+        payloads = self._copied(record)
+        found: list[str] = []
+        for line in text.splitlines():
+            if any(part and part in line for part in payloads):
+                continue
+            if display_width(line) <= width:
+                continue
+            if len(line.split()) == 1:
+                # One word with nothing to fold at: a path, a URL or an identifier, left
+                # whole on purpose — a reader can neither paste nor search for half of one.
+                continue
+            found.append(line)
+        return found
+
+    def test_no_line_runs_past_the_width_it_was_given_but_a_receipt(self) -> None:
         """A verbatim line is never wrapped: it is the text a person copies."""
         for shape in SHAPES:
             record = record_of(shape)
-            verbatim = (
-                {str(step["resume_command"]) for step in record["steps"]}
-                | {str(step["asked"]) for step in record["steps"]}
-                | {str(step["assertion_tail"]) for step in record["steps"]}
-                | {str(record["next_action"]["command"])}
-            )
-            for line in rendered(record, "terminal").text.splitlines():
-                if any(part and part in line for part in verbatim):
-                    continue
-                if line.strip().startswith(("transcript", "standard error", "repository")):
-                    continue
-                with self.subTest(shape=shape, line=line[:40]):
-                    self.assertLessEqual(len(line), 140)
+            for width in (60, 88, 120):
+                text = terminal.render(
+                    document(record, VIEW_SERVING), as_mapping(record), width=width
+                ).text
+                with self.subTest(shape=shape, width=width):
+                    self.assertEqual(self._overruns(text, record, width), [])
+
+    def test_the_width_is_the_terminal_the_report_is_being_read_in(self) -> None:
+        """Doc 29 D: the active terminal, not a constant — a narrow window folded by an
+        88-column rule is wrapped by the emulator, which destroys the alignment this
+        rendering carries its weighting in."""
+        record = record_of("agent")
+        with patch(
+            "cairn.report.width.shutil.get_terminal_size",
+            return_value=os.terminal_size((52, 24)),
+        ):
+            narrow = terminal.render(document(record, VIEW_SERVING), as_mapping(record)).text
+        self.assertEqual(self._overruns(narrow, record, 52), [])
+        wide = terminal.render(
+            document(record, VIEW_SERVING), as_mapping(record), width=120
+        ).text
+        # The same document, folded more: the narrow reading is the terminal's and not a
+        # constant, which is the whole of what this asserts.
+        self.assertGreater(len(narrow.splitlines()), len(wide.splitlines()))
+
+    def test_a_line_of_wide_characters_is_folded_by_cells_and_not_by_codepoints(self) -> None:
+        """CJK, a combining mark and an emoji in one summary: thirty codepoints of CJK are
+        sixty cells, and a fold by `len` runs them off a seventy-column screen."""
+        payload = ("工作已完成" * 12) + " e\u0301 " + ("\U0001f600" * 8)
+        record = poke("green")
+        record["steps"][0]["said"] = payload
+        record["attention"] = [
+            {
+                "kind": "follow_up",
+                "subject": "alpha",
+                "summary": payload,
+                "cause": None,
+            }
+        ]
+        text = terminal.render(
+            document(record, VIEW_SERVING), as_mapping(record), width=70
+        ).text
+        self.assertEqual(self._overruns(text, record, 70), [])
+
+    def test_a_label_column_is_padded_in_cells_so_the_values_line_up(self) -> None:
+        self.assertEqual(display_width(pad("日本", 6)), 6)
+        self.assertEqual(display_width(pad("ab", 6)), 6)
+        self.assertEqual(display_width("\U0001f600"), 2)
+        self.assertEqual(display_width("e\u0301"), 1)
+        self.assertEqual(display_width("\u200d"), 0)
 
 
 class TheMarkdownRecordIsDurable(unittest.TestCase):

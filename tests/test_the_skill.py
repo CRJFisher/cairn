@@ -1729,7 +1729,7 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
         code, said = self._start()
         self.assertEqual(code, 0, said)
         self.assertEqual(len(self.launched), 1)
-        self.assertRegex(said, r"started\s+\d{8}T\d{6}Z-[0-9a-f]{8}")
+        self.assertRegex(said, r"launching \d{8}T\d{6}Z-[0-9a-f]{8}")
         self.assertRegex(said, r"watch\s+http://")
         # The admitted snapshot is the whole of what the start writes. A request to run is
         # answered by the run itself, so nothing is set aside here for an answer to return
@@ -1766,7 +1766,7 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
         first, _, rest = said.partition("\n")
         self.assertIn(str(self.repository), first)
         self.assertIn("subjects", first)
-        self.assertIn("started", rest)
+        self.assertIn("launching", rest)
 
     def test_explain_repository_answers_from_the_subjects_before_any_authoring(self) -> None:
         """Authoring's step zero: the answer, and which candidate gave it, without writing
@@ -1898,6 +1898,24 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
         # the run id and somewhere to look ([19 B]).
         self.assertIn("watch", said)
         self.assertIn("engine.log", said)
+        # Plan 29 E's acceptance: a refusal never follows a line claiming the run started.
+        # Automation and an incident log keep that claim forever.
+        self.assertNotIn("started", said)
+        self.assertIn("launching", said)
+
+    def test_an_engine_that_has_not_registered_the_run_claims_no_start_either(self) -> None:
+        """The third answer: the engine may yet take it on, so the line is `waiting` and
+        nothing has started as far as this command knows."""
+        with (
+            patch("cairn.skill.trigger.assert_pinned"),
+            patch("cairn.skill.trigger.rehearse_start"),
+            patch("cairn.skill.trigger.launch_detached", side_effect=self._record),
+            patch("cairn.skill.trigger.engine_holds", return_value=False),
+        ):
+            code, said = self._said(self._argv())
+        self.assertEqual(code, 0)
+        self.assertIn("waiting", said)
+        self.assertNotIn("started", said)
 
     def test_the_identity_is_printed_before_the_engine_is_invoked(self) -> None:
         """The whole of B. A start that blocks for the run is killed by any caller with its
@@ -1919,9 +1937,13 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
             code, _ = self._said(self._argv())
         self.assertEqual(code, 0)
         self.assertEqual(len(seen), 1)
-        for line in ("started", "branch", "watch", "read"):
+        for line in ("launching", "branch", "watch", "read"):
             with self.subTest(line=line):
                 self.assertIn(line, seen[0])
+        # Plan 29 E: the identity is in hand before the launch and the start claim is not.
+        # The engine can still decline the run, and an affirmative start claim ahead of its
+        # refusal is a line automation and an incident log keep.
+        self.assertNotIn("started", seen[0])
 
     def test_one_run_id_is_printed_launched_and_named_by_the_admitted_copy(self) -> None:
         """The run the person was told about, the run the engine was given and the directory
@@ -1930,10 +1952,15 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
         _, said = self._start()
         launched = list(self.launched[0])
         run_id = launched[launched.index("--run-id") + 1]
-        printed = re.search(r"^started\s+(\S+)$", said, re.MULTILINE)
+        printed = re.search(r"^launching\s+(\S+)$", said, re.MULTILINE)
         self.assertIsNotNone(printed)
         self.assertEqual(run_id, cast(re.Match[str], printed).group(1))
         self.assertEqual(Path(launched[-1]).parent.name, run_id)
+        # And the one line that claims the run started names the same id, printed only
+        # after the engine took it on.
+        self.assertRegex(
+            said, rf"(?m)^started\s+{re.escape(run_id)} — the engine has taken"
+        )
 
     def test_a_start_returns_once_the_engine_has_the_run_without_waiting_for_it(
         self,

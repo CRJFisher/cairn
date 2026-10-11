@@ -7,9 +7,10 @@ renders this as HTML, which means a tag inside an agent's own account of itself 
 markup — so prose is escaped for HTML here too, and no value the record supplies is ever
 spelled as a link.
 
-The one thing deliberately left unescaped is a verbatim span, whose fence is instead made
+The one thing deliberately left unescaped is a verbatim block, whose fence is instead made
 longer than any backtick run inside it. A resume command that reached a reader with an
-`&amp;&amp;` in it is a receipt that fails at the moment it is used.
+`&amp;&amp;` in it is a receipt that fails at the moment it is used, and a multiline payload
+folded onto one line is no longer the payload.
 """
 
 from __future__ import annotations

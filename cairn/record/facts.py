@@ -146,6 +146,8 @@ def canonical_facts(record: RunRecord) -> list[tuple[str, str]]:
         remedy = step["remedy"]
         facts.extend(
             [
+                (f"{key}.title", _value(step["title"])),
+                (f"{key}.slug", _value(step["slug"])),
                 (f"{key}.outcome", _value(step["outcome"])),
                 (f"{key}.overlays", _list(step["overlays"])),
                 (f"{key}.cause", _value(step["cause"])),
@@ -176,7 +178,8 @@ def canonical_facts(record: RunRecord) -> list[tuple[str, str]]:
                 (f"{key}.assertion_backed_by", _value(step["assertion_backed_by"])),
                 (f"{key}.timeout_seconds", _value(step["timeout_seconds"])),
                 (f"{key}.elapsed_seconds", _value(step["elapsed_seconds"])),
-                (f"{key}.assertion_tail", _value(step["assertion_tail"])),
+                (f"{key}.assertion_stdout", _value(step["assertion_stdout"])),
+                (f"{key}.assertion_stderr", _value(step["assertion_stderr"])),
                 (
                     f"{key}.remedy",
                     ABSENT if remedy is None else _value(remedy["status"]),

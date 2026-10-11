@@ -103,6 +103,52 @@ def _process_exists(pid: int) -> bool | None:
     return True
 
 
+# What one probe of one recorded process found. Four words rather than the three answers
+# below, because `gone` and `recycled` are the same answer to "is the run alive" and
+# different answers to "what is this record". A recorded identifier that now names somebody
+# else's process is a stale record; one that names nothing is a process that ended. A reader
+# reporting on a daemon has to say which ([29 C]).
+PROCESS_LIVE = "live"
+PROCESS_GONE = "gone"
+PROCESS_RECYCLED = "recycled"
+PROCESS_UNREADABLE = "unreadable"
+PROCESS_READINGS: tuple[str, ...] = (
+    PROCESS_LIVE,
+    PROCESS_GONE,
+    PROCESS_RECYCLED,
+    PROCESS_UNREADABLE,
+)
+
+
+def process_reading(
+    pid: int,
+    started_at: float | None,
+    *,
+    tolerance_seconds: float = START_TIME_TOLERANCE_SECONDS,
+) -> str:
+    """What this recorded process is now, in the four words above.
+
+    A record with no start time is trusted no further than the identifier itself: the
+    process reads as live when one exists, because calling it dead would let a reclaim run
+    against work that is still going.
+    """
+    exists = _process_exists(pid)
+    if exists is None:
+        return PROCESS_UNREADABLE
+    if exists is False:
+        return PROCESS_GONE
+    if started_at is None:
+        return PROCESS_LIVE
+    actual = process_start_time(pid)
+    if actual is None:
+        return PROCESS_UNREADABLE
+    return (
+        PROCESS_LIVE
+        if abs(actual - started_at) <= tolerance_seconds
+        else PROCESS_RECYCLED
+    )
+
+
 def process_is_alive(
     pid: int,
     started_at: float | None,
@@ -120,19 +166,13 @@ def process_is_alive(
     refuses to reclaim a lock whose holder may be gone — so it is handed on as itself, and
     each consumer says what it does with it.
 
-    A record with no start time is trusted no further than the identifier itself: the
-    process is called alive when one exists, because calling it dead would let a reclaim
-    run against work that is still going.
+    The same probe as `process_reading`, with the two deaths collapsed, so there is one
+    measurement and not two descriptions of one.
     """
-    exists = _process_exists(pid)
-    if exists is not True:
-        return exists
-    if started_at is None:
-        return True
-    actual = process_start_time(pid)
-    if actual is None:
+    reading = process_reading(pid, started_at, tolerance_seconds=tolerance_seconds)
+    if reading == PROCESS_UNREADABLE:
         return None
-    return abs(actual - started_at) <= tolerance_seconds
+    return reading == PROCESS_LIVE
 
 
 def self_start_time() -> float | None:
@@ -141,9 +181,15 @@ def self_start_time() -> float | None:
 
 
 __all__ = [
+    "PROCESS_GONE",
+    "PROCESS_LIVE",
+    "PROCESS_READINGS",
+    "PROCESS_RECYCLED",
+    "PROCESS_UNREADABLE",
     "START_TIME_TOLERANCE_SECONDS",
     "parse_elapsed",
     "process_is_alive",
+    "process_reading",
     "process_start_time",
     "self_start_time",
 ]

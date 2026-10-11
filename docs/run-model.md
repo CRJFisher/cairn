@@ -93,14 +93,19 @@ seven outcomes by eight combinations, which is exactly how one state acquires fo
 spellings. They are always emitted in the order above.
 
 **A step the engine stopped at its bound is `failed`, never `not_reached`.** The gate reads
-an absent report as a step that never ran, and for a step the engine killed that is false:
-it ran until it was killed, and its assertion ran afterwards over whatever it left. The
-engine's node says so — `failed`, with the kill, the bound and the elapsed time spelled in its
-error — and the record reads that node over the gate's `not_reached`, carries the bound and
-the elapsed time, and weighs the assertion's result against the session nobody heard from as
-a divergence. A killed step whose work is in the tree reads as exactly that, and the engine
-node and the record never disagree about whether a step ran ([verify-gate.md](verify-gate.md)
-names the cause).
+an absent report as a step that never ran, and for a step the engine killed that is false: it
+ran until it was killed. The engine's node says so — `failed`, with the kill, the bound and
+the elapsed time spelled in its error — and the record reads that node over the gate's
+`not_reached` and carries the bound and the elapsed time. The engine node and the record
+never disagree about whether a step ran ([verify-gate.md](verify-gate.md) names the cause).
+
+**Such a step ordinarily carries no assertion verdict at all**, and that is the shape rather
+than a gap in it: the assertion's own gate turns on the same absent report the kill caused,
+so it declines and the assertion node is `skipped`. Where an assertion did run behind a
+killed step — its gate having faulted open — what it found is weighed against the session
+nobody heard from and recorded as a divergence. A session its own wrapper stopped is the
+other case: it leaves a report, so its assertion runs, and that is where a divergence over a
+stopped step ordinarily comes from.
 
 Why a step contributed no verified work is a **separate** frozen vocabulary, and
 [verify-gate.md](verify-gate.md) owns it. The record carries whichever of those causes the
@@ -324,12 +329,23 @@ measured default. A base with no scheme is refused rather than used — it would
 relative link, which looks like an answer and goes nowhere — and a wildcard bind address
 becomes one a browser can actually reach.
 
-Each step carries `step_id`, `outcome`, `overlays`, `cause`, `position`, `asked`, `said`,
-`verified`, `divergence`, `freshness`, `completed_by_run`, `branch`, `commit`, `diffstat`,
-`left_uncommitted`, `turns`, `session_id`, `model`, `transcript`, `stderr_log`,
-`resume_command`, `follow_up_work`, `started_at`, `finished_at`, `exit_code`,
+Each step carries `step_id`, `title`, `slug`, `outcome`, `overlays`, `cause`, `position`,
+`asked`, `said`, `verified`, `divergence`, `freshness`, `completed_by_run`, `branch`,
+`commit`, `diffstat`, `left_uncommitted`, `turns`, `session_id`, `model`, `transcript`,
+`stderr_log`, `resume_command`, `follow_up_work`, `started_at`, `finished_at`, `exit_code`,
 `assertion_exit`, `assertion_source`, `assertion_backed_by`, `timeout_seconds`,
-`elapsed_seconds`, `assertion_tail`, `remedy`, `headroom`, `nodes` and `provenance`.
+`elapsed_seconds`, `assertion_stdout`, `assertion_stderr`, `remedy`, `headroom`, `nodes`
+and `provenance`.
+
+`title` and `slug` are what the plan document calls the step: its title, and the name it was
+written under. `step_id` is that name sanitised into the engine's identifier grammar, with a
+numeric suffix where two names sanitised alike ([plan-contract.md](plan-contract.md)) — so a
+record carrying only the id sends a reader to the graph to find out which step `work_alpha_2`
+is. Both are `derived`: they are read from the plan's own graph at
+`<repository>/.git/cairn/graphs/<plan>.json`, and only where that graph still hashes to the
+`graph_sha256` this run recorded at its first act. A graph the next authoring has rewritten
+is a different plan under the same name, so it contributes nothing and both fields read as
+absent rather than naming another plan's steps.
 
 `headroom` is present on an agent step whose session reached admission, and on a step holding
 right now. It carries the `admission` decided — `admitted`, `warned`, `unknown`, `inert` or
@@ -364,10 +380,14 @@ commit can be read as scoped without diffing it against the step's transcript
 nothing and fails `excluded_path_changed`, naming the overlap
 ([supervision.md](supervision.md)).
 
-`assertion_tail` is the end of what a failed assertion printed, read from the log the engine
-kept for that node — standard output first, standard error where that is empty — so the
-report can quote why a gate closed rather than name a log path. It is absent where the
-assertion passed, never ran, or its log is gone.
+`assertion_stdout` and `assertion_stderr` are the end of what a failed assertion printed on
+each channel, read from the logs the engine kept for that node, so the report can quote why a
+gate closed rather than name a log path. One field per channel and both read independently: a
+type checker, a linter and a compiler all chatter harmlessly on standard output and name what
+failed on standard error, and a single field holding the first channel with anything in it
+would quote the chatter and lose the failure. Each is absent where the assertion passed,
+never ran, that channel printed nothing, or its log is gone. Both are bounded like every
+other untrusted value, and the last 8 KiB of the log is what is read.
 
 `remedy` is present only on a step that declared `remediate` and whose remedy node left an
 account. It carries the node's `status` and what it `said` — the remedy gate's reason for a
@@ -670,18 +690,18 @@ engine and the fixture the exit criteria name is a claim only the engine can mak
 shape but one is a command step; `agent` runs a real provider, which is why it is one step
 and not a plan.
 
-| Shape                   | What it pins                                                                                                                                                                                                                                |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `green`                 | every step verified; one compacted line                                                                                                                                                                                                     |
-| `red`                   | a step fails and everything behind it is `not_reached` at status 3                                                                                                                                                                          |
-| `blocked`               | a human decision is owed; the engine still reports a clean success                                                                                                                                                                          |
-| `green-with-exclusions` | **the engine reports `Succeeded` with exit 0 over an excluded step, with no failed node anywhere.** I5's regression fixture                                                                                                                 |
-| `all-no-op`             | the real marker gate skipped every step; each no-op names the run that did the work                                                                                                                                                         |
-| `mid-run`               | five snapshot lines, uncompacted; a step running and a sibling `pending`                                                                                                                                                                    |
-| `crashed`               | the orchestrator was killed; the engine's record still says `running` with no finish time                                                                                                                                                   |
-| `timed-out`             | the engine killed a step at its bound with no report written, its assertion passed over what it left, and the step behind it was skipped: the record reads the kill over the gate's `not_reached`, and the halt over the engine's `skipped` |
-| `agent`                 | one real agent step, so a step's receipts — turns, session identity, transcript, resume command — are carried populated rather than only absent                                                                                             |
-| `damaged`               | a run the engine and the gates recorded as entirely verified, whose evidence was then broken in five declared ways: nothing refused raises anything, every refusal is named, and the run is not a clean success                             |
+| Shape                   | What it pins                                                                                                                                                                                                                                                                                                                               |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `green`                 | every step verified; one compacted line                                                                                                                                                                                                                                                                                                    |
+| `red`                   | a step fails and everything behind it is `not_reached` at status 3                                                                                                                                                                                                                                                                         |
+| `blocked`               | a human decision is owed; the engine still reports a clean success                                                                                                                                                                                                                                                                         |
+| `green-with-exclusions` | **the engine reports `Succeeded` with exit 0 over an excluded step, with no failed node anywhere.** I5's regression fixture                                                                                                                                                                                                                |
+| `all-no-op`             | the real marker gate skipped every step; each no-op names the run that did the work                                                                                                                                                                                                                                                        |
+| `mid-run`               | five snapshot lines, uncompacted; a step running and a sibling `pending`                                                                                                                                                                                                                                                                   |
+| `crashed`               | the orchestrator was killed; the engine's record still says `running` with no finish time                                                                                                                                                                                                                                                  |
+| `timed-out`             | the engine killed a step at its bound with no report written, so nothing asserted over what it left — its assertion's own gate declined and the step behind it was skipped: the record reads the kill over the gate's `not_reached`, and the halt over the engine's `skipped`, and the step carries no assertion verdict and no divergence |
+| `agent`                 | one real agent step, so a step's receipts — turns, session identity, transcript, resume command — are carried populated rather than only absent                                                                                                                                                                                            |
+| `damaged`               | a run the engine and the gates recorded as entirely verified, whose evidence was then broken in five declared ways: nothing refused raises anything, every refusal is named, and the run is not a clean success                                                                                                                            |
 
 `green`, `all-no-op` and `blocked` all carry engine run status `4`. That they extract to
 `green`, `all_no_op` and `blocked` is what proves the verdict is not read off the engine.

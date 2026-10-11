@@ -17,16 +17,21 @@ different username finds on its first run:
 from __future__ import annotations
 
 import ast
+import io
 import re
 import subprocess
 import sys
 import tomllib
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 from cairn import unsupported
+from cairn.__main__ import first_screen
+from cairn.__main__ import main as cairn_main
 from cairn.layout import RUNS_DIRECTORY, VIEW_BASE_ENV
 from cairn.record.vocabulary import VERDICT_GREEN_WITH_EXCLUSIONS
+from cairn.skill.vocabulary import CAPABILITY_ORDER, TASK_BY_CAPABILITY
 from cairn.topology import WORKTREES_SUFFIX
 from cairn.verify import EXCLUSION_CAUSES
 from cairn.workflow.pin import PINNED_DIRECTORY
@@ -361,6 +366,84 @@ class TheReadmeStatesWhatItMayNotSoften(unittest.TestCase):
     def test_it_names_the_skill_registration_and_a_check_that_starts_nothing(self) -> None:
         self.assertIn("~/.claude/skills/cairn", self.readme)
         self.assertIn("python3 -m cairn supervise base-config", self.readme)
+
+    def test_a_cold_machine_is_told_what_it_needs_before_anything_else(self) -> None:
+        """Plan 29 A, item 1: the floor, in the document a cold reader has. A person on an
+        unsupported platform finding out from a traceback is the failure this closes."""
+        for named in ("Python 3.11", "git", "Claude Code CLI", "macOS and Linux", "WSL"):
+            with self.subTest(named=named):
+                self.assertIn(named, self.readme)
+
+    def test_the_checks_verify_the_engine_the_provider_and_discovery(self) -> None:
+        """Plan 29 A, item 4: a check that spends nothing and mutates nothing, over all
+        three things a first run needs — the engine, the agent installation a session runs
+        as, and the skill being findable by the name a person types."""
+        for check in ("dagu version", "claude --version", "~/.claude/skills/cairn/SKILL.md"):
+            with self.subTest(check=check):
+                self.assertIn(check, self.readme)
+        self.assertIn("None of these launches a server, a scheduler or a run", self.readme)
+
+    def test_the_path_ends_in_authoring_and_explaining_a_plan(self) -> None:
+        """Plan 29 A, item 5: the walk ends with a plan authored and explained, which is the
+        shape of every offer — Cairn says what it would do and waits."""
+        self.assertIn("Author and explain a minimal plan, before anything is offered", self.readme)
+        for command in (
+            "python3 -m cairn plan report fixtures/plans/single-step/graph.json",
+            "python3 -m cairn workflow author fixtures/plans/single-step/graph.json",
+            "python3 -m cairn explain workflow --plan single-step",
+        ):
+            with self.subTest(command=command):
+                self.assertIn(command, self.readme)
+
+    def test_the_plan_the_readme_walks_is_in_this_directory(self) -> None:
+        """The one page a cold reader has may name no plan the checkout does not ship."""
+        self.assertTrue((PACKAGE_ROOT / "fixtures" / "plans" / "single-step" / "graph.json").is_file())
+
+
+class TheCommandLinesFirstScreenLeadsBackToTheSkill(unittest.TestCase):
+    """Plan 29 A: going looking for a command line is how somebody arrives at the wrong door.
+
+    The screen is held to leading with the way back rather than to its wording: the six
+    tasks, the name that opens the skill, what has to be installed, and one example that
+    spends nothing — all of it above the subcommands an emitted workflow invokes.
+    """
+
+    def setUp(self) -> None:
+        self.screen = first_screen()
+
+    def test_it_says_the_command_line_is_internal_and_names_what_is_not(self) -> None:
+        self.assertIn("is internal", " ".join(self.screen.split()))
+        self.assertIn("/cairn", self.screen)
+
+    def test_it_leads_with_all_six_tasks_a_person_asks_for(self) -> None:
+        for capability in CAPABILITY_ORDER:
+            with self.subTest(capability=capability):
+                self.assertIn(TASK_BY_CAPABILITY[capability], self.screen)
+
+    def test_it_names_the_prerequisites_and_one_example(self) -> None:
+        self.assertIn("Python 3.11", self.screen)
+        self.assertIn(ENGINE_VERSION, self.screen)
+        self.assertIn("python3 -m scripts.worked_example", self.screen)
+
+    def test_the_plumbing_comes_after_all_of_it(self) -> None:
+        plumbing = self.screen.index("runtime plumbing")
+        for leading in ("/cairn", TASK_BY_CAPABILITY[CAPABILITY_ORDER[0]], "worked_example"):
+            with self.subTest(leading=leading):
+                self.assertLess(self.screen.index(leading), plumbing)
+
+    def test_the_whole_help_screen_carries_it_before_the_subcommands(self) -> None:
+        spoken = io.StringIO()
+        with redirect_stdout(spoken), self.assertRaises(SystemExit):
+            cairn_main(["--help"])
+        said = spoken.getvalue()
+        self.assertLess(said.index("/cairn"), said.index("positional arguments"))
+
+
+class TheReadmeIsStillWhatTheReaderIsShown(unittest.TestCase):
+    """The rest of doc 16's README criteria, unchanged by plan 29's additions."""
+
+    def setUp(self) -> None:
+        self.readme = README.read_text(encoding="utf-8")
 
     def test_every_path_cairn_touches_is_listed_with_a_resolution_rule(self) -> None:
         """Task 1: the enumeration, in the one document a cold reader has. Each row names

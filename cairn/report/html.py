@@ -75,6 +75,8 @@ pre { background: color-mix(in srgb, var(--ink) 6%, transparent); border: 1px so
   font-size: .88rem; }
 figure { margin: 1rem 0; overflow-x: auto; }
 figcaption { color: var(--quiet); font-size: .9rem; margin-bottom: .5rem; }
+details { margin: .5rem 0; font-size: .9rem; }
+summary { color: var(--quiet); cursor: pointer; }
 svg { max-width: 100%; height: auto; }
 svg text { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
   fill: var(--ink); }
@@ -231,12 +233,56 @@ def _verbatim(block: Verbatim, scribe: Scribe) -> list[str]:
 
 
 def _diagram(block: Diagram, scribe: Scribe) -> list[str]:
+    """The drawing, and the same graph in a form that does not have to be seen.
+
+    A drawing of boxes and lines answers nothing to a screen reader, a text browser or a
+    reader who has turned images off: the nodes are character data inside a figure whose
+    shape carries the meaning. So the picture gets an accessible name of its own, and the
+    layers and dependencies are written out beside it in the words the other two sinks use
+    ([29 D]). Every label in both is a node's own name, which is why neither states a fact
+    the other does not.
+    """
     return [
         "<figure>",
         f"<figcaption>{_sentence(block.caption, scribe)}</figcaption>",
         *_svg(block.nodes, block.edges),
+        *_graph_as_text(block.nodes, block.edges),
         "</figure>",
     ]
+
+
+GRAPH_NAME = "The run's graph: every node the engine recorded, in dependency layers"
+GRAPH_TEXT_SUMMARY = "The same graph as text"
+
+
+def _graph_as_text(nodes: tuple[GraphNode, ...], edges: tuple[GraphEdge, ...]) -> list[str]:
+    """Each layer's nodes with their statuses, then every dependency, as plain elements."""
+    if not nodes:
+        return []
+    parts = [
+        "<details>",
+        f"<summary>{GRAPH_TEXT_SUMMARY}</summary>",
+        "<ol>",
+    ]
+    for layer in sorted({node.layer for node in nodes}):
+        named = ", ".join(
+            f"{for_html(one_line(node.name))} ({for_html(one_line(node.status))})"
+            for node in nodes
+            if node.layer == layer
+        )
+        parts.append(f"<li>{named}</li>")
+    parts.append("</ol>")
+    if edges:
+        parts.append("<ul>")
+        for edge in edges:
+            arrow = "runs back to" if edge.back else "is depended on by"
+            parts.append(
+                f"<li>{for_html(one_line(edge.upstream))} {arrow} "
+                f"{for_html(one_line(edge.downstream))}</li>"
+            )
+        parts.append("</ul>")
+    parts.append("</details>")
+    return parts
 
 
 def _position(node: GraphNode) -> tuple[int, int]:
@@ -256,8 +302,14 @@ def _svg(nodes: tuple[GraphNode, ...], edges: tuple[GraphEdge, ...]) -> list[str
     parts = [
         (
             f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
-            'xmlns="http://www.w3.org/2000/svg" role="img">'
-        )
+            'xmlns="http://www.w3.org/2000/svg" role="img" '
+            f'aria-label="{GRAPH_NAME}">'
+        ),
+        # Both, because the two are read by different things: the attribute is the accessible
+        # name an assistive technology reports, and the element is what an SVG opened on its
+        # own carries. It is Cairn's own words and no fact of the run's, so stating it here
+        # cannot make this rendering disagree with the other two.
+        f"<title>{GRAPH_NAME}</title>",
     ]
     for edge in edges:
         start = placed.get(edge.upstream)
@@ -286,4 +338,4 @@ def _svg(nodes: tuple[GraphNode, ...], edges: tuple[GraphEdge, ...]) -> list[str
     return parts
 
 
-__all__ = ["STYLE", "render"]
+__all__ = ["GRAPH_NAME", "GRAPH_TEXT_SUMMARY", "STYLE", "render"]

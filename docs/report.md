@@ -68,9 +68,12 @@ Three earn their own kind rather than being a shape of another:
 
 - **`facing`** carries two accounts of one step with neither presented as the truth. A
   two-column table would let a rendering promote one side to a header; this block cannot.
-- **`verbatim`** is text that must survive byte for byte — a command, or a step's whole ask.
-  Every sink agrees not to wrap it, fold it into prose or decorate it. A resume command a
-  reader cannot paste is the receipt failing at the one moment it is used.
+- **`verbatim`** is text that must survive byte for byte — a command, a step's whole ask, or
+  what a failed assertion printed. Every sink agrees not to wrap it, not to fold it into
+  prose, not to decorate it and not to indent it: a resume command a reader cannot paste is
+  the receipt failing at the one moment it is used, and two spaces on the front of every
+  line is the same failure wearing a tidier shape. Markdown carries it as a fenced block
+  rather than an inline span, because a span cannot carry a line break at all.
 - **`diagram`** is a figure rather than a statement. It enumerates what the record
   enumerates, every label in it is a node's own name, and it is checked structurally instead
   of against the projection.
@@ -144,16 +147,30 @@ reads as running as far as the record shows. It never calls the process gone: th
 and the `orchestrator_died` it comes with, belong to a probe that succeeded and found
 nothing. The engine's own record is the better witness, and the report says so.
 
+## Which step a row is about
+
+Every step is named twice, in every rendering: the engine's id, which is what its nodes, its
+branch and its worktree are called, and beside it the name the plan document gave it. The id
+is that name sanitised into the engine's grammar, with a numeric suffix where two names
+sanitised alike, so `work_alpha_2` on its own sends the reader to the graph to find out which
+step it is. The step account carries the title in a column of its own and the receipts carry
+the name the step was written under; where the plan's graph can no longer be matched to the
+run, both read as not recorded rather than naming another plan's step
+([run-model.md](run-model.md)).
+
 ## The receipts
 
-Per step: turns, model, session identity, transcript,
-standard error, branch, commit, diffstat, exit code, the assertion's exit with the execution
-that backed it and the step that proved it, the bound a stopped step was stopped at and how
-long it had run, timings, and a resume command.
+Per step: the name it was written under in the plan, turns, model, session identity,
+transcript, standard error, branch, commit, diffstat, exit code, the assertion's exit with
+the execution that backed it and the step that proved it, the bound a stopped step was
+stopped at and how long it had run, timings, and a resume command.
 
 Where the step a reader is sent to failed its assertion, the next-action section quotes the
-end of what that assertion printed, so the reason a gate closed is in the report rather than
-in a log file the reader has to go and open.
+end of what that assertion printed — **standard output and standard error as two labelled
+blocks**, because a command that chatters on one and names the failure on the other is the
+ordinary case for a type checker or a compiler, and one block holding whichever channel had
+something in it quotes the chatter. The reason a gate closed is then in the report rather
+than in a log file the reader has to go and open.
 
 The resume command is `verbatim`, and it carries its own `cd` into the directory the step ran
 in. On a green run the wave's prune has since removed that worktree, so the command names a
@@ -184,15 +201,15 @@ never the other way round. A pre-escaped string is never stored or reused across
 accept what another escaper returned: "a pre-escaped string is never reused" is checked when
 the code is checked rather than when someone remembers.
 
-| Sink     | Context | What it defends against                                                                                    |
-| -------- | ------- | ---------------------------------------------------------------------------------------------------------- |
-| terminal | all     | an escape sequence that repaints the screen above the report and hides the exclusion it exists to show     |
-| markdown | prose   | a tag that is live markup in a pull request; a `#` that forges a heading                                   |
-| markdown | cell    | a pipe that splits the row; a line break that ends the table                                               |
-| markdown | code    | nothing — the fence is made longer than any backtick run inside instead, so the text survives to be pasted |
-| html     | text    | a tag, an attribute break, an entity                                                                       |
-| html     | url     | a scheme a document may not follow; only `http` and `https` become links                                   |
-| svg      | text    | `</text>`, which would close the element and make everything after it markup                               |
+| Sink     | Context | What it defends against                                                                                          |
+| -------- | ------- | ---------------------------------------------------------------------------------------------------------------- |
+| terminal | all     | an escape sequence that repaints the screen above the report and hides the exclusion it exists to show           |
+| markdown | prose   | a tag that is live markup in a pull request; a `#` that forges a heading                                         |
+| markdown | cell    | a pipe that splits the row; a line break that ends the table                                                     |
+| markdown | block   | nothing — the fence is made longer than any backtick run inside instead, so multiline text survives to be pasted |
+| html     | text    | a tag, an attribute break, an entity                                                                             |
+| html     | url     | a scheme a document may not follow; only `http` and `https` become links                                         |
+| svg      | text    | `</text>`, which would close the element and make everything after it markup                                     |
 
 Link and image syntax is neutralised in markdown, and no value the record supplies is ever
 spelled as a link there. Emphasis is deliberately left alone: `*` and `_` forge nothing worse
@@ -215,6 +232,23 @@ rows through the middle of it.
 
 Past eighty nodes the drawing stops being a picture, and the report states the counts and
 defers to the engine's own view, which draws the same graph live and zoomable.
+
+**The drawing has an accessible name, and the same graph is in the page as text.** A figure
+of boxes and lines answers nothing to a screen reader, a text browser, or a reader who has
+turned images off — so the `<svg>` carries both a `title` element and an `aria-label` naming
+what it is, and beside it every layer's nodes with their statuses and every dependency as a
+pair are written out in the words the other two sinks use. Neither states a fact the other
+does not: every label in both is a node's own name, read from the figure the composition
+placed rather than from the projection.
+
+**Terminal lines are laid out in display cells against the active terminal's width.** A CJK
+ideograph and a fullwidth form occupy two cells, a combining mark and a joiner none, and an
+emoji is often several codepoints rendering as one two-cell glyph — so a column padded by
+codepoint count ragged-edges on the first step whose summary is not Latin, and a line folded
+by codepoint count runs off the screen, which in the one rendering with no colour is how the
+exclusion scrolls out of view. The width is the terminal's own where there is one and the
+88-column bound this rendering was designed against otherwise, so a piped or written document
+is stable whatever produced it ([../cairn/report/width.py]).
 
 **Self-contained** means one file that needs a browser and nothing else: no script, no
 stylesheet, no font, no image, no network. That is both the offline requirement and the

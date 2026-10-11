@@ -178,11 +178,13 @@ class Facing(NamedTuple):
 
 
 class Verbatim(NamedTuple):
-    """Text that must survive a sink byte for byte — a command, or a step's whole ask.
+    """Text that must survive a sink byte for byte — a command, a step's whole ask, or what
+    a failed assertion printed.
 
     Its own block kind because every sink has to agree not to wrap it, not to fold it into
-    prose and not to decorate it. A resume command a reader cannot paste is the receipt
-    failing at the one moment it is used.
+    prose, not to decorate it and not to indent it. A resume command a reader cannot paste
+    is the receipt failing at the one moment it is used, and two spaces on the front of
+    every line is the same failure wearing a tidier shape.
     """
 
     kind: Literal["verbatim"]

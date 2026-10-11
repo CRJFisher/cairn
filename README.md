@@ -23,7 +23,7 @@ curl -fsSL https://raw.githubusercontent.com/dagu-org/dagu/main/scripts/installe
   | bash -s -- --version v2.18.2 --service no
 ```
 
-The version is pinned and the pin is deliberate. The engine's *input* format is well
+The version is pinned and the pin is deliberate. The engine's _input_ format is well
 governed, but its run-state file — the thing every report is read out of — is an internal
 struct with integer enums, no schema and no conformance test. The pin is what stops a
 reporter reading nonsense. Cairn refuses to run against any other version and names both in
@@ -73,10 +73,13 @@ mkdir -p ~/.claude/skills && ln -s "$PWD" ~/.claude/skills/cairn
 
 A symlink rather than a copy, so the registered skill and the checkout are the same thing.
 
-**5. Check it, starting nothing.** None of these launches a server, a scheduler or a run:
+**5. Check it, starting nothing.** None of these launches a server, a scheduler or a run,
+and none of them spends anything:
 
 ```sh
 dagu version                              # 2.18.2
+claude --version                          # the agent installation a step's session runs as
+ls -l ~/.claude/skills/cairn/SKILL.md     # discovery: the registered skill is this checkout
 python3 -m cairn supervise base-config    # the engine's config carries Cairn's values
 python3 -m scripts.worked_example         # the example below; exits 3
 ```
@@ -84,23 +87,46 @@ python3 -m scripts.worked_example         # the example below; exits 3
 Run them from the checkout. Nothing above needs the engine's server, and none of these
 starts one.
 
+**6. Author and explain a minimal plan, before anything is offered.** A plan this repository
+ships, authored into a scratch repository and then explained. No session opens, no money is
+spent, and the only thing written is the scratch repository's own admin directory:
+
+```sh
+mkdir -p /tmp/cairn-first && git -C /tmp/cairn-first init -q
+python3 -m cairn plan report fixtures/plans/single-step/graph.json \
+  --source-root fixtures/plans/single-step
+python3 -m cairn workflow author fixtures/plans/single-step/graph.json \
+  --repository /tmp/cairn-first --source-root fixtures/plans/single-step
+python3 -m cairn explain workflow --plan single-step --repository /tmp/cairn-first
+```
+
+The parse report is what a person is shown and waits on in the real authoring conversation:
+every step's task in full, the engine id beside the name the plan gave it, every dependency
+with the words behind it, and everything left out with its cause. `workflow author` then
+writes the definition and puts it through the engine's own `validate` and `dry` — which is
+why `dagu` has to be installed for this step — and `explain workflow` says what running it
+would do, step by step, having started nothing.
+
+**That last line is the shape of every offer.** Cairn tells you what it would do and waits;
+the first thing that costs anything is a run you ask for by name.
+
 ### Every path, and where it comes from
 
 Nothing is configured and nothing is assumed from the shape of one person's machine. Each of
 these is resolved at invocation, derived from something that was, or asked of the engine:
 
-| Path                          | Resolved from                                                                     |
-| ----------------------------- | --------------------------------------------------------------------------------- |
-| the target repository         | the request — never the directory the conversation is in                          |
-| the plan document             | the request, and pinned by content when the workflow is authored                  |
-| the worktrees root            | derived: `<repository>.cairn-worktrees/<plan>/<step>`                              |
-| Cairn's own state             | the repository's git admin directory: `<repository>/.git/cairn/`                   |
-| a run's records               | `<repository>/.git/cairn/runs/<run-id>`, carried to every step as `CAIRN_RUNS_DIR` |
+| Path                           | Resolved from                                                                      |
+| ------------------------------ | ---------------------------------------------------------------------------------- |
+| the target repository          | the request — never the directory the conversation is in                           |
+| the plan document              | the request, and pinned by content when the workflow is authored                   |
+| the worktrees root             | derived: `<repository>.cairn-worktrees/<plan>/<step>`                              |
+| Cairn's own state              | the repository's git admin directory: `<repository>/.git/cairn/`                   |
+| a run's records                | `<repository>/.git/cairn/runs/<run-id>`, carried to every step as `CAIRN_RUNS_DIR` |
 | the Cairn a workflow runs      | `<repository>/.git/cairn/source/<digest-of-its-content>`, named by the file itself |
-| the engine binary             | the name `dagu` on the invoking process's `PATH`                                  |
-| the engine's data and DAG dirs | asked of `dagu config`, because they differ by platform                           |
-| the engine's base config      | `$DAGU_HOME`, else the platform's user config directory — never the engine itself  |
-| the view's address            | `CAIRN_VIEW_BASE`, then `DAGU_HOST`/`DAGU_PORT`, then `127.0.0.1:8080`             |
+| the engine binary              | the name `dagu` on the invoking process's `PATH`                                   |
+| the engine's data and DAG dirs | asked of `dagu config`, because they differ by platform                            |
+| the engine's base config       | `$DAGU_HOME`, else the platform's user config directory — never the engine itself  |
+| the view's address             | `CAIRN_VIEW_BASE`, then `DAGU_HOST`/`DAGU_PORT`, then `127.0.0.1:8080`             |
 
 A generated workflow is the one deliberate exception, and it is a **per-machine build
 product** by design: it names the package root, the repository and the runs root of the
@@ -344,7 +370,7 @@ drive the engine. Framing is blocked. Webhook tokens are enforced. Secrets on di
 `0600`.
 
 **The trust boundary is the user account, not the server.** Every hazard above concerns the
-*API*. A local process does not need the API: it can run `dagu start` against any DAG file
+_API_. A local process does not need the API: it can run `dagu start` against any DAG file
 directly, or read the token secret as the same user. Anything running as you can do
 anything you can do, and no posture of the engine's closes that. Saying so plainly is more
 honest than a security section that implies the API's authentication protects the
@@ -388,7 +414,7 @@ Measured by `python3 -m scripts.measure_surface`. Tokens are an estimate at 4 ch
 | ----------------------------- | -------------------------------------- | ---------: | ----: | ------------: |
 | when Cairn is named           | the skill's description                |      `211` |   `1` |          `53` |
 | when Cairn is named           | `SKILL.md`                             |    `13778` | `199` |        `3445` |
-| when a capability is selected | `capabilities/running.md`, the largest |    `11889` | `177` |        `2973` |
+| when a capability is selected | `capabilities/running.md`, the largest |    `12338` | `183` |        `3085` |
 
 **None of it is read unless asked for.** Cairn declares `disable-model-invocation: true`, so
 its description stays out of a session's context until someone types `/cairn` — a session

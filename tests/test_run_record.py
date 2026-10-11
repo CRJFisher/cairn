@@ -7,15 +7,18 @@ the verdict is never read off the engine, that an absence is never a plausible d
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
@@ -34,6 +37,9 @@ from cairn.layout import (
     view_url,
 )
 from cairn.liveness import self_start_time
+from cairn.plan.home import graph_path
+from cairn.plan.ids import assign_ids
+from cairn.plan.schema import normalise as normalise_graph
 from cairn.record import engine
 from cairn.record.engine import RUN_STATUS, Attempt, began
 from cairn.record.extract import (
@@ -47,6 +53,7 @@ from cairn.record.extract import (
 )
 from cairn.record.facts import ABSENT, as_mapping, canonical_facts
 from cairn.record.model import RunRecord, Trigger
+from cairn.record.runs import latest_run, list_runs
 from cairn.record.store import read_record, write_record
 from cairn.record.vocabulary import (
     ATTENTION_INTEGRITY,
@@ -88,6 +95,7 @@ from cairn.record.vocabulary import (
     OVERLAY_DIVERGENCE,
     OVERLAYS,
     PROVENANCE_ABSENT,
+    PROVENANCE_DERIVED,
     PROVENANCES,
     RECORD_VERSION,
     STEP_OUTCOMES,
@@ -122,6 +130,7 @@ from cairn.verify import (
     VERIFY_FAILED,
 )
 from cairn.view import VIEW_SERVING
+from cairn.workflow.build import graph_digest
 from cairn.workflow.schema import ENGINE_VERSION
 from tests.engine import require_engine
 
@@ -1059,7 +1068,11 @@ class TheNextCommandWorksWhenItIsPasted(unittest.TestCase):
 
 
 def halted_chain(
-    step_ids: tuple[str, ...], *, fails_at: str, assertion_log: str | None = None
+    step_ids: tuple[str, ...],
+    *,
+    fails_at: str,
+    assertion_log: str | None = None,
+    assertion_error_log: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     """A chain the emitter's own pattern leaves behind a failed assertion: the halted step
     is excluded `verify_failed`, and every step behind it has its work node skipped with
@@ -1104,6 +1117,8 @@ def halted_chain(
                 node["error"] = "exit status 1"
                 if assertion_log is not None:
                     node["stdout"] = assertion_log
+                if assertion_error_log is not None:
+                    node["stderr"] = assertion_error_log
             nodes.append(node)
             after = [f"{role}_{step_id}"]
         previous = f"commit_{step_id}"
@@ -1221,9 +1236,9 @@ class TheHeadlineNamesTheFault(unittest.TestCase):
             record = extract(state, reports, run_id="run-halt")
         step = next(step for step in record["steps"] if step["step_id"] == "b")
         self.assertEqual(step["assertion_exit"], 3)
-        assert step["assertion_tail"] is not None
-        self.assertTrue(step["assertion_tail"].endswith("FAIL second attempt"))
-        self.assertNotIn("FAIL first attempt", step["assertion_tail"])
+        assert step["assertion_stdout"] is not None
+        self.assertTrue(step["assertion_stdout"].endswith("FAIL second attempt"))
+        self.assertNotIn("FAIL first attempt", step["assertion_stdout"])
 
     def test_a_remedied_steps_tail_clears_once_the_recheck_passes(self) -> None:
         """The remedied failure's tail must not survive into a step the recheck verified."""
@@ -1255,7 +1270,8 @@ class TheHeadlineNamesTheFault(unittest.TestCase):
             record = extract(state, reports, run_id="run-halt")
         step = next(step for step in record["steps"] if step["step_id"] == "b")
         self.assertEqual(step["assertion_exit"], 0)
-        self.assertIsNone(step["assertion_tail"])
+        self.assertIsNone(step["assertion_stdout"])
+        self.assertIsNone(step["assertion_stderr"])
 
     def test_the_subject_is_first_in_dependency_order_and_never_first_by_name(self) -> None:
         state, reports = halted_chain(("zulu", "alpha", "mike"), fails_at="zulu")
@@ -1306,13 +1322,36 @@ class TheHeadlineNamesTheFault(unittest.TestCase):
             state, reports = halted_chain(("a", "b", "c"), fails_at="b", assertion_log=str(log))
             record = extract(state, reports, run_id="run-halt")
         step = next(step for step in record["steps"] if step["step_id"] == "b")
-        assert step["assertion_tail"] is not None
-        self.assertTrue(step["assertion_tail"].endswith("FAIL  src/thing.test.ts > renders"))
-        self.assertLessEqual(len(step["assertion_tail"]), TEXT_LIMIT)
-        self.assertNotIn("assertion_tail", step["provenance"])
+        assert step["assertion_stdout"] is not None
+        self.assertTrue(step["assertion_stdout"].endswith("FAIL  src/thing.test.ts > renders"))
+        self.assertLessEqual(len(step["assertion_stdout"]), TEXT_LIMIT)
+        self.assertNotIn("assertion_stdout", step["provenance"])
         untouched = next(step for step in record["steps"] if step["step_id"] == "a")
-        self.assertIsNone(untouched["assertion_tail"])
-        self.assertEqual(untouched["provenance"]["assertion_tail"], PROVENANCE_ABSENT)
+        self.assertIsNone(untouched["assertion_stdout"])
+        self.assertEqual(untouched["provenance"]["assertion_stdout"], PROVENANCE_ABSENT)
+        self.assertEqual(untouched["provenance"]["assertion_stderr"], PROVENANCE_ABSENT)
+
+    def test_each_channel_of_a_failed_assertion_is_read_on_its_own(self) -> None:
+        """Plan 29 D. Reading them in order and keeping the first with anything in it loses
+        the failure whenever the command chatters harmlessly on standard output."""
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary) / "verify_b.out"
+            out.write_text("checking 412 files...\n", encoding="utf-8")
+            error = Path(temporary) / "verify_b.err"
+            error.write_text("src/thing.ts(4,9): error TS2345\n", encoding="utf-8")
+            state, reports = halted_chain(
+                ("a", "b"),
+                fails_at="b",
+                assertion_log=str(out),
+                assertion_error_log=str(error),
+            )
+            record = extract(state, reports, run_id="run-halt")
+        step = next(step for step in record["steps"] if step["step_id"] == "b")
+        self.assertEqual(step["assertion_stdout"], "checking 412 files...")
+        self.assertEqual(step["assertion_stderr"], "src/thing.ts(4,9): error TS2345")
+        facts = as_mapping(record)
+        self.assertIn("TS2345", facts["step.b.assertion_stderr"])
+        self.assertIn("checking 412", facts["step.b.assertion_stdout"])
 
     def test_the_record_names_which_execution_backed_each_gate(self) -> None:
         """[24 A]: provenance says which execution backed a step's assertion."""
@@ -1353,7 +1392,9 @@ class TheHeadlineNamesTheFault(unittest.TestCase):
     def test_a_log_that_is_gone_leaves_the_tail_absent_rather_than_failing_the_record(self) -> None:
         state, reports = halted_chain(("a", "b"), fails_at="b", assertion_log="/nowhere/verify_b.out")
         record = extract(state, reports, run_id="run-halt")
-        self.assertIsNone(next(step for step in record["steps"] if step["step_id"] == "b")["assertion_tail"])
+        step = next(step for step in record["steps"] if step["step_id"] == "b")
+        self.assertIsNone(step["assertion_stdout"])
+        self.assertIsNone(step["assertion_stderr"])
 
 
 class TheViewBaseIsSomewhereAReaderCanGo(unittest.TestCase):
@@ -2666,6 +2707,315 @@ class AKilledRunIsReadForReal(unittest.TestCase):
         except (ProcessLookupError, PermissionError):
             pass
 
+
+
+PLAN_WITH_NAMED_STEPS = "single-step"
+
+
+def plan_graph_named(*written: str) -> dict[str, Any]:
+    """A plan graph whose steps carry the names a plan document gave them.
+
+    Built from the shipped single-step graph so every other field is one a derivation really
+    produces, and the ids are assigned by the plan contract's own collision breaking — which
+    is what makes `build_the_thing_2` in these tests the same id a real plan would get.
+    """
+    base = cast(
+        dict[str, Any],
+        json.loads(
+            (PACKAGE_ROOT / "fixtures" / "plans" / "single-step" / "graph.json").read_text(
+                encoding="utf-8"
+            )
+        ),
+    )
+    template = cast(list[dict[str, Any]], base["steps"])[0]
+    assignments, _ = assign_ids(list(written))
+    base["steps"] = [
+        {
+            **template,
+            "id": assignment["id"],
+            "slug": assignment["slug"],
+            "title": assignment["slug"].split(". ", 1)[-1],
+        }
+        for assignment in assignments
+    ]
+    return base
+
+
+def publish_plan_graph(repository: Path, graph: dict[str, Any]) -> str:
+    """Write a graph where authoring writes it, and return the digest authoring recorded."""
+    path = graph_path(repository, PLAN_WITH_NAMED_STEPS)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(graph), encoding="utf-8")
+    return graph_digest(normalise_graph(graph))
+
+
+def record_of_named_steps(
+    repository: Path, graph: dict[str, Any], *, digest: str | None = None
+) -> RunRecord:
+    """One run of that plan, with the lock reporting the plan and the digest it ran."""
+    ids = [cast(dict[str, Any], step)["id"] for step in cast(list[Any], graph["steps"])]
+    state, reports = halted_chain(tuple(ids), fails_at=ids[-1])
+    state["paramsList"] = [f"CAIRN_REPOSITORY={repository}"]
+    reports["lock_acquire"] = {
+        "step_id": "lock_acquire",
+        "run_id": "run-halt",
+        "status": "done",
+        "summary": f"acquired {repository}",
+        "needs_user_decision": False,
+        "detail": {
+            "plan": PLAN_WITH_NAMED_STEPS,
+            "graph_sha256": (
+                digest if digest is not None else publish_plan_graph(repository, graph)
+            ),
+        },
+    }
+    return extract(state, reports, run_id="run-halt")
+
+
+class AStepIsNamedTheWayThePlanNamesIt(unittest.TestCase):
+    """Plan 29 B: the engine knows a step by a sanitised id, and a person does not.
+
+    `work_build_the_thing_2` names a step whose plan called it something else, and until the
+    record carried both, reading a report meant opening the graph to find out which step it
+    was. The names are read from the plan's own graph against the digest the run recorded at
+    its first act, so a graph the next authoring rewrote names nothing.
+    """
+
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.repository = self.root / "product"
+        self.repository.mkdir(parents=True)
+        # A real repository, because the graph's home is the git common directory and git is
+        # what answers where that is ([plan/home.py]).
+        subprocess.run(("git", "init", "-q"), cwd=self.repository, check=True)
+
+    def test_the_record_carries_the_name_the_plan_gave_each_step(self) -> None:
+        graph = plan_graph_named("1. Build the thing", "2. Ship it")
+        record = record_of_named_steps(self.repository, graph)
+        by_id = {step["step_id"]: step for step in record["steps"]}
+        self.assertEqual(by_id["build_the_thing"]["title"], "Build the thing")
+        self.assertEqual(by_id["build_the_thing"]["slug"], "1. Build the thing")
+        self.assertEqual(by_id["ship_it"]["slug"], "2. Ship it")
+        for step in record["steps"]:
+            with self.subTest(step=step["step_id"]):
+                # Read from the plan's graph rather than from the run's own evidence, and
+                # the record says so rather than presenting it as something it measured.
+                self.assertEqual(step["provenance"]["title"], PROVENANCE_DERIVED)
+                self.assertEqual(step["provenance"]["slug"], PROVENANCE_DERIVED)
+
+    def test_a_collision_suffix_resolves_to_the_name_that_was_written(self) -> None:
+        """The case the id alone cannot answer: two names that sanitise alike."""
+        graph = plan_graph_named("1. Build the thing", "Build the thing")
+        record = record_of_named_steps(self.repository, graph)
+        by_id = {step["step_id"]: step for step in record["steps"]}
+        self.assertEqual(sorted(by_id), ["build_the_thing", "build_the_thing_2"])
+        self.assertEqual(by_id["build_the_thing"]["slug"], "1. Build the thing")
+        self.assertEqual(by_id["build_the_thing_2"]["slug"], "Build the thing")
+
+    def test_a_graph_the_run_did_not_run_names_nothing(self) -> None:
+        """A graph is rewritten by the next authoring, and a name off the wrong one would be
+        a fact about a different plan presented as this run's."""
+        graph = plan_graph_named("1. Build the thing")
+        record = record_of_named_steps(self.repository, graph, digest="0" * 64)
+        step = record["steps"][0]
+        self.assertIsNone(step["title"])
+        self.assertIsNone(step["slug"])
+        self.assertEqual(step["provenance"]["title"], PROVENANCE_ABSENT)
+        self.assertEqual(step["provenance"]["slug"], PROVENANCE_ABSENT)
+
+    def test_a_graph_that_is_gone_leaves_the_names_absent_rather_than_failing(self) -> None:
+        graph = plan_graph_named("1. Build the thing")
+        digest = publish_plan_graph(self.repository, graph)
+        graph_path(self.repository, PLAN_WITH_NAMED_STEPS).unlink()
+        record = record_of_named_steps(self.repository, graph, digest=digest)
+        self.assertIsNone(record["steps"][0]["title"])
+
+    def test_a_graph_that_is_not_a_graph_at_all_is_refused_quietly(self) -> None:
+        """A hand-edited or truncated graph is a file on disk like any other: the names are
+        not established, and the record is still built."""
+        graph = plan_graph_named("1. Build the thing")
+        digest = publish_plan_graph(self.repository, graph)
+        graph_path(self.repository, PLAN_WITH_NAMED_STEPS).write_text("{", encoding="utf-8")
+        record = record_of_named_steps(self.repository, graph, digest=digest)
+        self.assertIsNone(record["steps"][0]["slug"])
+        self.assertEqual(record["steps"][0]["step_id"], "build_the_thing")
+
+
+
+class ARunCanBeFoundByThePlanAPersonHas(unittest.TestCase):
+    """Plan 29 B: "how did the last run of plan A go?" asked with the plan's name alone.
+
+    Every other reader starts from a run id, which is the one thing a person does not have:
+    a run nobody watched leaves its record under an identity nobody has seen. The listing is
+    read-only and builds nothing, and the resolver states its rule rather than leaving a
+    reader to pick an entry by eye.
+    """
+
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.runs = self.root / "runs"
+
+    def _run(
+        self, run_id: str, plan: str, started: str, *, verdict: str | None = None
+    ) -> RunRecord:
+        record = record_of("green")
+        record["run_id"] = run_id
+        record["plan"] = plan
+        record["started_at"] = started
+        if verdict is not None:
+            record["verdict"] = verdict
+            record["exit_code"] = VERDICT_EXIT_CODES[verdict]
+        self._lock_report(run_id, plan)
+        write_record(self.runs, record)
+        return record
+
+    def _lock_report(self, run_id: str, plan: str) -> None:
+        """What a run leaves at its first act, which is what says a directory is a run."""
+        reports = reports_directory(self.runs, run_id)
+        reports.mkdir(parents=True, exist_ok=True)
+        (reports / "lock_acquire.json").write_text(
+            json.dumps(
+                {
+                    "step_id": "lock_acquire",
+                    "run_id": run_id,
+                    "status": "done",
+                    "summary": "acquired",
+                    "needs_user_decision": False,
+                    "duration": 1.0,
+                    "follow_up_work": [],
+                    "detail": {"plan": plan},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def _damage(self, run_id: str, plan: str) -> None:
+        """A record a reader cannot be handed: the current version, missing a section."""
+        self._lock_report(run_id, plan)
+        record_path(self.runs, run_id).write_text(
+            json.dumps({"record_version": RECORD_VERSION}), encoding="utf-8"
+        )
+
+    def _said(self, *arguments: str) -> tuple[int, str]:
+        spoken = io.StringIO()
+        with redirect_stdout(spoken), redirect_stderr(spoken):
+            code = cairn_main(["record", *arguments, "--reports", str(self.runs)])
+        return code, spoken.getvalue()
+
+    def test_a_listing_names_the_plan_the_run_the_moment_the_trigger_and_the_verdict(
+        self,
+    ) -> None:
+        self._run("20260301T090000Z-aaaaaaaa", "alpha-plan", "2026-03-01T09:00:00Z")
+        code, said = self._said("list")
+        self.assertEqual(code, 0, said)
+        for named in (
+            "alpha-plan",
+            "20260301T090000Z-aaaaaaaa",
+            "2026-03-01T09:00:00Z",
+            "manual",
+            VERDICT_GREEN,
+        ):
+            with self.subTest(named=named):
+                self.assertIn(named, said)
+
+    def test_the_listing_is_newest_first_and_filters_to_one_plan(self) -> None:
+        self._run("20260301T090000Z-aaaaaaaa", "alpha-plan", "2026-03-01T09:00:00Z")
+        self._run("20260302T090000Z-bbbbbbbb", "beta-plan", "2026-03-02T09:00:00Z")
+        self._run("20260303T090000Z-cccccccc", "alpha-plan", "2026-03-03T09:00:00Z")
+        entries = list_runs(self.runs)
+        self.assertEqual(
+            [entry.run_id for entry in entries],
+            [
+                "20260303T090000Z-cccccccc",
+                "20260302T090000Z-bbbbbbbb",
+                "20260301T090000Z-aaaaaaaa",
+            ],
+        )
+        _, said = self._said("list", "--plan", "alpha-plan")
+        self.assertNotIn("beta-plan", said)
+        self.assertIn("20260303T090000Z-cccccccc", said)
+
+    def test_the_latest_run_of_a_plan_is_resolved_even_when_runs_interleave(self) -> None:
+        """Doc 29 B's acceptance: runs of several plans, interleaved, resolve deterministically."""
+        self._run("20260301T090000Z-aaaaaaaa", "alpha-plan", "2026-03-01T09:00:00Z")
+        self._run("20260302T090000Z-bbbbbbbb", "beta-plan", "2026-03-02T09:00:00Z")
+        self._run("20260303T090000Z-cccccccc", "alpha-plan", "2026-03-03T09:00:00Z")
+        self._run("20260304T090000Z-dddddddd", "beta-plan", "2026-03-04T09:00:00Z")
+        alpha = latest_run(self.runs, plan="alpha-plan")
+        beta = latest_run(self.runs, plan="beta-plan")
+        assert alpha is not None and beta is not None
+        self.assertEqual(alpha.run_id, "20260303T090000Z-cccccccc")
+        self.assertEqual(beta.run_id, "20260304T090000Z-dddddddd")
+        self.assertIsNone(latest_run(self.runs, plan="no-such-plan"))
+
+    def test_two_runs_of_one_moment_are_settled_by_identity_rather_than_by_order(self) -> None:
+        """Deterministic means the same answer whatever order the directory lists in."""
+        moment = "2026-03-05T09:00:00Z"
+        self._run("20260305T090000Z-00000001", "alpha-plan", moment)
+        self._run("20260305T090000Z-00000002", "alpha-plan", moment)
+        for _ in range(3):
+            found = latest_run(self.runs, plan="alpha-plan")
+            assert found is not None
+            self.assertEqual(found.run_id, "20260305T090000Z-00000002")
+
+    def test_an_unreadable_record_is_listed_with_its_fault_rather_than_dropped(self) -> None:
+        """The run somebody is looking for is the one that broke its own record."""
+        self._run("20260301T090000Z-aaaaaaaa", "alpha-plan", "2026-03-01T09:00:00Z")
+        self._damage("20260306T090000Z-eeeeeeee", "alpha-plan")
+        code, said = self._said("list", "--plan", "alpha-plan")
+        self.assertEqual(code, 0, said)
+        self.assertIn("20260306T090000Z-eeeeeeee", said)
+        self.assertIn("unreadable", said)
+        self.assertIn("cairn record build", said)
+
+    def test_the_latest_readable_run_is_what_resolves_and_the_damage_is_still_said(
+        self,
+    ) -> None:
+        self._run("20260301T090000Z-aaaaaaaa", "alpha-plan", "2026-03-01T09:00:00Z")
+        self._damage("20260306T090000Z-eeeeeeee", "alpha-plan")
+        found = latest_run(self.runs, plan="alpha-plan")
+        assert found is not None
+        self.assertEqual(found.run_id, "20260301T090000Z-aaaaaaaa")
+        code, said = self._said("latest", "--plan", "alpha-plan")
+        self.assertEqual(code, 0, said)
+        self.assertIn("20260301T090000Z-aaaaaaaa", said)
+        self.assertIn("20260306T090000Z-eeeeeeee", said)
+
+    def test_the_resolvers_exit_status_is_the_runs_own_verdict(self) -> None:
+        """So a script can ask the question too, on the codes the run model freezes."""
+        self._run(
+            "20260301T090000Z-aaaaaaaa",
+            "alpha-plan",
+            "2026-03-01T09:00:00Z",
+            verdict=VERDICT_GREEN_WITH_EXCLUSIONS,
+        )
+        code, _ = self._said("latest", "--plan", "alpha-plan")
+        self.assertEqual(code, 0)
+        missing, said = self._said("latest", "--plan", "no-such-plan")
+        self.assertEqual(missing, EXIT_NO_RECORD)
+        self.assertIn("no readable run", said)
+
+    def test_a_directory_that_names_no_run_of_a_plan_is_not_listed_as_one(self) -> None:
+        """The engine's own authoring rehearsal runs every precondition, so Cairn's gates
+        leave reports under the run id it minted for the dry pass. Those are not runs."""
+        rehearsal = reports_directory(self.runs, "034dZYnrWG2bWQE86yWeYd")
+        rehearsal.mkdir(parents=True)
+        (rehearsal / "mark_alpha.json").write_text("{}", encoding="utf-8")
+        self._run("20260301T090000Z-aaaaaaaa", "alpha-plan", "2026-03-01T09:00:00Z")
+        self.assertEqual(
+            [entry.run_id for entry in list_runs(self.runs)],
+            ["20260301T090000Z-aaaaaaaa"],
+        )
+
+    def test_the_listing_reads_what_is_there_and_writes_nothing(self) -> None:
+        self._run("20260301T090000Z-aaaaaaaa", "alpha-plan", "2026-03-01T09:00:00Z")
+        before = {path: path.stat().st_mtime_ns for path in sorted(self.runs.rglob("*"))}
+        self._said("list")
+        self._said("latest", "--plan", "alpha-plan")
+        after = {path: path.stat().st_mtime_ns for path in sorted(self.runs.rglob("*"))}
+        self.assertEqual(before, after)
 
 if __name__ == "__main__":
     unittest.main()

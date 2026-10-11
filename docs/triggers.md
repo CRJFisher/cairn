@@ -176,6 +176,7 @@ Three properties follow, and the third is the one to remember:
 ```text
 python3 -m cairn schedule install --plan <slug> --repository <path>
 python3 -m cairn schedule status
+python3 -m cairn schedule service [--write]
 python3 -m cairn schedule start
 python3 -m cairn schedule remove --plan <slug> --repository <path>
 ```
@@ -209,10 +210,31 @@ and retargets it explicitly. The engine's name for the DAG is the link's filenam
 what the view's URL and any webhook endpoint are keyed on — so a name already taken by
 another plan is refused rather than replaced.
 
-**`start` becomes the scheduler.** It replaces itself with `dagu scheduler` and runs in
-the foreground until killed, so keeping a nightly plan firing means keeping that process
-alive — under `launchd`, `systemd`, or a terminal you leave open. Cairn supervises nothing
-and has no `stop`: the process is the daemon.
+**`start` becomes the scheduler.** It replaces itself with `dagu scheduler` and runs in the
+foreground until killed. A foreground process is not an operational story on its own — it
+dies with the terminal that started it — so the machine's own service manager is what keeps
+a nightly plan firing, and `service` states the unit for it:
+
+```text
+python3 -m cairn schedule service           # prints the unit, and the install, status and stop commands
+python3 -m cairn schedule service --write   # writes the unit; loading it is still your command
+```
+
+A **user-level** service on both platforms — a `launchd` agent under
+`~/Library/LaunchAgents`, a `systemd --user` unit under `~/.config/systemd/user` — and never
+a system one: the scheduler runs agent sessions against the repositories of the person who
+installed it, authenticating as that person's own agent installation, so a root service would
+be running their work as somebody else. The unit is composed from this process rather than
+described: the interpreter running it, the Cairn being imported, and the directory this
+engine watches. It runs `cairn schedule start` and never `dagu scheduler` directly, because
+the hazard assertion below is Cairn's — a unit that skipped it would arm, at every boot, the
+retry scanner that re-executes agent sessions.
+
+A refusal still refuses under a service manager: the assertion runs before the process
+becomes the scheduler, so an unsafe machine produces a service that exits and is restarted,
+with the refusal in the log the unit names. The remedy is the machine, which the refusal
+names, and not the unit. Cairn supervises nothing itself and has no `stop` of its own: the
+`stop` command `service` prints is the service manager's.
 
 It asserts, at the moment of starting rather than at install, that the machine is safe
 to run a scheduler on, and refuses otherwise **naming every failed run it would have
@@ -232,8 +254,51 @@ Both are written by one command, because a person asked one question:
 python3 -m cairn supervise base-config --disable
 ```
 
-`status` is the honest answer to a trigger that was accepted and does nothing: it names every
-run sitting **queued** with no scheduler draining it.
+## What `status` establishes
+
+`status` is the honest answer to a trigger that was accepted and does nothing, and its first
+line is whether a scheduler exists at all — because every other line depends on it. A cron
+expression fires nothing, and a queued run drains into nothing, unless something is running.
+
+Liveness is read from the engine's own record of its scheduler processes
+(`<data>/service-registry/scheduler/*.json`, one file per process, carrying its `pid` and the
+moment it started) and adjudicated by **Cairn's own process check**, because the record
+outlives the process it names: measured against Dagu 2.18.2, a scheduler killed outright
+leaves its file in place. `dagu ps` is no help either — measured, it listed a killed run as
+fresh. So the file says which process to ask about and nothing more.
+
+| State            | What was measured                                                                          |
+| ---------------- | ------------------------------------------------------------------------------------------ |
+| `running`        | a recorded process is alive and is the process that was recorded                           |
+| `paused`         | the same, with the engine's global scheduler pause set: it is firing nothing               |
+| `stopped`        | every recorded process has ended                                                           |
+| `stale_identity` | a recorded identifier now belongs to something else, which is what a kill leaves           |
+| `inaccessible`   | the probe was refused, or a registry entry could not be read: this says nothing either way |
+| `unknown`        | the engine holds no record of a scheduler here, which a second `DAGU_HOME` also looks like |
+
+**"Nothing is draining the queue" is a measurement, not a default.** It is said only for
+`stopped` and `stale_identity`; under `running` a queued run is said to be queued behind
+other work, and under the three states that establish nothing the line says that the drainage
+was not established and why. Said on the strength of not having looked, it sends a person to
+start a second scheduler beside the one already running — which is the one daemon on this
+machine that re-executes failed runs.
+
+The engine's global pause (`<data>/scheduler/paused.json`, set through the engine's API) is
+reported wherever it is set, including over a stopped scheduler, where it is a standing
+instruction the next one will obey. A paused scheduler is a live process that is deliberately
+firing nothing, and reporting it as dead would send a person to start another.
+
+`status` then names, for each definition in the watched directory, what it points at and
+whether that link still resolves — a link whose target was pruned is refused at load, which
+is a schedule that silently never fires — the cron expression it would fire on or that only
+an external trigger will fire it, whether the machine is safe to start a scheduler on, every
+run sitting **queued**, and whether this machine's service unit is in place.
+
+**An install is one act or none.** The sidecar recording what was installed against a plan —
+and where a webhook's bearer token was put — is written only once the link holds. A refusal
+between the two, a name already taken by another repository's plan of the same slug being the
+ordinary one, leaves no sidecar claiming a published schedule that does not exist; and a
+sidecar that cannot be written takes the link back out.
 
 ## The external trigger
 
@@ -328,13 +393,21 @@ carries the run's verdict and `view_url`, so a run is reachable from its identit
 alone:
 
 ```text
-ls <repository>/.git/cairn/runs                      # every run this repository has had
+python3 -m cairn record list --repository <path> [--plan <slug>]
+python3 -m cairn record latest --plan <slug> --repository <path>
 python3 -m cairn record build --run <run-id> --repository <path>
 ```
 
-A run nobody watched is exactly the one whose identity nobody has, so the directory listing
-is the entry point; the view's own page for the workflow is the other. Both reach the same
-record ([run-model.md](run-model.md)).
+A run nobody watched is exactly the one whose identity nobody has, so the listing is the
+entry point; the view's own page for the workflow is the other. Both reach the same record
+([run-model.md](run-model.md)). `list` names every run this repository holds — plan, run id,
+the moment it started, what triggered it and its verdict — newest first, filtered to one
+plan where one is named. `latest` answers "how did the last run of plan A go" with one run
+chosen by a stated rule, which is the newest **readable** run of that plan, and exits on
+that run's own verdict so a script can ask too. A run whose record cannot be read is listed
+with what is wrong with it and the command that rebuilds it, and is never what `latest`
+returns: the one run somebody is looking for is the one that failed badly enough to damage
+its own record, and a listing that dropped it would answer "that plan has never run".
 
 **Nothing the release does may reach its exit status.** Measured against Dagu 2.18.2, a
 `handler_on.exit` body exiting nonzero records the whole run as `failed` and makes `dagu

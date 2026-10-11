@@ -16,8 +16,17 @@ its own. Their entry preconditions do differ, and the row above says how.
 
 ## Reporting
 
-1. **Find the run if it was not named.** `ls <repository>/.git/cairn/runs` lists every run
-   that repository has had. Every run leaves a record whether anyone was watching or not.
+1. **Find the run if it was not named.** `python3 -m cairn record list --repository <path>
+[--plan <slug>]` names every run that repository has had — plan, run id, start moment,
+   trigger and verdict — newest first, and filtered to one plan where the request named one.
+   Every run leaves a record whether anyone was watching or not.
+
+   **"The last run of X" has a resolver; do not pick one by eye.** `python3 -m cairn record
+latest --plan <slug> --repository <path>` returns the newest readable run of that plan.
+   Where the listing shows a run whose record could not be read, say so before answering:
+   the facts of a damaged record are not in the record at all, and a newer run that could
+   not be read is exactly the one a person means. Rebuild it with `python3 -m cairn record
+build --run <id>` rather than reporting from the one behind it silently.
 
 2. **Render it.** `python3 -m cairn report --run <id> --repository <path> --session <path>
 [--format terminal|markdown|html]`. Terminal is the default; markdown is the durable artifact
@@ -32,17 +41,23 @@ its own. Their entry preconditions do differ, and the row above says how.
    — nobody's first question is the topology — so do not reorder it and do not lead with the
    step table.
 
-4. **Never restate the verdict in your own words.** A run with exclusions is
+4. **Name a step the way the plan does.** Every step is reported twice over: the engine's
+   id, which its nodes and its branch are named after, and beside it the name the plan gave
+   it. Use both the first time you name a step, because the id is what the logs and the view
+   show and the plan's name is what the person wrote. Where the report says the plan's name
+   is not recorded, the plan's graph no longer matches the run and the id is all there is.
+
+5. **Never restate the verdict in your own words.** A run with exclusions is
    `green_with_exclusions` and it is not a clean success; the engine calls that same run
    `Succeeded` with exit 0. The report's exit status is the run's verdict, not the command's
    health.
 
-5. **Say who started it.** A run with an actor was started by that person at the engine's
+6. **Say who started it.** A run with an actor was started by that person at the engine's
    view; a run with none is attributed from its trigger — Cairn's own skill, the scheduler,
    a webhook, the retry scanner, the run above it, or nothing at all. Report the attribution
    the record carries, so a run the machine started on its own is not credited to Cairn.
 
-6. **Say what the report could not read.** Where the record refused a piece of the run's own
+7. **Say what the report could not read.** Where the record refused a piece of the run's own
    evidence, the first screen counts it and the attention section names each one. Repeat
    that rather than summarising past it: the facts under a refusal may be missing rather
    than absent, and nothing refused raised any outcome.

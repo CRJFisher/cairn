@@ -74,12 +74,14 @@ from cairn.record.store import build_run_record, write_record
 from cairn.report.cli import main as report_main
 from cairn.schedule_cli import main as schedule_main
 from cairn.skill.cli import explain_main, run_main, view_main
+from cairn.skill.vocabulary import CAPABILITY_ORDER, TASK_BY_CAPABILITY
 from cairn.supervise import find_run_record
 from cairn.supervise_cli import main as supervise_main
 from cairn.topology import node_name, worktrees_root_for
 from cairn.verify import gate_main as verify_gate_main
 from cairn.wave import run_join
 from cairn.workflow.cli import main as workflow_main
+from cairn.workflow.schema import ENGINE_VERSION
 from cairn.workflow.stamp import read_stamp, workflow_path
 from cairn.worktrees import (
     DIRTY_BEFORE,
@@ -453,11 +455,50 @@ def _add_freshness_arguments(child: argparse.ArgumentParser) -> None:
     child.add_argument("--reads", action="append")
 
 
+def first_screen() -> str:
+    """What somebody who typed this command by mistake needs, before any of the plumbing.
+
+    Going looking for a command line is how a person who did not build this arrives at the
+    wrong door, so the first screen is the way back: what Cairn is driven by, the six things
+    a person asks it for, what has to be installed first, and one example that spends
+    nothing. The subcommands below it are the implementation ([29 A]).
+
+    The six tasks are read from the skill's own vocabulary rather than listed again here, so
+    a seventh capability cannot be added without this screen naming it.
+    """
+    tasks = "\n".join(
+        f"  - {TASK_BY_CAPABILITY[capability]}" for capability in CAPABILITY_ORDER
+    )
+    return f"""Cairn runs a plan document as a graph of verified, concurrent work.
+
+**It is driven by typing `/cairn` in the coding agent it is installed into, and this command
+line is internal.** The skill runs these subcommands for you; their arguments carry no
+promise to anyone else, and nothing a person needs to do requires learning them.
+
+Type `/cairn`, then say which of these you want:
+
+{tasks}
+
+Before any of that works: Python 3.11 or newer, git, the agent command line a step's session
+runs through, and Dagu {ENGINE_VERSION} — the engine that runs the generated workflow.
+README.md's install path is six steps and ends in a plan explained, having started nothing.
+
+One example, with no engine, no agent session, no network and no money:
+
+  python3 -m scripts.worked_example
+
+It renders a recorded run the engine calls a clean success, over a step whose work never
+landed, and reports the step as excluded. It exits 3.
+
+What follows is the runtime plumbing: the subcommands an emitted workflow invokes."""
+
+
 def _parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     """The whole command line. Dispatch builds it without help, and see `asks_for_help`."""
     parser = argparse.ArgumentParser(
         prog="cairn",
-        description=__doc__,
+        description=first_screen(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         add_help=add_help,
         epilog=(
             "Thirteen more commands are dispatched before these and take no step identity: "

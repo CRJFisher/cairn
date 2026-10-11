@@ -19,7 +19,7 @@ from collections.abc import Callable
 
 from cairn.headroom import AFTER_OUTAGE
 from cairn.record.engine import RUN_RUNNING
-from cairn.record.model import RunRecord
+from cairn.record.model import RunRecord, StepRecord
 from cairn.record.vocabulary import (
     ATTENTION_ORDER,
     OUTCOME_EXCLUDED,
@@ -306,14 +306,7 @@ def _next_action(record: RunRecord) -> list[Block]:
                     ),
                 )
             )
-        if subject["assertion_tail"] is not None:
-            blocks.append(
-                Verbatim(
-                    "verbatim",
-                    "what its assertion said",
-                    Fact((f"step.{subject['step_id']}.assertion_tail",)),
-                )
-            )
+        blocks.extend(_assertion_output(subject, "its assertion"))
     if action["command"] is not None:
         blocks.append(Verbatim("verbatim", None, Fact(("run.next_command",))))
     # The action's own frozen word, beside the sentence that phrases it. Automation reads
@@ -414,10 +407,14 @@ def _steps(record: RunRecord) -> list[Block]:
         Table(
             "table",
             None,
-            ("step", "outcome", "also", "cause", "what it said"),
+            # The engine's id and the plan's own name for the step, side by side. The id is
+            # what every node, branch and worktree is named after and the plan's name is
+            # what the person who wrote the plan will recognise ([29 B]).
+            ("step", "the plan calls it", "outcome", "also", "cause", "what it said"),
             tuple(
                 (
                     Chrome(step["step_id"]),
+                    Fact((f"step.{step['step_id']}.title",)),
                     Fact((f"step.{step['step_id']}.outcome",)),
                     Fact((f"step.{step['step_id']}.overlays",)),
                     Fact((f"step.{step['step_id']}.cause",)),
@@ -462,15 +459,28 @@ def _steps(record: RunRecord) -> list[Block]:
         blocks.append(
             Verbatim("verbatim", f"{step['step_id']} was asked", Fact((f"{key}.asked",)))
         )
-        if step["assertion_tail"] is not None:
-            blocks.append(
-                Verbatim(
-                    "verbatim",
-                    f"what {step['step_id']}'s assertion said",
-                    Fact((f"{key}.assertion_tail",)),
-                )
-            )
+        blocks.extend(_assertion_output(step, f"{step['step_id']}'s assertion"))
     return blocks
+
+
+def _assertion_output(step: StepRecord, subject: str) -> list[Block]:
+    """What a failed assertion printed, one block per channel, each saying which it is.
+
+    Both are shown where both have something. A runner that chatters on standard output and
+    names the failure on standard error is the ordinary case for a type checker or a
+    compiler, and a report that showed only the first channel with anything in it would be
+    quoting the chatter under the heading of the failure ([29 D]).
+    """
+    key = f"step.{step['step_id']}"
+    channels = (
+        ("assertion_stdout", "standard output", step["assertion_stdout"]),
+        ("assertion_stderr", "standard error", step["assertion_stderr"]),
+    )
+    return [
+        Verbatim("verbatim", f"what {subject} printed on {label}", Fact((f"{key}.{name}",)))
+        for name, label, printed in channels
+        if printed is not None
+    ]
 
 
 def _shape(record: RunRecord) -> list[Block]:
@@ -618,6 +628,7 @@ def _receipts(record: RunRecord, view_state: str) -> list[Block]:
                 "fields",
                 step["step_id"],
                 (
+                    ("written in the plan as", Fact((f"{key}.slug",))),
                     ("turns", Fact((f"{key}.turns",))),
                     ("model", Fact((f"{key}.model",))),
                     ("session", Fact((f"{key}.session",))),

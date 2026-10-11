@@ -41,14 +41,26 @@ needs no scheduler. Someone who says "I want to see the graph" is asking for
 
 3. **Start the scheduler, or say plainly that nothing will fire.**
    `python3 -m cairn schedule start` **becomes** the scheduler and runs in the foreground
-   until killed, so keeping a nightly plan firing means keeping that process alive under
-   `launchd`, `systemd`, or a terminal left open. It asserts at that moment that the machine
-   is safe to run a scheduler on and refuses otherwise, naming every failed run it would have
-   re-executed. `python3 -m cairn supervise base-config --disable` is what makes it safe.
+   until killed. It asserts at that moment that the machine is safe to run a scheduler on and
+   refuses otherwise, naming every failed run it would have re-executed; `python3 -m cairn
+supervise base-config --disable` is what makes it safe.
 
-4. **Answer "is it actually going to fire?" honestly.** `python3 -m cairn schedule status`
-   names every run sitting queued with nothing draining the queue. A trigger that was accepted
-   and does nothing is the failure mode this exists for.
+   **A foreground process is not an answer to "keep this firing nightly".** It dies with the
+   terminal. `python3 -m cairn schedule service` prints this machine's own unit — a `launchd`
+   agent or a `systemd --user` unit, composed from the interpreter and the Cairn in hand —
+   with the one command that installs it, the one that reports on it and the one that stops
+   it; `--write` writes the unit and still leaves loading it to the person. Offer it whenever
+   a request is about a recurring plan rather than a single firing.
+
+4. **Answer "is it actually going to fire?" from what was measured.** `python3 -m cairn
+schedule status` leads with whether a scheduler exists: `running`, `paused`, `stopped`,
+   `stale_identity`, `inaccessible` or `unknown`. Liveness is Cairn's own check of the
+   process the engine recorded, so report the state as it stands and never conclude from
+   `inaccessible` or `unknown` that nothing is running — "nothing is draining the queue" is
+   said by the command itself, and only where that was established. Status also names, per
+   installed definition, what it points at, whether that link still resolves, and the cron
+   expression it fires on or that only an external trigger will fire it. A trigger that was
+   accepted and does nothing is the failure mode this exists for.
 
 ## An external trigger needs the same daemon
 
@@ -72,5 +84,6 @@ is chosen.
 ## Where the engine's view is better
 
 Seeing that a scheduled run fired, and what it did. Its own page for the workflow lists every
-run of it. What it will not tell you is whether the scheduler is up, which is
-`schedule status`'s answer.
+run of it. What it will not tell you is whether a scheduler process is alive on this machine,
+which is `schedule status`'s answer — and the engine's own pause, which that status reports
+as the distinct state it is rather than as a dead scheduler.

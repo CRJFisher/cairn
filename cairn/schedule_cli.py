@@ -18,10 +18,13 @@ from pathlib import Path
 from typing import Any, cast
 
 from cairn.baseconfig import base_config_path
-from cairn.core import CairnError, write_json
+from cairn.core import CairnError, write_json, write_text
 from cairn.enginehome import dags_directory, run_records_path
 from cairn.schedule import (
+    DRAINS_NOTHING,
     RETRY_SCANNER_HOURS,
+    SCHEDULER_PAUSED,
+    SchedulerStatus,
     assert_safe_to_start,
     describe_run,
     install,
@@ -30,13 +33,15 @@ from cairn.schedule import (
     queued_runs,
     remove,
     scheduler_command,
+    scheduler_status,
+    service_plan,
     start,
 )
 from cairn.skill.resolve import Resolved, repository_line, resolve_repository
 from cairn.workflow.gate import admit
 from cairn.workflow.stamp import stamp_path, workflow_path
 
-VERBS = frozenset({"install", "remove", "status", "start"})
+VERBS = frozenset({"install", "remove", "status", "start", "service"})
 EXIT_REFUSED = 1
 
 # What scheduling puts on this machine. Printed with the install, because it decides what
@@ -81,9 +86,6 @@ def _cmd_install(args: argparse.Namespace) -> int:
             f"{source} did not pass the execution gate: "
             + "; ".join(str(fault) for fault in faults),
         )
-    # The record is written before the link, because the link is what arms the scheduler:
-    # a failure between the two must leave a note about a schedule that does not fire
-    # rather than a schedule nothing recorded.
     record: dict[str, Any] = {
         "plan": args.plan,
         "repository": str(repository),
@@ -95,8 +97,19 @@ def _cmd_install(args: argparse.Namespace) -> int:
         # webhook's bearer token once, at creation, and a tool that stored one would be
         # handling a credential — which Cairn does not do, by construction.
         record["webhook"] = {"token_sink": args.webhook_token_sink}
-    write_json(_triggers_path(repository, args.plan), record)
+    # **The link first, the record only once it holds.** An install is one act or none: a
+    # sidecar written ahead of a link that was then refused — a name already taken by
+    # another repository's plan of the same slug — claims a published schedule and a
+    # webhook-token disposition for a trigger that does not exist, and the next reader of
+    # it has no way to tell that from a schedule that fires ([29 C]). Nothing between the
+    # two can be left half done the other way either: the sidecar is this repository's own
+    # file, so a write that fails takes the link back out.
     published = install(repository, args.plan, dags=dags, admission=admission)
+    try:
+        write_json(_triggers_path(repository, args.plan), record)
+    except OSError:
+        remove(repository, args.plan, dags=dags)
+        raise
     print(f"linked   {published} -> {record['workflow']}")
     print(f"recorded {_triggers_path(repository, args.plan)}")
     print(f"fires    {_fires(published)}")
@@ -150,26 +163,125 @@ def _cmd_remove(args: argparse.Namespace) -> int:
 
 
 def _cmd_status(args: argparse.Namespace) -> int:
-    """What is installed, whether the machine is safe, and what is waiting on nothing."""
+    """Whether a scheduler exists, what is installed, and what each trigger would do.
+
+    The first question is liveness, because every other line here depends on it: a cron
+    expression fires nothing and a queued run drains into nothing unless something is
+    running, and a status that listed the definitions and the queue while saying nothing
+    about the daemon answered the wrong question confidently ([29 C]).
+
+    Nothing here refuses. Asking what the state is has to be answerable on a machine whose
+    state is bad, which is the only machine the question is interesting on.
+    """
     dags = Path(args.dags) if args.dags else dags_directory()
     records = Path(args.engine_records) if args.engine_records else run_records_path()
+    status = scheduler_status(
+        registry=Path(args.scheduler_registry) if args.scheduler_registry else None,
+        pause=Path(args.scheduler_pause) if args.scheduler_pause else None,
+    )
+    print(f"scheduler {status.state} — {status.sentence}")
+    for process in status.processes:
+        print(
+            f"  process  {process.identity}: pid {process.pid}, started "
+            f"{process.started_at or 'at an unrecorded time'} — Cairn's own check of that "
+            f"process says {process.reading}"
+        )
+    if status.paused_since is not None and status.state != SCHEDULER_PAUSED:
+        print(
+            f"  paused   the engine's scheduler pause has been set since "
+            f"{status.paused_since}, so the next scheduler to start fires nothing until it "
+            "is resumed through the engine's API"
+        )
     print(f"watched  {dags}")
     for path in installed(dags=dags):
-        target = path.readlink() if path.is_symlink() else None
-        print(f"  {path.name}" + (f" -> {target}" if target else "  (not Cairn's)"))
+        if not path.is_symlink():
+            print(f"  {path.name}  not Cairn's: Cairn installs a link and this is a file")
+            continue
+        # The link and what it resolves to are two facts. A link whose target has been
+        # pruned still lists, and the engine refuses it at load — which is a schedule that
+        # silently never fires, the one failure this namespace exists to prevent.
+        resolved = "resolves" if path.exists() else "DOES NOT RESOLVE, so the engine cannot load it"
+        print(f"  {path.name} -> {path.readlink()} ({resolved})")
+        print(f"    fires  {_fires(path)}")
     config = Path(args.base_config) if args.base_config else base_config_path()
     try:
         assert_safe_to_start(base_config=config, records=records)
         print(f"safe     {config}: a scheduler may be started")
     except CairnError as exc:
-        # A report never refuses. Asking what the state is has to be answerable on a machine
-        # whose state is bad, which is the only machine the question is interesting on.
         print(f"unsafe   {exc}")
     waiting = queued_runs(records)
     for run in waiting:
-        print(f"queued   {describe_run(run)} — nothing is draining the queue")
+        print(f"queued   {describe_run(run)} — {_drainage(status)}")
     if not waiting:
         print("queued   none")
+    service = service_plan(dags=dags)
+    installed_unit = service.unit_path.exists()
+    print(
+        f"service  {service.manager}: {service.unit_path}"
+        + (
+            " is in place"
+            if installed_unit
+            else " is where this machine would keep a scheduler alive; "
+            "`python3 -m cairn schedule service` writes it and says how"
+        )
+    )
+    if installed_unit:
+        print(f"         {' '.join(service.status)}")
+    return 0
+
+
+def _drainage(status: SchedulerStatus) -> str:
+    """What a queued run is waiting on, claiming only what liveness established.
+
+    "Nothing is draining the queue" is a measurement, not a default. Said on the strength of
+    not having looked, it sends a person to start a second scheduler beside the one that is
+    already running — and the scheduler is the one daemon on this machine that re-executes
+    failed runs ([schedule.py]).
+    """
+    if status.state in DRAINS_NOTHING:
+        return "nothing is draining the queue"
+    if status.drains:
+        return "a scheduler is running, so it is queued behind other work rather than stranded"
+    return f"whether anything is draining it is not established: {status.sentence}"
+
+
+def _cmd_service(args: argparse.Namespace) -> int:
+    """The supported way to keep a scheduler alive, printed, and written where asked.
+
+    Printed by default and written only when asked, because a unit file is a change to how
+    the machine behaves at every boot. Loading it is always the person's own command: this
+    prints the one line that does it, so nothing here starts a daemon.
+    """
+    dags = _dags(args)
+    service = service_plan(
+        dags=dags, home=Path(args.home).resolve() if args.home else None
+    )
+    print(f"manager  {service.manager}")
+    print(f"unit     {service.unit_path}")
+    if args.write:
+        existing = (
+            service.unit_path.read_text(encoding="utf-8")
+            if service.unit_path.exists()
+            else None
+        )
+        if existing is not None and existing != service.unit:
+            raise CairnError(
+                "invalid_arguments",
+                f"{service.unit_path} already exists and is not the unit Cairn would write; "
+                "read it, then move it aside if it is no longer wanted",
+                detail={"unit": str(service.unit_path)},
+            )
+        if existing is None:
+            service.unit_path.parent.mkdir(parents=True, exist_ok=True)
+            write_text(service.unit_path, service.unit)
+            print("wrote    the unit above; nothing is running yet")
+        else:
+            print("wrote    nothing: the unit above is already exactly this")
+    print(f"install  {' '.join(service.install)}")
+    print(f"status   {' '.join(service.status)}")
+    print(f"stop     {' '.join(service.stop)}")
+    print(f"\n{service.unit}")
+    print(SCHEDULER_FACTS)
     return 0
 
 
@@ -225,7 +337,22 @@ def main(argv: list[str] | None = None) -> int:
     child.add_argument("--dags")
     child.add_argument("--base-config")
     child.add_argument("--engine-records")
+    # Both are the engine's own files, named here for the same reason the records root is:
+    # a test, and an operator on a machine with a second engine home, must be able to ask
+    # about that one rather than about whichever this process resolves.
+    child.add_argument("--scheduler-registry")
+    child.add_argument("--scheduler-pause")
     child.set_defaults(handler=_cmd_status)
+
+    child = sub.add_parser("service")
+    child.add_argument("--dags")
+    # The unit belongs to the account that will run the agent sessions, so it goes under
+    # that account's own home — named here so a caller can say which one.
+    child.add_argument("--home")
+    # Writing the unit is asked for, never a side effect of reading the guidance: it changes
+    # what the machine does at every boot from then on.
+    child.add_argument("--write", action="store_true")
+    child.set_defaults(handler=_cmd_service)
 
     child = sub.add_parser("start")
     child.add_argument("--dags")

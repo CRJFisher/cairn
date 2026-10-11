@@ -13,7 +13,6 @@ hide the exclusion the report exists to show, so every value goes through `for_t
 
 from __future__ import annotations
 
-import textwrap
 from collections.abc import Mapping
 
 from cairn.report.sinks import Rendering, Scribe, for_terminal, join, one_line
@@ -30,21 +29,29 @@ from cairn.report.spine import (
     Table,
     Verbatim,
 )
+from cairn.report.width import display_width, fold, pad, terminal_width
 
-WIDTH = 88
 INDENT = "  "
 
 
-def render(document: Document, facts: Mapping[str, str]) -> Rendering:
-    """The whole run, top to bottom, in the order the spine fixed."""
+def render(
+    document: Document, facts: Mapping[str, str], *, width: int | None = None
+) -> Rendering:
+    """The whole run, top to bottom, in the order the spine fixed.
+
+    `width` is the window this is laid out against. Measured from the terminal when the
+    caller does not say ([width.py]), so a narrow window folds rather than wrapping in the
+    emulator — which breaks the alignment this rendering carries its weighting in.
+    """
     scribe = Scribe(facts)
+    columns = terminal_width(width)
     lines: list[str] = []
     for section in document.sections:
         scribe.enter(section.question.key)
         lines.append(f"== {section.question.heading.upper()} ==")
         lines.append("")
         for block in section.blocks:
-            lines.extend(_block(block, scribe))
+            lines.extend(_block(block, scribe, columns))
     return Rendering("\n".join(lines).rstrip() + "\n", tuple(scribe.stated))
 
 
@@ -82,22 +89,22 @@ def _chrome(text: str) -> str:
     return str(for_terminal(one_line(text)))
 
 
-def _block(block: Block, scribe: Scribe) -> list[str]:
+def _block(block: Block, scribe: Scribe, columns: int) -> list[str]:
     if isinstance(block, Nothing):
         return [_chrome(block.text), ""]
     if isinstance(block, (Headline, Statement)):
-        return [*_wrap(_sentence(block.text, scribe), ""), ""]
+        return [*_wrap(_sentence(block.text, scribe), "", columns), ""]
     if isinstance(block, Fields):
-        return _fields(block, scribe)
+        return _fields(block, scribe, columns)
     if isinstance(block, Table):
-        return _table(block, scribe)
+        return _table(block, scribe, columns)
     if isinstance(block, Facing):
-        return _facing(block, scribe)
+        return _facing(block, scribe, columns)
     if isinstance(block, Verbatim):
         return _verbatim(block, scribe)
     # No final check: exhausting the union leaves `block` narrowed to `Diagram`, so a
     # ninth block kind makes this call a type error rather than a silent mis-render.
-    return _diagram(block, scribe)
+    return _diagram(block, scribe, columns)
 
 
 def _sentence(cells: tuple[Cell, ...], scribe: Scribe) -> str:
@@ -105,30 +112,43 @@ def _sentence(cells: tuple[Cell, ...], scribe: Scribe) -> str:
     return join([_text(scribe, cell) for cell in cells])
 
 
-def _wrap(text: str, indent: str) -> list[str]:
-    return textwrap.wrap(
-        text,
-        width=WIDTH,
-        initial_indent=indent,
-        subsequent_indent=indent,
-        break_long_words=False,
-        break_on_hyphens=False,
-    ) or [indent + text]
+def _wrap(text: str, indent: str, columns: int) -> list[str]:
+    return fold(text, width=columns, indent=indent)
 
 
-def _fields(block: Fields, scribe: Scribe) -> list[str]:
+def _fields(block: Fields, scribe: Scribe, columns: int) -> list[str]:
+    """A label and its value on one line, with a long value folded under the value column.
+
+    Folded on whitespace only, so a path, a URL or a session id — one word with nothing to
+    fold at — stays whole and overruns rather than arriving in halves a reader can neither
+    paste nor search for. The continuation is indented past the label, so the label column
+    being blank is what says the line is a continuation.
+    """
     lines: list[str] = []
     if block.title is not None:
         lines.append(f"{_chrome(block.title)}:")
-    width = max((len(label) for label, _ in block.rows), default=0)
+    # Padded by display cells rather than by codepoint count: a column of labels aligned by
+    # `len` ragged-edges on the first one that is not Latin ([width.py]).
+    width = max((display_width(_chrome(label)) for label, _ in block.rows), default=0)
+    indent = INDENT + " " * (width + 2)
+    budget = max(columns - display_width(indent), 1)
     for label, cell in block.rows:
         scribe.under(label)
-        lines.append(f"{INDENT}{_chrome(label).ljust(width)}  {_line(scribe, cell)}")
+        folded = fold(_line(scribe, cell), width=budget)
+        if display_width(folded[0]) > budget:
+            # One word with nothing to fold at — a path, a URL, a session id — and no room
+            # for it beside the label. It gets a line of its own, so it is still one
+            # selection, rather than pushing the label's line off the screen.
+            lines.append(f"{INDENT}{_chrome(label)}")
+            lines.extend(indent + fragment for fragment in folded)
+            continue
+        lines.append(f"{INDENT}{pad(_chrome(label), width)}  {folded[0]}")
+        lines.extend(indent + fragment for fragment in folded[1:])
     lines.append("")
     return lines
 
 
-def _table(block: Table, scribe: Scribe) -> list[str]:
+def _table(block: Table, scribe: Scribe, columns: int) -> list[str]:
     """One row per paragraph, one field per line.
 
     Not a grid. A column padded to fit an agent's own summary is a column an agent chooses
@@ -142,43 +162,50 @@ def _table(block: Table, scribe: Scribe) -> list[str]:
             _labelled(scribe, column, cell)
             for column, cell in zip(block.columns, row, strict=True)
         ]
-        lines.append(f"{INDENT}{_chrome(block.columns[0])}: {rendered[0]}")
+        lines.extend(_wrap(f"{_chrome(block.columns[0])}: {rendered[0]}", INDENT, columns))
         for column, value in zip(block.columns[1:], rendered[1:], strict=True):
-            lines.extend(_wrap(f"{_chrome(column)}: {value}", INDENT * 2))
+            lines.extend(_wrap(f"{_chrome(column)}: {value}", INDENT * 2, columns))
         lines.append("")
     return lines
 
 
-def _facing(block: Facing, scribe: Scribe) -> list[str]:
+def _facing(block: Facing, scribe: Scribe, columns: int) -> list[str]:
     return [
-        f"{_line(scribe, block.subject)}: two accounts that do not agree.",
-        *_wrap(f"{_chrome(block.left_label)}: {_text(scribe, block.left)}", INDENT),
-        *_wrap(f"{_chrome(block.right_label)}: {_text(scribe, block.right)}", INDENT),
+        *_wrap(
+            f"{_line(scribe, block.subject)}: two accounts that do not agree.", "", columns
+        ),
+        *_wrap(f"{_chrome(block.left_label)}: {_text(scribe, block.left)}", INDENT, columns),
+        *_wrap(f"{_chrome(block.right_label)}: {_text(scribe, block.right)}", INDENT, columns),
         "",
     ]
 
 
 def _verbatim(block: Verbatim, scribe: Scribe) -> list[str]:
+    """Never wrapped, never indented, never decorated: this is the text a person copies.
+
+    The payload's own lines go out at column zero. An indent is a mutation like any other:
+    a reader who selects the block gets two spaces on the front of every line of a command
+    they are about to paste, or of a payload they are about to compare ([29 D]).
+    """
     scribe.under(block.title or "")
-    """Never wrapped, never decorated: this is the text a person copies."""
     lines: list[str] = []
     if block.title is not None:
         lines.append(f"{_chrome(block.title)}:")
-    lines.extend(f"{INDENT}{line}" for line in _text(scribe, block.text).split("\n"))
+    lines.extend(_text(scribe, block.text).split("\n"))
     lines.append("")
     return lines
 
 
-def _diagram(block: Diagram, scribe: Scribe) -> list[str]:
+def _diagram(block: Diagram, scribe: Scribe, columns: int) -> list[str]:
     """The graph as its layers, which is what a terminal can carry of a drawing."""
-    lines = [*_wrap(_sentence(block.caption, scribe), ""), ""]
+    lines = [*_wrap(_sentence(block.caption, scribe), "", columns), ""]
     for layer in sorted({node.layer for node in block.nodes}):
         names = [
             f"{for_terminal(one_line(node.name))} ({for_terminal(one_line(node.status))})"
             for node in block.nodes
             if node.layer == layer
         ]
-        lines.extend(_wrap(f"{layer + 1}. {', '.join(names)}", INDENT))
+        lines.extend(_wrap(f"{layer + 1}. {', '.join(names)}", INDENT, columns))
     lines.append("")
     return lines
 

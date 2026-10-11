@@ -32,24 +32,34 @@ hazard can actually fire.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import sys
 import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast
 
+from cairn import liveness
 from cairn.baseconfig import (
     assert_catchup_disabled,
     assert_dag_retry_disabled,
     base_config_path,
 )
 from cairn.core import CairnError
-from cairn.enginehome import ENGINE_BINARY, dags_directory, run_records_path
+from cairn.enginehome import (
+    ENGINE_BINARY,
+    dags_directory,
+    run_records_path,
+    scheduler_pause_path,
+    scheduler_registry_directory,
+)
 from cairn.plan.ids import is_plan_slug
 from cairn.record import engine
 from cairn.supervise import find_status_files, last_record
 from cairn.workflow.gate import Admission, admit
+from cairn.workflow.pin import package_root
 from cairn.workflow.schema import WORKFLOW_SUFFIX
 from cairn.workflow.stamp import workflow_path
 
@@ -204,6 +214,195 @@ def assert_safe_to_start(
             detail={**exc.detail, "would_re_execute": [run.run_id for run in would]},
         ) from exc
     return queued_runs(run_records_path() if records is None else records)
+
+
+# What a reader is told about the one daemon a recurring trigger needs. Six words, because
+# "is there a scheduler" has six honest answers and the old reading had one: it listed the
+# definitions and the queue and said nothing at all about whether anything was alive, so a
+# queued run was reported as draining into nothing while a scheduler was running ([29 C]).
+SCHEDULER_RUNNING = "running"
+# A live process the engine's API has been told to hold. A distinct state rather than a
+# dead one: the process is there, it is firing nothing, and starting a second would not help.
+SCHEDULER_PAUSED = "paused"
+SCHEDULER_STOPPED = "stopped"
+# The engine's registry names a process that is now somebody else's — an identifier the
+# kernel handed out again after the scheduler died without clearing its record.
+SCHEDULER_STALE = "stale_identity"
+# The probe itself was refused. Cairn is ordinarily driven from inside a harness whose shell
+# may not inspect processes, and "I could not look" is never "it is not there" ([liveness.py]).
+SCHEDULER_INACCESSIBLE = "inaccessible"
+# The engine has no record of a scheduler at all, which does not prove none is running: one
+# started against another `DAGU_HOME` keeps its registry somewhere this reader is not looking.
+SCHEDULER_UNKNOWN = "unknown"
+SCHEDULER_STATES: tuple[str, ...] = (
+    SCHEDULER_RUNNING,
+    SCHEDULER_PAUSED,
+    SCHEDULER_STOPPED,
+    SCHEDULER_STALE,
+    SCHEDULER_INACCESSIBLE,
+    SCHEDULER_UNKNOWN,
+)
+
+SENTENCE_BY_SCHEDULER_STATE: dict[str, str] = {
+    SCHEDULER_RUNNING: "a scheduler process is running: cron schedules fire and the queue drains",
+    SCHEDULER_PAUSED: (
+        "a scheduler process is running and the engine's own pause is set, so it fires "
+        "nothing until it is resumed through the engine's API; starting a second scheduler "
+        "would not change that"
+    ),
+    SCHEDULER_STOPPED: (
+        "no scheduler is running: every process the engine recorded has ended, so a cron "
+        "schedule fires never and a queued run waits indefinitely"
+    ),
+    SCHEDULER_STALE: (
+        "no scheduler is running: the engine's record names a process identifier that now "
+        "belongs to something else, which is what a scheduler killed outright leaves behind"
+    ),
+    SCHEDULER_INACCESSIBLE: (
+        "whether a scheduler is running could not be established from this shell, which may "
+        "not inspect processes — so this says nothing either way"
+    ),
+    SCHEDULER_UNKNOWN: (
+        "the engine holds no record of a scheduler on this machine. That is what a machine "
+        "with none looks like, and also what one looks like whose scheduler keeps its state "
+        "under a different DAGU_HOME"
+    ),
+}
+
+# Only this state is evidence that nothing will drain a queue. Every other one either proves
+# a drainer or proves nothing, and a report that said "nothing is draining the queue" on the
+# strength of not having looked is the defect this exists to close.
+DRAINS_NOTHING: tuple[str, ...] = (SCHEDULER_STOPPED, SCHEDULER_STALE)
+
+
+class SchedulerProcess(NamedTuple):
+    """One process the engine's registry claims is a scheduler, and what it really is."""
+
+    identity: str
+    pid: int
+    started_at: str | None
+    reading: str
+
+
+class SchedulerStatus(NamedTuple):
+    """Whether a scheduler exists, read from the engine's record and Cairn's own probe.
+
+    `paused_since` is set wherever the engine's pause flag is on, whatever the state: a
+    paused flag over a stopped scheduler is a standing instruction the next one will obey,
+    and a person starting one has to know it is there.
+    """
+
+    state: str
+    processes: list[SchedulerProcess]
+    paused_since: str | None
+
+    @property
+    def drains(self) -> bool:
+        return self.state == SCHEDULER_RUNNING
+
+    @property
+    def sentence(self) -> str:
+        return SENTENCE_BY_SCHEDULER_STATE[self.state]
+
+
+def _paused_since(path: Path) -> str | None:
+    """The moment the engine's global pause was set, where it is set at all."""
+    try:
+        document: Any = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(document, dict) or not cast(dict[str, Any], document).get("paused"):
+        return None
+    return engine.moment(cast(dict[str, Any], document).get("pausedAt")) or "an unrecorded time"
+
+
+def _registered_schedulers(directory: Path) -> list[SchedulerProcess] | None:
+    """Every process the engine's registry claims, adjudicated by Cairn's own probe.
+
+    None where the registry itself could not be read, which is a reader that could not look
+    rather than a machine with no scheduler. A registry entry is a *claim*: measured against
+    Dagu 2.18.2, killing a scheduler outright leaves its file in place, so the file says
+    which process to ask about and nothing more ([liveness.py]).
+    """
+    try:
+        # Listed rather than globbed: `Path.glob` swallows the refusal and answers with an
+        # empty directory, which would report a registry this shell may not read as a
+        # machine that has never registered a scheduler.
+        names = sorted(os.listdir(directory))
+    except FileNotFoundError:
+        # The engine has registered no scheduler here, which is a different answer from
+        # not being able to look.
+        return []
+    except OSError:
+        return None
+    entries = [directory / name for name in names if name.endswith(".json")]
+    found: list[SchedulerProcess] = []
+    for path in entries:
+        try:
+            document: Any = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            # A half-written or unreadable entry is a claim Cairn cannot adjudicate, which
+            # is the inaccessible reading rather than a scheduler that is not there.
+            found.append(
+                SchedulerProcess(path.stem, 0, None, liveness.PROCESS_UNREADABLE)
+            )
+            continue
+        if not isinstance(document, dict):
+            found.append(
+                SchedulerProcess(path.stem, 0, None, liveness.PROCESS_UNREADABLE)
+            )
+            continue
+        claim = cast(dict[str, Any], document)
+        pid = claim.get("pid")
+        started = engine.moment(claim.get("startedAt"))
+        if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+            found.append(
+                SchedulerProcess(
+                    engine.text(claim.get("id")) or path.stem,
+                    0,
+                    started,
+                    liveness.PROCESS_UNREADABLE,
+                )
+            )
+            continue
+        found.append(
+            SchedulerProcess(
+                identity=engine.text(claim.get("id")) or path.stem,
+                pid=pid,
+                started_at=started,
+                reading=liveness.process_reading(pid, _seconds(started)),
+            )
+        )
+    return found
+
+
+def scheduler_status(
+    *, registry: Path | None = None, pause: Path | None = None
+) -> SchedulerStatus:
+    """Whether this machine has a scheduler, saying only what was measured.
+
+    The engine's own registry says which processes to ask about and Cairn's process check
+    decides what they are, because the registry outlives the process it names. Nothing here
+    asks the engine's API: Cairn holds no credential for it by construction, and a question
+    that could only be answered through it could not be answered at all.
+    """
+    directory = scheduler_registry_directory() if registry is None else registry
+    paused_since = _paused_since(scheduler_pause_path() if pause is None else pause)
+    processes = _registered_schedulers(directory)
+    if processes is None:
+        return SchedulerStatus(SCHEDULER_INACCESSIBLE, [], paused_since)
+    readings = {process.reading for process in processes}
+    if not processes:
+        return SchedulerStatus(SCHEDULER_UNKNOWN, processes, paused_since)
+    if liveness.PROCESS_LIVE in readings:
+        state = SCHEDULER_PAUSED if paused_since is not None else SCHEDULER_RUNNING
+    elif liveness.PROCESS_UNREADABLE in readings:
+        state = SCHEDULER_INACCESSIBLE
+    elif liveness.PROCESS_RECYCLED in readings:
+        state = SCHEDULER_STALE
+    else:
+        state = SCHEDULER_STOPPED
+    return SchedulerStatus(state, processes, paused_since)
 
 
 def published_path(plan: str, *, dags: Path | None = None) -> Path:
@@ -378,14 +577,155 @@ def start(*, dags: Path | None = None) -> None:
     `execvp` rather than a child, so the daemon inherits this process rather than gaining a
     supervisor Cairn would then have to keep alive — a signal sent to it reaches the engine,
     and Cairn leaves no process tree behind.
+
+    A foreground process is not an operational story on its own: it dies with the terminal
+    that started it. The machine's own service manager is what keeps it alive across a
+    logout and a reboot, and `service_plan` states the unit for it ([29 C]).
     """
     command = scheduler_command(dags=dags)
     os.execvp(command[0], command)
 
 
+# The label and filename the unit is installed under, on both platforms, so the status and
+# stop commands name the same service the install created.
+SERVICE_LABEL = "dev.cairn.scheduler"
+SERVICE_LAUNCHD = "launchd"
+SERVICE_SYSTEMD = "systemd"
+
+
+class ServicePlan(NamedTuple):
+    """One machine's supported way to keep a scheduler alive, as text a person can run.
+
+    Every value is read from this process rather than described: the interpreter running
+    now, the Cairn being imported now, and the directory this engine watches. A unit naming
+    a bare `python3` or a guessed checkout is a unit that starts something else — or
+    nothing, with the failure in a log nobody reads.
+    """
+
+    manager: str
+    unit_path: Path
+    unit: str
+    install: list[str]
+    status: list[str]
+    stop: list[str]
+
+
+def _program(dags: Path) -> list[str]:
+    """What a unit runs. Cairn's own command, never the engine's, and for one reason: the
+    hazard assertion is Cairn's and a unit that ran `dagu scheduler` would skip it — arming,
+    on every boot, the retry scanner that re-executes agent sessions ([assert_safe_to_start]).
+    """
+    return [
+        sys.executable,
+        "-m",
+        "cairn",
+        "schedule",
+        "start",
+        "--dags",
+        str(dags),
+    ]
+
+
+def _launchd_plist(program: list[str], log: Path) -> str:
+    arguments = "\n".join(f"    <string>{value}</string>" for value in program)
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>{SERVICE_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+{arguments}
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONPATH</key><string>{package_root()}</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>{log}</string>
+  <key>StandardErrorPath</key><string>{log}</string>
+</dict>
+</plist>
+"""
+
+
+def _systemd_unit(program: list[str], dags: Path) -> str:
+    return f"""[Unit]
+Description=Cairn's Dagu scheduler, watching {dags}
+
+[Service]
+Type=simple
+Environment=PYTHONPATH={package_root()}
+ExecStart={" ".join(program)}
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+"""
+
+
+def service_plan(*, dags: Path | None = None, home: Path | None = None) -> ServicePlan:
+    """How this machine keeps a scheduler running, and the three commands that drive it.
+
+    A user-level service on both platforms, never a system one. The scheduler runs agent
+    sessions against the repositories of the person who installed it and authenticates as
+    that person's own agent installation, so a root service would be running their work as
+    somebody else ([README security posture]).
+
+    A refusal still refuses under a service manager: `schedule start` asserts the machine is
+    safe before it becomes the scheduler, so an unsafe machine produces a service that exits
+    and is restarted, with the refusal in the log the unit names. That is the intended
+    behaviour — the remedy is the machine, which the refusal names, and not the unit.
+    """
+    root = Path.home() if home is None else home
+    watched = dags_directory() if dags is None else dags
+    program = _program(watched)
+    if sys.platform == "darwin":
+        log = root / "Library" / "Logs" / f"{SERVICE_LABEL}.log"
+        target = f"gui/{os.getuid()}"
+        return ServicePlan(
+            manager=SERVICE_LAUNCHD,
+            unit_path=root / "Library" / "LaunchAgents" / f"{SERVICE_LABEL}.plist",
+            unit=_launchd_plist(program, log),
+            install=[
+                "launchctl",
+                "bootstrap",
+                target,
+                str(root / "Library" / "LaunchAgents" / f"{SERVICE_LABEL}.plist"),
+            ],
+            status=["launchctl", "print", f"{target}/{SERVICE_LABEL}"],
+            stop=["launchctl", "bootout", f"{target}/{SERVICE_LABEL}"],
+        )
+    return ServicePlan(
+        manager=SERVICE_SYSTEMD,
+        unit_path=root / ".config" / "systemd" / "user" / f"{SERVICE_LABEL}.service",
+        unit=_systemd_unit(program, watched),
+        install=["systemctl", "--user", "enable", "--now", f"{SERVICE_LABEL}.service"],
+        status=["systemctl", "--user", "status", f"{SERVICE_LABEL}.service"],
+        stop=["systemctl", "--user", "disable", "--now", f"{SERVICE_LABEL}.service"],
+    )
+
+
 __all__ = [
+    "DRAINS_NOTHING",
     "RETRY_SCANNER_HOURS",
+    "SCHEDULER_INACCESSIBLE",
+    "SCHEDULER_PAUSED",
+    "SCHEDULER_RUNNING",
+    "SCHEDULER_STALE",
+    "SCHEDULER_STATES",
+    "SCHEDULER_STOPPED",
+    "SCHEDULER_UNKNOWN",
+    "SENTENCE_BY_SCHEDULER_STATE",
+    "SERVICE_LABEL",
+    "SERVICE_LAUNCHD",
+    "SERVICE_SYSTEMD",
     "EngineRun",
+    "SchedulerProcess",
+    "SchedulerStatus",
+    "ServicePlan",
     "assert_safe_to_start",
     "describe_run",
     "failed_runs_since",
@@ -395,5 +735,7 @@ __all__ = [
     "queued_runs",
     "remove",
     "scheduler_command",
+    "scheduler_status",
+    "service_plan",
     "start",
 ]

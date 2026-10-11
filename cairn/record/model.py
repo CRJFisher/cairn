@@ -94,6 +94,13 @@ class StepRecord(TypedDict):
     """One step of the plan, and everything this run knows about it."""
 
     step_id: str
+    # What the plan document calls this step: its `title`, and the `slug` it was written
+    # under, both read from the graph this run was generated from. The engine id above is
+    # that slug sanitised, with a numeric suffix where two of them sanitised alike, so a
+    # report carrying only it sends a reader to the graph to find out which step it is
+    # ([29 B]). Absent where the graph this run ran is no longer on disk.
+    title: str | None
+    slug: str | None
     outcome: str
     overlays: list[str]
     cause: str | None
@@ -132,9 +139,13 @@ class StepRecord(TypedDict):
     # and the kill survives nowhere else ([22 A]).
     timeout_seconds: int | None
     elapsed_seconds: float | None
-    # The end of what a failed assertion printed, read from the engine's own log for it,
-    # so the report can quote why the gate closed rather than name a log path ([23 B]).
-    assertion_tail: str | None
+    # The end of what a failed assertion printed, read from the engine's own logs for it, so
+    # the report can quote why the gate closed rather than name a log path ([23 B]). One
+    # field per channel, because a runner that chatters on standard output and names the
+    # failure on standard error would otherwise have the failure hidden by the chatter — the
+    # two are different evidence and the record keeps them apart ([29 D]).
+    assertion_stdout: str | None
+    assertion_stderr: str | None
     # Present only on a step that declared `remediate` and whose remedy gate left an account.
     remedy: Remedy | None
     # Present on an agent step that reached its session's admission, or is holding now.

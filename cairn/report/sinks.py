@@ -50,8 +50,6 @@ _MARKDOWN_CELL = re.compile(r"([|])")
 # heading inside the report of a run that did not.
 _MARKDOWN_LEADER = re.compile(r"^( {0,3})([#>\-+*=|~]|\d+[.)])")
 _HTTP = re.compile(r"https?://", re.IGNORECASE)
-# What a one-line context cannot carry, folded to a space without touching anything else.
-_BREAK = re.compile(r"[\n\t\r]+")
 
 
 class Stated(NamedTuple):
@@ -134,16 +132,22 @@ def for_markdown_cell(text: Raw) -> Escaped:
 
 
 def for_markdown_code(text: Raw) -> Escaped:
-    """A span whose fence outruns any backtick run inside it, so the text survives intact.
+    """A fenced block whose fence outruns any backtick run inside it, payload untouched.
 
-    Nothing inside is escaped, which is the point: a resume command that reached a reader
-    with an `&amp;&amp;` in it is a receipt that fails when it is pasted.
+    Nothing inside is escaped and nothing inside is reshaped, which is the point: a block
+    labelled verbatim that reached a reader with its newlines folded to spaces, its tabs
+    squeezed or its ampersands entitised is not the payload any more — and the two things a
+    reader does with it are paste it and compare it ([29 D]).
+
+    A fence rather than an inline span, because an inline span cannot carry a line break at
+    all. Three backticks at minimum, and longer than the longest run inside, so no line of
+    the payload can close the block early — and no indentation, because four spaces of it
+    would be a second code block nested in this one.
     """
-    flat = Raw(_BREAK.sub(" ", normalise(text)))
-    longest = max((len(run) for run in re.findall(r"`+", flat)), default=0)
-    fence = "`" * (longest + 1)
-    pad = " " if flat.startswith("`") or flat.endswith("`") else ""
-    return Escaped(f"{fence}{pad}{flat}{pad}{fence}")
+    body = normalise(text)
+    longest = max((len(run) for run in re.findall(r"`+", body)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return Escaped(f"{fence}\n{body}\n{fence}")
 
 
 def for_html(text: Raw) -> Escaped:
