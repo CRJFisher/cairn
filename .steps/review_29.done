@@ -1,0 +1,7 @@
+{
+  "key": "once",
+  "run_id": "20261011T160709Z-1bfc662d",
+  "scope": "once",
+  "step_id": "review_29",
+  "summary": "Working tree started clean (no partial work from an earlier attempt), so all three actionable findings from the prior /code-review low --fix pass were applied fresh: cairn/record/runs.py's `_order` n\u2026"
+}

@@ -30,6 +30,7 @@ from cairn.record.facts import canonical_facts
 from cairn.record.runs import RunEntry, latest_run, list_runs, unreadable_runs
 from cairn.record.store import build_run_record, write_record
 from cairn.record.vocabulary import EXIT_NO_RECORD
+from cairn.report.width import display_width, pad
 
 VERBS = frozenset({"build", "facts", "list", "latest"})
 
@@ -87,12 +88,14 @@ def _print(entries: list[RunEntry]) -> None:
     """One line per run, aligned, with each refusal spelled out under its own entry."""
     rows = [_row(entry) for entry in entries]
     widths = [
-        max(len(column), *(len(row[index]) for row in rows)) if rows else len(column)
+        max(display_width(column), *(display_width(row[index]) for row in rows))
+        if rows
+        else display_width(column)
         for index, column in enumerate(COLUMNS)
     ]
-    print("  ".join(column.ljust(width) for column, width in zip(COLUMNS, widths, strict=True)))
+    print("  ".join(pad(column, width) for column, width in zip(COLUMNS, widths, strict=True)))
     for entry, row in zip(entries, rows, strict=True):
-        print("  ".join(value.ljust(width) for value, width in zip(row, widths, strict=True)).rstrip())
+        print("  ".join(pad(value, width) for value, width in zip(row, widths, strict=True)).rstrip())
         if entry.fault is not None:
             print(f"    {entry.fault}")
 

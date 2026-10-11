@@ -240,6 +240,8 @@ def _drainage(status: SchedulerStatus) -> str:
     """
     if status.state in DRAINS_NOTHING:
         return "nothing is draining the queue"
+    if status.state == SCHEDULER_PAUSED:
+        return "a scheduler is running but paused, so it drains nothing until it is resumed"
     if status.drains:
         return "a scheduler is running, so it is queued behind other work rather than stranded"
     return f"whether anything is draining it is not established: {status.sentence}"

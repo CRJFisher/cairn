@@ -127,8 +127,10 @@ def _order(entry: RunEntry) -> tuple[str, str]:
 
     A run whose record carries no start moment sorts by its id alone, which for a run Cairn
     named is still chronological — the identity is minted from the clock ([skill/cli.py]).
+    An empty placeholder here would instead sort every such run as the oldest, burying the
+    one that crashed too badly to leave a start moment behind the ones that merely finished.
     """
-    return (entry.started_at or "", entry.run_id)
+    return (entry.started_at or entry.run_id, entry.run_id)
 
 
 def list_runs(runs_root: Path, *, plan: str | None = None) -> list[RunEntry]:
