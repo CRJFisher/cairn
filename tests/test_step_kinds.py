@@ -37,7 +37,12 @@ from cairn.plan.schema import (
     WAIT_REPORT_GRACE,
     normalise,
 )
-from cairn.protocol import RESUME_FOR_REPORT, StepPrompt, compose_prompt
+from cairn.protocol import (
+    REFILE_AFTER_REFUSALS,
+    RESUME_FOR_REPORT,
+    StepPrompt,
+    compose_prompt,
+)
 from cairn.providers import (
     BACKGROUND_WAIT_CEILING,
     ENDED_WITHOUT_REPORTING,
@@ -1552,6 +1557,12 @@ class ASessionThatEndedWithoutReportingIsResumedOnce(unittest.TestCase):
                 self.assertTrue(ended_without_reporting(0, {**silent, "stop_reason": stopped}))
         # A session that failed for its own typed reason is not a silence.
         self.assertFalse(ended_without_reporting(1, silent))
+        # One the provider stopped for refusing every report it filed is.
+        self.assertTrue(
+            ended_without_reporting(
+                1, {**silent, "terminal_reason": "structured_output_retry_exhausted"}
+            )
+        )
         self.assertFalse(
             ended_without_reporting(
                 0, {"stop_reason": "tool_use", "structured_output": {"status": "done"}}
@@ -1596,6 +1607,34 @@ class ASessionThatEndedWithoutReportingIsResumedOnce(unittest.TestCase):
         self.assertTrue(made[1].stopped)
         self.assertEqual(caught.exception.cause, "provider_protocol")
         self.assertEqual(caught.exception.detail["resumed_for_report"], RESUME_STILL_SILENT)
+
+    REFUSED_EVERY_REPORT: ClassVar[dict[str, Any]] = {
+        "exit": 1,
+        "subtype": "error_max_structured_output_retries",
+        "terminal_reason": "structured_output_retry_exhausted",
+        "structured_output": None,
+    }
+
+    def test_a_session_whose_every_report_was_refused_is_asked_once_more(self) -> None:
+        """Measured: a review that had finished its work, and found nothing to fix, closed
+        its summary wrongly five times and was recorded as a failure over that work."""
+        factory, made = self._scripted(self.REFUSED_EVERY_REPORT)
+        result = self._ran(factory)
+        self.assertEqual(len(made), 2, "the session was not resumed exactly once")
+        self.assertEqual(made[1].prompt, REFILE_AFTER_REFUSALS)
+        self.assertIn("--resume", made[1].command)
+        self.assertEqual(result.status, "done")
+        self.assertEqual(result.detail["resumed_for_report"], RESUME_ATTEMPTED)
+        self.assertIs(result.detail[ENDED_WITHOUT_REPORTING], True)
+
+    def test_a_session_still_refused_after_the_ask_fails_with_the_rescue_on_record(self) -> None:
+        factory, made = self._scripted(self.REFUSED_EVERY_REPORT, self.REFUSED_EVERY_REPORT)
+        result = self._ran(factory)
+        self.assertEqual(len(made), 2)
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.cause, "provider_protocol")
+        self.assertEqual(result.detail["resumed_for_report"], RESUME_STILL_SILENT)
+        self.assertIs(result.detail[ENDED_WITHOUT_REPORTING], True)
 
     def test_a_resume_that_fails_for_its_own_reason_stays_the_silence_it_was(self) -> None:
         """A resume that ends on its own terminal reason must not overwrite the honest cause:

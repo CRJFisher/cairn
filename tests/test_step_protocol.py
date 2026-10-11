@@ -41,6 +41,7 @@ from cairn.plan.schema import GRAPH_VERSION, SCOPES, normalise
 from cairn.protocol import (
     FOLLOW_THROUGH,
     PREAMBLE,
+    REFILE_AFTER_REFUSALS,
     REFILE_REPORT,
     STEP_REPORT_SCHEMA,
     StepPrompt,
@@ -323,6 +324,14 @@ class TheProtocolIsStatedOnce(unittest.TestCase):
 
     def test_the_refile_ask_is_reproduced_verbatim_in_the_document(self) -> None:
         self.assertIn(REFILE_REPORT.strip(), PROTOCOL_DOC.read_text(encoding="utf-8"))
+
+    def test_the_ask_after_every_report_was_refused_is_reproduced_in_the_document(self) -> None:
+        self.assertIn(REFILE_AFTER_REFUSALS.strip(), PROTOCOL_DOC.read_text(encoding="utf-8"))
+
+    def test_the_summary_is_the_last_field_a_session_writes(self) -> None:
+        """Measured: sessions closing the summary wrongly lost every field after it."""
+        self.assertEqual(list(STEP_REPORT_SCHEMA["properties"])[-1], "summary")
+        self.assertEqual(STEP_REPORT_SCHEMA["required"][-1], "summary")
 
     def test_report_schema_is_reproduced_in_the_document(self) -> None:
         blocks = re.findall(r"```json\n(.*?)```", PROTOCOL_DOC.read_text(), re.DOTALL)

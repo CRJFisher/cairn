@@ -93,7 +93,9 @@ Two runs of `remaining-plans-3` stopped at the subscription's allowance. In orde
    that moment has to belong to the account the resume will run under.
 3. [44](44-a-held-run-resumes-itself.md) removes the stall itself: the run resumes when the
    window measures open.
-4. [45](45-spending-the-allowance-knowingly.md) last: it records what each step costs, forecasts
+4. [46](46-a-report-refused-five-times.md) A and B are built: a step whose every report was
+   refused is asked once more instead of failing. C and D remain.
+5. [45](45-spending-the-allowance-knowingly.md) last: it records what each step costs, forecasts
    the queue against what is left, and paces the week. Its value grows with the records the
    first three leave.
 

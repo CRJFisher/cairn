@@ -138,8 +138,8 @@ module, and **Cairn's own denials lead**: a fixed set the plan adds to and canno
 because those tools' whole contract is that something will re-invoke the session and under
 `-p` nothing does. The `--settings` document arms one `Stop` hook per session and is composed
 per invocation, so nothing is written to any settings file on the machine. A session that
-ends a turn without its structured report is resumed once, `--resume` in place of
-`--session-id` ([step-protocol.md](step-protocol.md)). Cairn handles
+ends a turn without its structured report, or whose every report the provider refused, is
+resumed once, `--resume` in place of `--session-id` ([step-protocol.md](step-protocol.md)). Cairn handles
 no credentials, and the only process group it creates is the detached engine's
 ([supervision.md](supervision.md)).
 

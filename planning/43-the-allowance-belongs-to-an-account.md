@@ -21,6 +21,11 @@ By the time the report was read, Claude Code was logged in to a different subscr
 it answered `five_hour: allowed` with no weekly warning. The report's instruction was true of an
 account no session would use.
 
+Its recovery, `20261011T154219Z-f8e59892`, admitted `review_29` under the new account, but
+the step's recorded admission reading still lists `seven_day: allowed_warning, 98%`, read 15
+hours earlier, under the old account. Admission set it aside as stale. The record shows it as
+what the step was admitted on.
+
 Nothing in Cairn can see this:
 
 - **The shared reading has no owner.** `runs/.headroom/reading.json` holds windows by name only

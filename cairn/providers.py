@@ -36,6 +36,7 @@ from cairn.core import (
 from cairn.hooks import HOOK_VERB, STOP_EVENT
 from cairn.plan.schema import AGENT_REPORT_GRACE, AGENT_RESUME_MARGIN, HANG_GUARD
 from cairn.protocol import (
+    REFILE_AFTER_REFUSALS,
     RESUME_FOR_REPORT,
     STEP_REPORT_SCHEMA,
     StepPrompt,
@@ -333,7 +334,7 @@ def _translate_result(
         causes: dict[str, str] = {
             "blocking_limit": RATE_LIMITED,
             "max_turns": "turn_limit",
-            "structured_output_retry_exhausted": "provider_protocol",
+            REPORTS_EXHAUSTED: "provider_protocol",
         }
         cause = (
             causes.get(terminal_reason, PROVIDER_FAILED)
@@ -410,6 +411,8 @@ PROVIDER_BINARY = "claude"
 # three `Cron*` tools are gone from the session's tool list and `Monitor` and `Agent` remain.
 # An unmatched deny pattern is silently a no-op, which reads as protection while being none.
 NEVER_DELIVERED: tuple[str, ...] = ("ScheduleWakeup", "Cron*")
+# The terminal reason of a session the provider stopped after refusing every report it filed.
+REPORTS_EXHAUSTED = "structured_output_retry_exhausted"
 
 # Under `-p` the provider stops waiting for background subagents at a ceiling of its own and
 # terminates them, so a long high-effort review would end silently short of its findings.
@@ -553,16 +556,25 @@ def resume_bound_seconds() -> float:
 
 
 def ended_without_reporting(process_exit: int, result: dict[str, Any]) -> bool:
-    """Whether the session ended without reporting, rather than failing.
+    """Whether the session ended without an accepted report, rather than failing.
 
     The absent report is the whole of the fact. How the session stopped says nothing about
     it: measured, a session that reported stops on a tool call, and one whose only move was a
-    forked skill stops with no turn of its own at all and no stop reason.
+    forked skill stops with no turn of its own at all and no stop reason. A session whose
+    every report the provider refused exits nonzero for that alone, and is the same fact:
+    measured, a review that had finished its work was recorded as a failure over it.
 
-    A nonzero process exit is a different fact, and `_translate_result` already has typed
-    causes for each of its terminal reasons.
+    Any other nonzero process exit is a different fact, and `_translate_result` already has
+    typed causes for each of its terminal reasons.
     """
-    return process_exit == 0 and result.get("structured_output") is None
+    if result.get("structured_output") is not None:
+        return False
+    return process_exit == 0 or reports_refused(result)
+
+
+def reports_refused(result: dict[str, Any]) -> bool:
+    """Whether the provider stopped the session for refusing every report it filed."""
+    return result.get("terminal_reason") == REPORTS_EXHAUSTED
 
 
 # What a rescue did, as the run's record spells it. One vocabulary rather than a field that
@@ -780,7 +792,7 @@ def run_claude(
                 resumed_exited,
             ) = _session_in(
                 invocation(resuming=True),
-                RESUME_FOR_REPORT,
+                REFILE_AFTER_REFUSALS if reports_refused(result) else RESUME_FOR_REPORT,
                 working_directory,
                 popen_factory,
                 # Bounded like the deadline's own resume. This one opens at any point

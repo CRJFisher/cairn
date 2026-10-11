@@ -60,6 +60,20 @@ This session is ending now and nothing will re-invoke it. Do no further work.
 Report what you have already done, through the structured output you are constrained to.
 """
 
+# What a session is asked when the provider refused every report it filed and stopped asking.
+# Measured: a review that had finished its work closed its summary with `</summary>` five
+# times, so every field after the summary landed inside it and each report lacked them. The
+# text names that shape, because the refusals already in the session are what it repeats.
+REFILE_AFTER_REFUSALS = """\
+This session is ending now and nothing will re-invoke it. Do no further work.
+
+Every report you filed was refused because it did not have the required shape, so this step
+has no account of itself yet. File it once more through the structured output you are
+constrained to. Give each of the four fields as its own parameter, in this order: `status`,
+`follow_up_work` (a list, `[]` when there is none), `needs_user_decision` (true or false),
+then `summary` — plain sentences, with no markup and no other field's name inside it.
+"""
+
 # What a session the subscription's limit stopped is asked, once its window has reopened. It
 # is the same session, so it still holds the task; what it does not hold is how far the turn
 # the limit refused got, and the preamble ahead of this text sends it to the tree to find out.
@@ -119,17 +133,19 @@ The original task:
 STEP_REPORT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
+    # The summary is last because it is the one free-text field: a session that closes it
+    # wrongly then garbles only the summary, rather than every field written after it.
     "properties": {
         "status": {"type": "string", "enum": ["done", "failed"]},
-        "summary": {"type": "string"},
         "follow_up_work": {"type": "array", "items": {"type": "string"}},
         "needs_user_decision": {"type": "boolean"},
+        "summary": {"type": "string"},
     },
     "required": [
         "status",
-        "summary",
         "follow_up_work",
         "needs_user_decision",
+        "summary",
     ],
 }
 

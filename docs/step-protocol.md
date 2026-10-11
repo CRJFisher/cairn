@@ -170,11 +170,11 @@ parsed:
   "additionalProperties": false,
   "properties": {
     "status": { "type": "string", "enum": ["done", "failed"] },
-    "summary": { "type": "string" },
     "follow_up_work": { "type": "array", "items": { "type": "string" } },
-    "needs_user_decision": { "type": "boolean" }
+    "needs_user_decision": { "type": "boolean" },
+    "summary": { "type": "string" }
   },
-  "required": ["status", "summary", "follow_up_work", "needs_user_decision"]
+  "required": ["status", "follow_up_work", "needs_user_decision", "summary"]
 }
 ```
 
@@ -217,6 +217,28 @@ now, with status, summary, follow_up_work and needs_user_decision each in its ow
 It is bounded like the resume for a report below, and the step's `detail` records
 `report_refusals` and what came of the ask under `refiled`: `refiled`, `still_silent` or
 `resume_failed`. Whatever it does, the accepted report stands unless a new one replaces it.
+
+**A session whose every report was refused is asked for it once more, the same way.** The
+provider stops asking after five refusals and ends the session with
+`structured_output_retry_exhausted`, a nonzero exit with no report. That is the same fact as a
+session that ended without reporting: its work may be done and only the account missing.
+Measured, a review that had finished and found nothing to fix closed its summary with
+`</summary>` five times, so every field after the summary landed inside it, and the step was
+recorded as failed. It is resumed once with this text, and the rescue is recorded the same
+way, under `ended_without_reporting` and `resumed_for_report`:
+
+```text
+This session is ending now and nothing will re-invoke it. Do no further work.
+
+Every report you filed was refused because it did not have the required shape, so this step
+has no account of itself yet. File it once more through the structured output you are
+constrained to. Give each of the four fields as its own parameter, in this order: `status`,
+`follow_up_work` (a list, `[]` when there is none), `needs_user_decision` (true or false),
+then `summary` — plain sentences, with no markup and no other field's name inside it.
+```
+
+The schema lists `summary` last for the same reason. It is the one free-text field, so a
+session that closes it wrongly then garbles only the summary, rather than every field after it.
 
 ## The preamble
 
