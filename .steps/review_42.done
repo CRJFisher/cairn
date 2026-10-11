@@ -1,0 +1,7 @@
+{
+  "key": "once",
+  "run_id": "20261012T083259Z-0a1251e8",
+  "scope": "once",
+  "step_id": "review_42",
+  "summary": "The code-review fix was already present in the working tree from the interrupted earlier attempt; I verified it rather than redoing it, and made no further changes. The single finding `/code-review l\u2026"
+}

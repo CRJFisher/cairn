@@ -637,13 +637,19 @@ def record(shape: str, definition: dict[str, Any]) -> None:
             shape,
             augment,
             definition.get("damage", {}),
-            _seeded(seeded, limit) if "provider" in definition or seeded else {},
+            _seeded(seeded, limit, provider_on_path is not None)
+            if "provider" in definition or seeded
+            else {},
         )
         _damage(target, definition.get("damage", {}))
 
 
-def _seeded(reading: dict[str, Any], limit: tuple[str, int] | None) -> dict[str, Any]:
+def _seeded(
+    reading: dict[str, Any], limit: tuple[str, int] | None, stubbed: bool
+) -> dict[str, Any]:
     """What this shape was given before the run, so no reader has to guess at it."""
+    if not stubbed:
+        return {"reading": reading, "provider": None}
     return {
         "reading": reading,
         "provider": (
