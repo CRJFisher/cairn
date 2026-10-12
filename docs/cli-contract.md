@@ -262,7 +262,9 @@ it across one would turn every contender into a failure rather than a wait.
 subcommands are is not a step.
 
 `cairn supervise reconcile` gives a killed run's record a terminal status; `cairn supervise
-base-config` asserts or writes the engine's disabled DAG retry and catch-up. Both are described in
+base-config` asserts or writes the engine's disabled DAG retry and catch-up; `cairn supervise
+headroom` records the owner's answer to whether the subscription's usage endpoint may be
+read, and says what the instruments can see without it. All three are described in
 [supervision.md](supervision.md).
 
 `cairn schedule install|status|start|remove` owns the recurring trigger and the daemon it
@@ -285,6 +287,14 @@ keeps its run history — happens before anything starts. `start` exits `1` on a
 nor exited within its bound, because in that case the run may still begin — whether a run
 worked is the record's answer and not this command's ([run-model.md](run-model.md)).
 
+Before the launch it states a `forecast`: what this queue's agent steps have cost each
+subscription window in this repository's past runs, how many records the figure rests on, and
+what is left of that window now. Where no record can speak for the queue it says there is
+nothing to estimate from, and says nothing else. Where the usage endpoint is off it adds a
+`blind` line naming the windows the stream puts a figure on only from 90% up. Both are
+sentences a person weighs; neither refuses anything, and a forecast that could not be read
+costs the sentence and never the run ([supervision.md](supervision.md)).
+
 **`started` is printed only once the engine has registered the run**, and the line before the
 launch says `launching`. The identity, the branch and both addresses are known before the
 engine is invoked and are printed then, so a caller killed mid-launch has still been told the
@@ -303,7 +313,9 @@ what it is doing to `runs/<run-id>/resume.json` throughout, which is what the re
 
 `cairn explain repository|workflow|word|exclusion` answers which repository a request is
 about, what a definition would do, what one of Cairn's frozen words means, and why a step
-contributed no verified work. It starts nothing, takes no lock and writes nothing, and it
+contributed no verified work. `explain workflow` states the same `forecast` and `blind` lines
+`run start` does, so the figure can be had without starting a run. It starts no run, takes no
+lock and writes nothing, and it
 exits on its own health rather than on any run's verdict: it is answering a question, not
 reporting an outcome.
 

@@ -24,6 +24,7 @@ from cairn.core import (
     RuntimeContext,
     read_step_report,
 )
+from cairn.forecast import pace
 from cairn.gitio import (
     REDIRECTING_VARIABLES,
     branch_exists,
@@ -664,6 +665,9 @@ def run_merge(
                 tools=[],
                 call=run_agent,
                 instruments=instruments,
+                estimate=pace(
+                    context.runs_root, kind=f"agent.{provider}", model=model
+                ),
             )
         except CairnError as exc:
             exc.detail = {

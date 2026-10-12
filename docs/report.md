@@ -176,7 +176,16 @@ run, both read as not recorded rather than naming another plan's step
 Per step: the name it was written under in the plan, turns, model, session identity,
 transcript, standard error, branch, commit, diffstat, exit code, the assertion's exit with
 the execution that backed it and the step that proved it, the bound a stopped step was
-stopped at and how long it had run, timings, and a resume command.
+stopped at and how long it had run, what it spent, how much of each window it moved, timings,
+and a resume command.
+
+**What a step spent is a receipt and never a price.** It is the provider's own account of
+every session the step opened — the API-equivalent cost, the token counts by kind, and what
+each model did of the work — and the two window readings it was measured between. A window
+read once states its one reading and says there was no delta, rather than showing a zero: the
+difference between "it moved by nothing" and "nothing measured it twice" is the whole of why
+the figure is worth carrying ([supervision.md](supervision.md)). A step the record holds no
+account for states none; nothing here is worked out by a renderer.
 
 Where the step a reader is sent to failed its assertion, the next-action section quotes the
 end of what that assertion printed — **standard output and standard error as two labelled
@@ -190,7 +199,9 @@ in. On a green run the wave's prune has since removed that worktree, so the comm
 directory that is gone. **The report does not check whether it is still there** — that would
 be a fact the model does not carry, and it would be wrong the moment the filesystem changed.
 
-The run's own receipts carry the git facts, the occasion, the earlier runs, and
+The run's own receipts carry the git facts, the occasion, the earlier runs, what the whole
+run spent and how much of each window it moved — beside the allowance it read those windows
+against, because what a queue cost and how much of the account it moved are one question — and
 the engine's own view of the run — the better surface for logs and timings, and one that
 survives the run ending.
 

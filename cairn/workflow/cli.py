@@ -117,7 +117,10 @@ def _author(args: argparse.Namespace) -> int:
         python_path=python_path,
         runs_root=str(runs_root(repository)),
         schedule=args.schedule,
-        usage_endpoint=endpoint_enabled(),
+        # The owner's recorded answer where there is one, and the environment where there is
+        # not. A step never asks: this is the one place the repository, and so the answer, is
+        # in hand ([headroom.endpoint_enabled]).
+        usage_endpoint=endpoint_enabled(runs_root(repository)),
         notify_command=notify_command(),
     )
 

@@ -21,6 +21,7 @@ forever — while repairing that file stays [supervision.md]'s, so the two never
 from __future__ import annotations
 
 import json
+import math
 import os
 import shlex
 import time
@@ -34,13 +35,15 @@ from cairn.layout import view_url
 from cairn.plan.home import graph_path
 from cairn.plan.schema import SchemaError
 from cairn.plan.schema import normalise as normalise_graph
-from cairn.providers import resume_command
+from cairn.providers import TOKEN_KINDS, resume_command
 from cairn.record import engine
 from cairn.record.model import (
     AllowanceAccount,
     AllowanceHold,
     AllowanceWindow,
     Attention,
+    Consumption,
+    ConsumptionWindow,
     Diffstat,
     Divergence,
     Edge,
@@ -52,6 +55,7 @@ from cairn.record.model import (
     Infrastructure,
     Integrity,
     Lineage,
+    ModelSpend,
     NextAction,
     PendingResume,
     Remedy,
@@ -419,6 +423,169 @@ def _headroom(work_report: dict[str, Any] | None, holding: object) -> Headroom |
         held_window=_reported_text(account.get("held_window")),
         held_until=_reported_text(account.get("held_until")),
         holding=now,
+    )
+
+
+def _number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def _tokens(raw: object) -> dict[str, int]:
+    """Token counts the provider reported, keeping only the kinds it actually gave."""
+    if not isinstance(raw, dict):
+        return {}
+    block = cast(dict[str, Any], raw)
+    found: dict[str, int] = {}
+    for kind in TOKEN_KINDS:
+        count = as_count(block.get(kind))
+        if count is not None:
+            found[kind] = count
+    return found
+
+
+def _consumption_window(raw: object) -> ConsumptionWindow | None:
+    if not isinstance(raw, dict):
+        return None
+    entry = cast(dict[str, Any], raw)
+    name = entry.get("window")
+    if not isinstance(name, str) or not name:
+        return None
+    return ConsumptionWindow(
+        window=flatten(name, limit=LINE_LIMIT),
+        before=_fraction(entry.get("before")),
+        before_read_at=_reported_text(entry.get("before_read_at")),
+        after=_fraction(entry.get("after")),
+        after_read_at=_reported_text(entry.get("after_read_at")),
+        resets_at=_reported_text(entry.get("resets_at")),
+        delta=_fraction(entry.get("delta")),
+    )
+
+
+def _consumption(work_report: dict[str, Any] | None) -> Consumption | None:
+    """What one agent step spent, as its own session reported it.
+
+    Absent for a step that opened no session, which is how a command step and an agent step
+    that spent nothing measurable are told apart from one the provider accounted for.
+    """
+    found: Any = _detail(work_report).get("consumption")
+    if not isinstance(found, dict):
+        return None
+    account = cast(dict[str, Any], found)
+    by_model: list[ModelSpend] = []
+    models: Any = account.get("by_model")
+    if isinstance(models, dict):
+        for name, entry in sorted(cast(dict[Any, Any], models).items()):
+            if not isinstance(name, str) or not isinstance(entry, dict):
+                continue
+            fields = cast(dict[str, Any], entry)
+            by_model.append(
+                ModelSpend(
+                    model=flatten(name, limit=LINE_LIMIT),
+                    cost_usd=_number(fields.get("cost_usd")),
+                    tokens=_tokens(fields.get("tokens")),
+                )
+            )
+    windows: Any = account.get("windows")
+    return Consumption(
+        kind=_reported_text(account.get("kind")),
+        model=_reported_text(account.get("model")),
+        cost_usd=_number(account.get("cost_usd")),
+        tokens=_tokens(account.get("tokens")),
+        by_model=by_model,
+        windows=[
+            window
+            for entry in (cast(list[Any], windows) if isinstance(windows, list) else [])
+            if (window := _consumption_window(entry)) is not None
+        ],
+    )
+
+
+def _summed_tokens(parts: list[dict[str, int]]) -> dict[str, int]:
+    return {
+        kind: sum(part.get(kind, 0) for part in parts)
+        for kind in TOKEN_KINDS
+        if any(kind in part for part in parts)
+    }
+
+
+def _summed_money(figures: list[float | None]) -> float | None:
+    measured = [figure for figure in figures if figure is not None]
+    return sum(measured) if measured else None
+
+
+def _run_consumption(steps: list[StepRecord]) -> Consumption | None:
+    """What the whole run spent, summed from the steps that accounted for themselves.
+
+    Per window it is two measurements and the distance between them, exactly as a step's is:
+    the earliest reading any step was admitted on, the latest reading any step left behind,
+    and a delta only where both carry a figure for the same window — so a window that reset
+    mid-run states its two readings and no difference ([45 A]).
+    """
+    accounts = [found for step in steps if (found := step["consumption"]) is not None]
+    if not accounts:
+        return None
+    by_model: dict[str, ModelSpend] = {}
+    for account in accounts:
+        for spend in account["by_model"]:
+            held = by_model.get(spend["model"])
+            by_model[spend["model"]] = (
+                spend
+                if held is None
+                else ModelSpend(
+                    model=spend["model"],
+                    cost_usd=_summed_money([held["cost_usd"], spend["cost_usd"]]),
+                    tokens=_summed_tokens([held["tokens"], spend["tokens"]]),
+                )
+            )
+    return Consumption(
+        kind=None,
+        model=None,
+        cost_usd=_summed_money([account["cost_usd"] for account in accounts]),
+        tokens=_summed_tokens([account["tokens"] for account in accounts]),
+        by_model=[by_model[name] for name in sorted(by_model)],
+        windows=_run_windows(accounts),
+    )
+
+
+def _run_windows(accounts: list[Consumption]) -> list[ConsumptionWindow]:
+    found: dict[str, ConsumptionWindow] = {}
+    for account in accounts:
+        for window in account["windows"]:
+            held = found.get(window["window"])
+            found[window["window"]] = window if held is None else _widened(held, window)
+    return [found[name] for name in sorted(found)]
+
+
+def _widened(held: ConsumptionWindow, window: ConsumptionWindow) -> ConsumptionWindow:
+    """Two steps' readings of one window as the run's: the earliest before, the latest after."""
+    first = min(
+        (reading for reading in (held, window) if reading["before_read_at"] is not None),
+        key=lambda reading: reading["before_read_at"] or "",
+        default=held,
+    )
+    last = max(
+        (reading for reading in (held, window) if reading["after_read_at"] is not None),
+        key=lambda reading: reading["after_read_at"] or "",
+        default=held,
+    )
+    measurable = (
+        first["before"] is not None
+        and last["after"] is not None
+        and first["resets_at"] == last["resets_at"]
+    )
+    return ConsumptionWindow(
+        window=held["window"],
+        before=first["before"],
+        before_read_at=first["before_read_at"],
+        after=last["after"],
+        after_read_at=last["after_read_at"],
+        resets_at=last["resets_at"],
+        delta=(
+            cast(float, last["after"]) - cast(float, first["before"]) if measurable else None
+        ),
     )
 
 
@@ -1353,6 +1520,7 @@ def _step_record(
         "remedy": _remedy(remedy_report, reports.get(f"verify_{step_id}")),
         "divergence": divergence,
         "headroom": _headroom(work_report, _holding(step_id, outcome, nodes, holds, orchestrator_gone)),
+        "consumption": _consumption(work_report),
         "where": _where(work, outcome),
     }
     record = StepRecord(
@@ -1784,6 +1952,7 @@ def extract(
             view_url(name, run_id) if (name := engine.text(record.get("name"))) else None
         ),
         "account_in_use": account_in_use,
+        "consumption": _run_consumption(steps),
     }
     return RunRecord(
         record_version=RECORD_VERSION,
@@ -1825,7 +1994,14 @@ def extract(
             account_in_use=account_in_use,
         ),
         provenance=_provenance(
-            fields, derived=("owner_alive", "view_url", "account_in_use")
+            fields,
+            derived=(
+                "owner_alive",
+                "view_url",
+                "account_in_use",
+                # Summed from the steps' own accounts rather than reported by anything.
+                "consumption",
+            ),
         ),
         **cast(Any, fields),
     )

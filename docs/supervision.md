@@ -376,10 +376,16 @@ Three feeders write it, cheapest first:
 1. **The stream.** Every session's `rate_limit_event` updates its window as it arrives, so a
    limit one step meets holds every other step at once. It is free, and the only feeder that
    sees `rejected`. The session's `system` message also records how the account is funded.
-2. **The usage endpoint**, `GET https://api.anthropic.com/api/oauth/usage`, **off unless**
-   `CAIRN_HEADROOM_USAGE_ENDPOINT=1` is set in the environment a workflow is generated from —
-   the generator carries it into the workflow's `env:` block, because the engine hands a step
-   a curated environment rather than the caller's. It reads Claude Code's own credential
+2. **The usage endpoint**, `GET https://api.anthropic.com/api/oauth/usage`, **off unless the
+   owner turns it on**. The answer is theirs because the endpoint reads a credential Cairn did
+   not create, and it is asked once: `python3 -m cairn supervise headroom --endpoint on|off`
+   records it at `<runs root>/.headroom/endpoint.json`. Where nobody has answered,
+   `CAIRN_HEADROOM_USAGE_ENDPOINT=1` in the environment a workflow is generated from answers
+   instead. Either way the generator carries the answer into the workflow's `env:` block,
+   because the engine hands a step a curated environment rather than the caller's — so a step
+   never asks this question and re-authoring a plan is what carries a changed answer into its
+   runs. `python3 -m cairn supervise headroom` with no flag says which answer is in force and
+   what the instruments cannot see without it. It reads Claude Code's own credential
    (the macOS keychain item `Claude Code-credentials`, else `~/.claude/.credentials.json`),
    never refreshes it, and treats an expired one as unknown. It is asked at most every 180
    seconds and backed off 3 → 6 → 12 → 15 minutes after a 429. It is the only feeder that
@@ -400,6 +406,7 @@ Before a step opens its session, the reading decides:
 | the session is funded by an API key                    | `inert` — no subscription window applies         |
 | a window `rejected`                                    | `held` until that window's reset                 |
 | a window's `used` at or past its hold threshold (0.95) | `held` until that window's reset                 |
+| a window whose estimate exceeds what is left of it     | `held` until that window's reset                 |
 | a window `allowed_warning` below the threshold         | `warned` — admitted, and the warning is recorded |
 | nothing measured recently enough, by any feeder        | `unknown` — admitted, and why is recorded        |
 | otherwise                                              | `admitted`                                       |
@@ -407,6 +414,16 @@ Before a step opens its session, the reading decides:
 A per-model weekly window (`seven_day_opus`, `seven_day_sonnet`) holds only a step whose model
 is of that family. Where several windows are closed, the hold lasts until the last of them
 reopens.
+
+**A window is paced as well as thresholded.** The fourth row is the estimate: what a step of
+this kind and model has cost this window in this repository's own past runs (below). A step
+whose estimate exceeds what is left of a window before its reset is held here rather than
+started into it, and the hold's reason names all three figures — where the window stands, what
+a step like this has cost it, and what is left. A hold before a session strands nothing: no
+partial work is left uncommitted and no session has to be resumed days later, where a session
+the limit stops mid-turn leaves both. The 0.95 threshold stays the floor for a step with no
+estimate, and a window with no figure to measure an estimate against is admitted on the
+thresholds alone.
 
 The step records the reading its admission rested on, which is exactly the windows the
 decision could rest on: each one with its age, and the names — never the figures — of any
@@ -417,6 +434,60 @@ the reading a step was admitted against.
 in the instrument, and the backstop below makes a wrong admission a short wait rather than a
 lost step. This is the inverse of the verify gate on purpose: nothing durable depends on this
 check having run.
+
+### What each step spent
+
+Every session ends with the provider's own account of itself, and it is the only account of
+what the work cost there is. A step's record carries it as `consumption`
+([run-model.md](run-model.md)): the API-equivalent cost, the token counts by kind, and what
+each model did of the work — summed across **every** session the step opened, because a
+session whose result was discarded in favour of a later one still spent what it spent.
+
+Beside it, per window, the two readings the step ran between: the one admission rested on, and
+the one the session's own `rate_limit_event`s left behind. **A delta is stated only between
+two measurements** — both carrying a figure, both speaking for the same window, the second
+taken after the first — and is never inferred from one. A window measured once carries its
+one reading and no delta, which is the ordinary case while the stream speaks only from 90% up.
+
+The report shows this per step and the run's total beside the allowance the run read.
+
+### A forecast before the run, and before each admission
+
+What a step has cost is also what the next one like it is expected to cost. `cairn/forecast.py`
+reads this repository's own records, groups every measured window delta by the kind and model
+that spent it, and takes the **median** — one runaway session is the observation a queue
+forecast must not be dominated by. It states how many records the figure rests on.
+
+`run start` and `explain workflow` both print it, from one composer, so the figure a person
+weighs before asking for a run is the figure the run then states:
+
+```
+forecast this queue's 7 agent step(s) have cost about 31% of the weekly allowance in past runs (from 12 record(s)); 23% remains, reopening Tue 13 Oct 06:00 BST
+```
+
+Where no record can speak for the queue it says _no past runs to estimate from_ and says
+nothing else. Where the queue's steps are not all covered, the line says how many of them are.
+It is a sentence and never a refusal: what to do about it — a model, an order, a day — is the
+person's ([principle 3](../PRINCIPLES.md)). A forecast that could not be read costs the
+sentence and never the run.
+
+The same figures are what admission paces a step against, handed to the allowance rather than
+read by it: the forecast reads the records, and the module that decides holds is not also the
+one that reads them.
+
+### What the instruments cannot see
+
+The stream carries a window's utilization only from the 90% warning up, so for most of a
+window's life admission reads `allowed` with no figure at all. With the usage endpoint off,
+that is the whole of what Cairn can see below 90%, and `run start` says so rather than
+leaving a reader to assume the silence is a measurement:
+
+```
+blind    the 5-hour allowance and the weekly allowance are measured only from 90% up; turn on the usage endpoint for figures below that (python3 -m cairn supervise headroom --endpoint on)
+```
+
+The windows named are those the current reading carries no figure for, and those nothing has
+measured at all.
 
 ### The hold, and measuring again
 

@@ -1,14 +1,15 @@
-"""`python3 -m cairn supervise` — repairs that happen outside any run.
+"""`python3 -m cairn supervise` — repairs and settings that happen outside any run.
 
-Reconciling a killed run's record and checking the engine's machine-wide configuration are
-both about runs that are not happening, so like `cairn plan` these commands take no runtime
-identity and leave no step report.
+Reconciling a killed run's record, checking the engine's machine-wide configuration and
+answering the usage endpoint's one question are all about runs that are not happening, so
+like `cairn plan` these commands take no runtime identity and leave no step report.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,16 @@ from cairn.baseconfig import (
 )
 from cairn.core import CairnError
 from cairn.enginehome import run_records_path
+from cairn.gitio import runs_root
+from cairn.headroom import (
+    HEADROOM_ENDPOINT_ENV,
+    Gauge,
+    blindness,
+    endpoint_choice,
+    endpoint_enabled,
+    headroom_directory,
+    record_endpoint_choice,
+)
 from cairn.supervise import WOULD_RECONCILE, reconcile
 
 
@@ -46,6 +57,42 @@ def _cmd_base_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_headroom(args: argparse.Namespace) -> int:
+    """Answer the usage endpoint's one question, or say what the instruments can see.
+
+    The endpoint reads a credential Cairn did not create, so it is the owner's call and
+    nobody else's. Recorded here once rather than asked at every run, and said back with the
+    blindness it leaves: with it off, the stream puts a figure on a window only from 90% up
+    ([45 D]).
+    """
+    root = runs_root(Path(args.repository) if args.repository else Path.cwd())
+    if args.endpoint is not None:
+        on = args.endpoint == "on"
+        path = record_endpoint_choice(root, on=on, now=time.time())
+        print(f"endpoint {'on' if on else 'off'} — recorded in {path}")
+        print(
+            "applies  to every workflow authored from now on; re-author a plan to carry "
+            "this into the runs it starts"
+        )
+        return 0
+    chosen = endpoint_choice(root)
+    enabled = endpoint_enabled(root)
+    print(f"endpoint {'on' if enabled else 'off'}")
+    if chosen is None:
+        print(
+            f"asked    nobody has answered here; this is {HEADROOM_ENDPOINT_ENV} in the "
+            "environment. Record an answer with --endpoint on|off"
+        )
+    else:
+        print(f"asked    recorded in {headroom_directory(root) / 'endpoint.json'}")
+    if not enabled:
+        gauge = Gauge(headroom_directory(root))
+        blind = blindness(gauge.read(), now=gauge.clock())
+        if blind is not None:
+            print(f"blind    {blind}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="cairn supervise", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -69,6 +116,19 @@ def main(argv: list[str] | None = None) -> int:
         help="write the disabling policy instead of asserting it",
     )
     child.set_defaults(handler=_cmd_base_config)
+
+    child = sub.add_parser("headroom")
+    child.add_argument(
+        "--repository",
+        help="the repository whose runs root records the answer (default: this directory)",
+    )
+    child.add_argument(
+        "--endpoint",
+        choices=("on", "off"),
+        help="record the owner's answer to whether the subscription's usage endpoint may "
+        "be read",
+    )
+    child.set_defaults(handler=_cmd_headroom)
 
     args = parser.parse_args(argv)
     handler: Any = args.handler

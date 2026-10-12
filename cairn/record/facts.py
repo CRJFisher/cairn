@@ -14,11 +14,15 @@ agreeing with it quietly.
 from __future__ import annotations
 
 from cairn.headroom import AFTER_OUTAGE, READING_TTL
+from cairn.providers import TOKEN_KINDS
 from cairn.record.model import (
     AllowanceAccount,
     AllowanceHold,
     AllowanceWindow,
+    Consumption,
+    ConsumptionWindow,
     Headroom,
+    ModelSpend,
     PendingResume,
     RunRecord,
     Where,
@@ -88,6 +92,67 @@ def _set_aside(names: list[str]) -> str:
     if not names:
         return NONE
     return f"{', '.join(names)} — set aside, older than {round(READING_TTL / 60)} min"
+
+
+TOKEN_LABELS: dict[str, str] = {
+    "input": "input",
+    "output": "output",
+    "cache_read": "cache read",
+    "cache_creation": "cache creation",
+}
+
+
+def _money(figure: float | None) -> str:
+    return "cost not given" if figure is None else f"${figure:.2f} API-equivalent"
+
+
+def _token_line(tokens: dict[str, int]) -> str:
+    counted = [
+        f"{tokens[kind]:,} {TOKEN_LABELS[kind]}" for kind in TOKEN_KINDS if kind in tokens
+    ]
+    return ", ".join(counted) + " tokens" if counted else "no token count given"
+
+
+def _model_spend(spend: ModelSpend) -> str:
+    return f"{spend['model']} {_money(spend['cost_usd'])}, {_token_line(spend['tokens'])}"
+
+
+def _consumption(consumption: Consumption | None) -> str:
+    """What was spent, in the provider's own account and nothing derived from it."""
+    if consumption is None:
+        return ABSENT
+    models = (
+        "; ".join(_model_spend(spend) for spend in consumption["by_model"])
+        or "no model named"
+    )
+    return (
+        f"{_money(consumption['cost_usd'])}; {_token_line(consumption['tokens'])}; "
+        f"by model: {models}"
+    )
+
+
+def _consumption_window(window: ConsumptionWindow) -> str:
+    """One window read before and after, and the distance only where there was one.
+
+    A window measured once says so rather than showing a zero: the difference between "it
+    moved by nothing" and "nothing measured it twice" is the whole of what makes a delta
+    worth carrying ([45 A]).
+    """
+    before = "unmeasured" if window["before"] is None else f"{window['before'] * 100:.0f}%"
+    after = "unmeasured" if window["after"] is None else f"{window['after'] * 100:.0f}%"
+    moved = (
+        "no delta between two measurements"
+        if window["delta"] is None
+        else f"{window['delta'] * 100:.0f}% of the window"
+    )
+    return f"{window['window']} {before} before, {after} after, {moved}"
+
+
+def _consumption_windows(consumption: Consumption | None) -> str:
+    if consumption is None:
+        return ABSENT
+    windows = consumption["windows"]
+    return "; ".join(_consumption_window(window) for window in windows) if windows else NONE
 
 
 def _hold(hold: AllowanceHold) -> str:
@@ -209,6 +274,8 @@ def canonical_facts(record: RunRecord) -> list[tuple[str, str]]:
         ("run.next_command", _value(record["next_action"]["command"])),
         ("run.view_url", _value(record["view_url"])),
         ("run.allowance", _windows(record["allowance"])),
+        ("run.consumption", _consumption(record["consumption"])),
+        ("run.consumption_windows", _consumption_windows(record["consumption"])),
         ("run.accounts", _accounts(record["accounts"])),
         ("run.account_in_use", _account(record["account_in_use"])),
         *_resume(record["resume"]),
@@ -302,6 +369,8 @@ def canonical_facts(record: RunRecord) -> list[tuple[str, str]]:
                 (f"{key}.completed_by", _value(step["completed_by_run"])),
                 (f"{key}.left_uncommitted", _list(step["left_uncommitted"])),
                 (f"{key}.follow_up_work", _list(step["follow_up_work"])),
+                (f"{key}.consumption", _consumption(step["consumption"])),
+                (f"{key}.consumption_windows", _consumption_windows(step["consumption"])),
                 *_headroom(key, step["headroom"]),
             ]
         )

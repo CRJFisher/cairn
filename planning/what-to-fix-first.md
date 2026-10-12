@@ -94,9 +94,10 @@ Two runs of `remaining-plans-3` stopped at the subscription's allowance. In orde
    window measures open.
 4. [46](46-a-report-refused-five-times.md) A and B are built: a step whose every report was
    refused is asked once more instead of failing. C and D remain.
-5. [45](45-spending-the-allowance-knowingly.md) last: it records what each step costs, forecasts
-   the queue against what is left, and paces the week. Its value grows with the records the
-   first three leave.
+5. [45](45-spending-the-allowance-knowingly.md) last: A, B, C and D are built — it records what
+   each step costs, forecasts the queue against what is left, paces the week, and names what
+   the instruments cannot see. Its figures grow sharper with every run the first three leave.
+   E, a model fallback a plan states, stays an open question.
 
 ## Original 21–24 themes
 

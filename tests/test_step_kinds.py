@@ -1762,6 +1762,42 @@ class ASessionThatEndedWithoutReportingIsResumedOnce(unittest.TestCase):
         result = self._ran(factory)
         self.assertEqual(result.detail["turn_count"], 4)
 
+    SPENT: ClassVar[dict[str, Any]] = {
+        "total_cost_usd": 1.25,
+        "usage": {
+            "input_tokens": 10,
+            "output_tokens": 20,
+            "cache_read_input_tokens": 300,
+            "cache_creation_input_tokens": 4,
+        },
+        "modelUsage": {
+            "claude-opus-4-5": {
+                "costUSD": 1.25,
+                "inputTokens": 10,
+                "outputTokens": 20,
+                "cacheReadInputTokens": 300,
+                "cacheCreationInputTokens": 4,
+            }
+        },
+    }
+
+    def test_what_every_pass_spent_is_summed_into_one_account(self) -> None:
+        """[45 A]: a session whose result was discarded still spent what it spent, so the
+        rescue's own pass is in the figure as well as the one whose report was kept."""
+        factory, _ = self._scripted({**self.UNREPORTED, **self.SPENT}, self.SPENT)
+        spent = self._ran(factory).detail["consumption"]
+        self.assertEqual(spent["cost_usd"], 2.5)
+        self.assertEqual(spent["tokens"], {
+            "input": 20, "output": 40, "cache_read": 600, "cache_creation": 8
+        })
+        self.assertEqual(spent["by_model"]["claude-opus-4-5"]["cost_usd"], 2.5)
+
+    def test_a_provider_that_gave_no_figure_leaves_an_absence_and_never_a_zero(self) -> None:
+        factory, _ = self._scripted()
+        spent = self._ran(factory).detail["consumption"]
+        self.assertIsNone(spent["cost_usd"])
+        self.assertEqual(spent["tokens"], {})
+
     def test_a_resume_that_also_reports_nothing_is_the_failure_it_was(self) -> None:
         """One resume, never a loop — and the outcome is never worse for having tried."""
         factory, made = self._scripted(self.UNREPORTED, self.UNREPORTED)

@@ -13,16 +13,29 @@ The reading inside it is keyed by the organisation the provider is logged in to,
 window is a statement about one subscription's week: after a credential switch the new
 account has been measured by nothing, which is _unknown_, and unknown admits. The feeders run
 cheapest first. The stream: every session already emits a `rate_limit_event`,
-free, and it is the only feeder that sees `rejected`. The usage endpoint, off unless the owner
-sets `CAIRN_HEADROOM_USAGE_ENDPOINT=1`, because it reads a credential Cairn did not create.
-And a probe: one settings-free haiku turn read for its event and discarded, spent only when
-nothing fresher is known.
+free, and it is the only feeder that sees `rejected` — and it carries a figure only from 90%
+up, which is the blindness `run start` names. The usage endpoint, off unless the owner turns
+it on, because it reads a credential Cairn did not create: the answer is asked once by
+`cairn supervise headroom --endpoint on|off` and recorded beside the reading, or set in
+`CAIRN_HEADROOM_USAGE_ENDPOINT` where nobody has answered. And a probe: one settings-free
+haiku turn read for its event and discarded, spent only when nothing fresher is known.
 
 **Unknown admits.** A reading nobody could take lets the session start, and the step's report
 says why. The backstop — hold and resume a session that met the limit — makes a wrong admit a
 short wait, so a guard that blocked on its own blindness would stall a queue for a fault in
 the instrument. That is the inverse of the verify gate, and deliberately so: nothing durable
 depends on this check having run.
+
+**A window is paced as well as thresholded.** A step whose estimate — what a step of its kind
+and model has cost here before ([forecast.py]) — exceeds what is left of a window before its
+reset is held at admission rather than started into it. The threshold stays the floor for a
+step with no estimate. A hold before a session strands nothing, where a session the limit
+stops mid-turn leaves work for a resume days later ([45 C]).
+
+**A step says what it spent.** Every session ends with the provider's own account of itself,
+and the step's `consumption` carries it summed across every session it opened, beside the
+window readings taken before and after. A delta is stated only between two measurements and
+is never inferred from one ([45 A]).
 
 **Cairn never computes a reset.** A hold lasts until the moment a measurement reported, and
 the step then measures again rather than believing the clock. A window that reopens late or
@@ -73,7 +86,9 @@ from cairn.providers import (
     USAGE_TIMEOUT,
     Account,
     EndpointRefused,
+    Spend,
     Unmeasured,
+    add_spend,
     iso_moment,
     provider_answered,
     read_account,
@@ -81,6 +96,7 @@ from cairn.providers import (
     reset_epoch,
     run_probe,
     run_provider,
+    spend_from,
 )
 from cairn.verify import PROVIDER_FAILED, PROVIDER_UNREACHABLE, QUOTA_HELD
 
@@ -476,7 +492,7 @@ class Decision(NamedTuple):
     used: float | None
 
 
-def _percent(used: float) -> str:
+def percent(used: float) -> str:
     return f"{used * 100:.0f}%"
 
 
@@ -493,8 +509,17 @@ def decide(
     model: str | None,
     newer_than: float | None = None,
     thresholds: dict[str, float] = HOLD_THRESHOLDS,
+    estimate: Mapping[str, float] | None = None,
 ) -> Decision:
-    """Admission, read off one reading — never a reset the clock alone implies."""
+    """Admission, read off one reading — never a reset the clock alone implies.
+
+    `estimate` is what a step like this one has cost each window in this repository's own
+    past runs ([forecast.py]). A step whose estimate exceeds what is left of a window before
+    its reset is held here rather than started into it: a hold before a session strands
+    nothing, where a session that meets the limit mid-turn leaves work to resume days later
+    ([45 C]). A window with no estimate, or no figure to measure one against, is admitted on
+    the thresholds alone.
+    """
     if funded_by_key(reading, now=now):
         return Decision(
             INERT,
@@ -511,10 +536,17 @@ def decide(
     for name, window in windows.items():
         threshold = thresholds.get(name, max(thresholds.values()))
         used = window["used"]
+        wanted = None if estimate is None else estimate.get(name)
         if window["status"] == STATUS_REJECTED:
             why = f"{window_phrase(name)} is spent"
         elif used is not None and used >= threshold:
-            why = f"{window_phrase(name)} is at {_percent(used)}, past the {_percent(threshold)} hold threshold"
+            why = f"{window_phrase(name)} is at {percent(used)}, past the {percent(threshold)} hold threshold"
+        elif used is not None and wanted is not None and wanted > 1.0 - used:
+            why = (
+                f"{window_phrase(name)} is at {percent(used)}, and a step like this one has "
+                f"cost about {percent(wanted)} of it in past runs — more than the "
+                f"{percent(1.0 - used)} left before it reopens"
+            )
         else:
             continue
         resets = window["resets_at"]
@@ -584,7 +616,50 @@ def read_usage_endpoint(now: float) -> dict[str, Window]:
     return usage_windows(read_usage(now), read_at=now)
 
 
-def endpoint_enabled(environment: Mapping[str, str] | None = None) -> bool:
+ENDPOINT_FILE = "endpoint.json"
+ENDPOINT_VERB = "python3 -m cairn supervise headroom --endpoint on"
+
+
+def endpoint_choice(runs_root: Path) -> bool | None:
+    """Whether the owner has answered the endpoint question here, and how.
+
+    None is nobody having been asked, which is a different fact from having answered _off_:
+    the first is a question still worth putting, and the second is a decision Cairn repeats
+    rather than reopens ([45 D]).
+    """
+    try:
+        raw: Any = json.loads(
+            (headroom_directory(runs_root) / ENDPOINT_FILE).read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    chosen: object = cast(dict[str, Any], raw).get("endpoint")
+    return chosen if isinstance(chosen, bool) else None
+
+
+def record_endpoint_choice(runs_root: Path, *, on: bool, now: float) -> Path:
+    """Write the owner's answer down, so it is asked once rather than every run."""
+    path = headroom_directory(runs_root) / ENDPOINT_FILE
+    write_json(path, {"endpoint": on, "recorded_at": iso_moment(now)})
+    return path
+
+
+def endpoint_enabled(
+    runs_root: Path | None = None, environment: Mapping[str, str] | None = None
+) -> bool:
+    """Whether the usage endpoint may be read.
+
+    The owner's recorded answer wins where there is one, and the environment answers where
+    there is not. A step never asks this question: a workflow carries the answer into every
+    step's environment as it is generated ([workflow/build.py]), which is the one place the
+    repository — and so the recorded answer — is in hand.
+    """
+    if runs_root is not None:
+        chosen = endpoint_choice(runs_root)
+        if chosen is not None:
+            return chosen
     values = os.environ if environment is None else environment
     return values.get(HEADROOM_ENDPOINT_ENV) == "1"
 
@@ -592,6 +667,39 @@ def endpoint_enabled(environment: Mapping[str, str] | None = None) -> bool:
 def default_instruments() -> Instruments:
     return Instruments(
         probe=run_probe, endpoint=read_usage_endpoint if endpoint_enabled() else None
+    )
+
+
+# The windows the stream speaks for whatever model a session runs on. A model window is
+# named only once a reading has one, because naming the Opus window to a Sonnet queue would
+# report a blindness that decides nothing about it.
+GENERAL_WINDOWS: tuple[str, ...] = (WINDOW_FIVE_HOUR, WINDOW_SEVEN_DAY)
+
+
+def blind_windows(reading: Reading, *, now: float) -> list[str]:
+    """Which windows nothing can put a figure on below 90%.
+
+    The stream carries a utilization only from the warning threshold up, so a window
+    measured by the stream alone reads `allowed` with no figure for most of its life — and
+    a window nothing has measured at all is blind for the same reason. Both are named: a
+    reader deciding whether to turn the endpoint on is asking which windows they are flying
+    without ([45 D]).
+    """
+    fresh = fresh_windows(reading, now=now, model=None)
+    unmeasured = [name for name, window in fresh.items() if window["used"] is None]
+    return sorted({*unmeasured, *(name for name in GENERAL_WINDOWS if name not in fresh)})
+
+
+def blindness(reading: Reading, *, now: float) -> str | None:
+    """What the owner is told about the instruments before a run, or None where nothing is blind."""
+    blind = blind_windows(reading, now=now)
+    if not blind:
+        return None
+    named = " and ".join(window_phrase(name) for name in blind)
+    verb = "is" if len(blind) == 1 else "are"
+    return (
+        f"{named} {verb} measured only from 90% up; turn on the usage endpoint for figures "
+        f"below that ({ENDPOINT_VERB})"
     )
 
 
@@ -797,7 +905,11 @@ def _outage_reason(lost: CommandResult) -> str:
 
 
 def _joined(earlier: CommandResult, later: CommandResult) -> CommandResult:
-    """One step's account across a session and its resumes: the later word, every turn."""
+    """One step's account across a session and its resumes: the later word, every turn.
+
+    Turns and spend are summed rather than taken from the later result: each of the step's
+    sessions accounts for its own invocation, and what the earlier one spent was spent.
+    """
     turns = sum(
         int(_number(result.detail.get("turn_count")) or 0) for result in (earlier, later)
     )
@@ -805,7 +917,18 @@ def _joined(earlier: CommandResult, later: CommandResult) -> CommandResult:
         *cast(list[Any], earlier.detail.get("rate_limits") or []),
         *cast(list[Any], later.detail.get("rate_limits") or []),
     ]
-    return later._replace(detail={**later.detail, "turn_count": turns, "rate_limits": limits})
+    spent: Spend = add_spend(
+        spend_from(earlier.detail.get("consumption")),
+        spend_from(later.detail.get("consumption")),
+    )
+    return later._replace(
+        detail={
+            **later.detail,
+            "turn_count": turns,
+            "rate_limits": limits,
+            "consumption": spent,
+        }
+    )
 
 
 class Steward:
@@ -829,10 +952,14 @@ class Steward:
         announce: Announcer,
         sleep: Callable[[float], None] = time.sleep,
         hold_budget: float = HOLD_BUDGET,
+        kind: str | None = None,
+        estimate: Mapping[str, float] | None = None,
     ) -> None:
         self.gauge = gauge
         self.hold_budget = hold_budget
         self.model = model
+        self.kind = kind
+        self.estimate = estimate
         self.instruments = instruments
         self.announce = announce
         self.sleep = sleep
@@ -841,6 +968,7 @@ class Steward:
         self.admission: Decision | None = None
         self.funded: Account | None = None
         self.reading: dict[str, Any] = {}
+        self.measured: dict[str, Window] = {}
         self.set_aside: list[str] = []
         self.notes: list[str] = []
         self.holds: list[Hold] = []
@@ -876,11 +1004,20 @@ class Steward:
         )
         now = self.gauge.clock()
         reading = self.gauge.read()
-        decision = decide(reading, now=now, model=self.model, newer_than=newer_than)
+        decision = decide(
+            reading,
+            now=now,
+            model=self.model,
+            newer_than=newer_than,
+            estimate=self.estimate if admitting else None,
+        )
         if admitting:
             self.admission = decision
             self.funded = self._funding()
             self.reading, self.set_aside = _snapshot(
+                reading, now=now, model=self.model, newer_than=newer_than
+            )
+            self.measured = fresh_windows(
                 reading, now=now, model=self.model, newer_than=newer_than
             )
             self.notes = notes
@@ -1007,7 +1144,11 @@ class Steward:
             f"the model provider could not be reached for {waited} min after the session lost "
             f"it — {_outage_reason(prior)}"
         )
-        detail = {**prior.detail, "headroom": self.account()}
+        detail = {
+            **prior.detail,
+            "headroom": self.account(),
+            "consumption": self.consumption(prior.detail),
+        }
         return CommandResult(EXIT_FAILED, "failed", summary, [], False, PROVIDER_UNREACHABLE, detail)
 
     def limit_met(self, result: CommandResult) -> Decision:
@@ -1040,6 +1181,57 @@ class Steward:
             float(resets) if resets is not None and resets > now else None,
             None,
         )
+
+    def consumption(self, detail: Mapping[str, Any] | None) -> dict[str, Any]:
+        """What this step spent, and the window readings it was measured between.
+
+        The spend is the provider's own, summed across every session the step opened. The
+        windows are two measurements and the distance between them: the reading admission
+        rested on, and the reading the session's own events left behind. **A delta is stated
+        only between two measurements of the same window** — same reset, both carrying a
+        figure, the second taken after the first — and never inferred from one of them
+        ([45 A]). A window measured once, which is most of them while the stream speaks only
+        from 90% up, carries its one reading and no delta.
+        """
+        spent = spend_from(None if detail is None else detail.get("consumption"))
+        now = self.gauge.clock()
+        try:
+            after = fresh_windows(self.gauge.read(), now=now, model=self.model)
+        except (CairnError, OSError):
+            after = {}
+        windows: list[dict[str, Any]] = []
+        for name in sorted({*self.measured, *after}):
+            before = self.measured.get(name)
+            later = after.get(name)
+            if before is not None and later is not None and later["read_at"] <= before["read_at"]:
+                later = None
+            if before is None and later is None:
+                continue
+            same = (
+                before is not None
+                and later is not None
+                and before["resets_at"] == later["resets_at"]
+                and before["used"] is not None
+                and later["used"] is not None
+            )
+            resets = (later or before or {}).get("resets_at")
+            windows.append(
+                {
+                    "window": name,
+                    "before": None if before is None else before["used"],
+                    "before_read_at": None if before is None else iso_moment(before["read_at"]),
+                    "after": None if later is None else later["used"],
+                    "after_read_at": None if later is None else iso_moment(later["read_at"]),
+                    "resets_at": None if resets is None else iso_moment(resets),
+                    "delta": (
+                        cast(float, cast(Window, later)["used"])
+                        - cast(float, cast(Window, before)["used"])
+                        if same
+                        else None
+                    ),
+                }
+            )
+        return {"kind": self.kind, "model": self.model, **spent, "windows": windows}
 
     def account(self, stopped: Decision | None = None) -> dict[str, Any]:
         admission = self.admission
@@ -1078,7 +1270,7 @@ class Steward:
         """
         allowance = window_phrase(stopped.window)
         state = (
-            f"{allowance} at {_percent(stopped.used)}"
+            f"{allowance} at {percent(stopped.used)}"
             if stopped.used is not None
             else f"{allowance} spent"
         )
@@ -1095,6 +1287,7 @@ class Steward:
             summary = f"held at {allowance}, which had not reopened when the step could wait no longer"
         detail = {} if prior is None else dict(prior.detail)
         detail["headroom"] = self.account(stopped)
+        detail["consumption"] = self.consumption(None if prior is None else prior.detail)
         return CommandResult(EXIT_RATE_LIMITED, "failed", summary, [], False, QUOTA_HELD, detail)
 
 
@@ -1108,6 +1301,8 @@ def within_allowance(
     announce: Announcer,
     sleep: Callable[[float], None] = time.sleep,
     hold_budget: float = HOLD_BUDGET,
+    kind: str | None = None,
+    estimate: Mapping[str, float] | None = None,
 ) -> CommandResult:
     """Run one agent step's session inside the allowance, holding and resuming as it must.
 
@@ -1128,6 +1323,8 @@ def within_allowance(
         announce=announce,
         sleep=sleep,
         hold_budget=hold_budget,
+        kind=kind,
+        estimate=estimate,
     )
     stopped = steward.wait_until_clear(BEFORE_SESSION)
     if stopped is not None:
@@ -1135,7 +1332,11 @@ def within_allowance(
     try:
         result = steward.run(first)
     except CairnError as failed:
-        failed.detail = {**failed.detail, "headroom": steward.account()}
+        failed.detail = {
+            **failed.detail,
+            "headroom": steward.account(),
+            "consumption": steward.consumption(failed.detail),
+        }
         raise
     # The limit is read off the latest session alone: the joined account carries every
     # earlier session's events, and a stale rejection would name the wrong window and moment.
@@ -1175,7 +1376,11 @@ def within_allowance(
             try:
                 resumed = steward.run(first)
             except CairnError as failed:
-                failed.detail = {**failed.detail, "headroom": steward.account()}
+                failed.detail = {
+                    **failed.detail,
+                    "headroom": steward.account(),
+                    "consumption": steward.consumption(failed.detail),
+                }
                 raise
         steward.resumes.append(
             Resume(
@@ -1188,7 +1393,13 @@ def within_allowance(
             return steward.held(closed, prior=_joined(result, resumed), why="the session could not be resumed")
         latest = resumed
         result = _joined(result, resumed)
-    return result._replace(detail={**result.detail, "headroom": steward.account()})
+    return result._replace(
+        detail={
+            **result.detail,
+            "headroom": steward.account(),
+            "consumption": steward.consumption(result.detail),
+        }
+    )
 
 
 def session_within_allowance(
@@ -1203,11 +1414,16 @@ def session_within_allowance(
     call: Callable[..., CommandResult] | None = None,
     instruments: Instruments | None = None,
     hold_budget: float = HOLD_BUDGET,
+    estimate: Mapping[str, float] | None = None,
 ) -> CommandResult:
     """One step's session — a plan step's, a remedy's or a merge resolution's — admitted,
     held and resumed at the allowance, with every session it opens feeding the shared
     reading. `hold_budget` is how long it may wait; a step whose engine bound carries no hold
-    passes nothing."""
+    passes nothing.
+
+    `estimate` is what a step of this kind and model has cost each window here before, handed
+    in rather than read: the forecast reads the allowance's own records, so a module that
+    decides holds cannot also be the one that reads them ([forecast.py])."""
     call = run_provider if call is None else call
     if provider not in METERED_PROVIDERS:
         return call(
@@ -1255,6 +1471,8 @@ def session_within_allowance(
         instruments=default_instruments() if instruments is None else instruments,
         announce=announcer(context),
         hold_budget=hold_budget,
+        kind=f"agent.{provider}",
+        estimate=estimate,
     )
 
 
@@ -1277,6 +1495,11 @@ __all__ = [
     "AFTER_LIMIT",
     "AFTER_OUTAGE",
     "BEFORE_SESSION",
+    "ENDPOINT_FILE",
+    "ENDPOINT_VERB",
+    "WINDOW_FIVE_HOUR",
+    "WINDOW_PHRASES",
+    "WINDOW_SEVEN_DAY",
     "Account",
     "Decision",
     "Gauge",
@@ -1289,18 +1512,25 @@ __all__ = [
     "Unmeasured",
     "Window",
     "announcer",
+    "blind_windows",
+    "blindness",
     "current_account",
     "decide",
     "default_instruments",
+    "empty_reading",
+    "endpoint_choice",
     "endpoint_enabled",
     "fresh_windows",
     "ledger_from",
     "local_moment",
     "measure",
+    "percent",
     "reading_from",
+    "record_endpoint_choice",
     "run_probe",
     "session_within_allowance",
     "usage_windows",
     "window_of",
+    "window_phrase",
     "within_allowance",
 ]

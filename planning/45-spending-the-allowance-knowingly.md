@@ -6,8 +6,13 @@ costs or whether the rest of the queue fits in what is left. So a person learns 
 ran out from a failed run, rather than from a sentence before the run began, when they could
 still have chosen a model, an order or a day.
 
-**Status: proposed.** These enhancements would have prevented, or announced in advance, both
-stalls in `remaining-plans-3`.
+**Status: A, B, C and D built; E open.** A step's record carries `consumption` and the report
+shows it per step and for the run (`cairn/headroom.py`, `cairn/record/`, `cairn/report/`); the
+forecast is `cairn/forecast.py`, stated by `run start` and `explain workflow`; admission paces
+a window as well as thresholding it; and the endpoint's answer is recorded once by `cairn
+supervise headroom --endpoint on|off`, with `run start` naming the windows it leaves blind.
+E — a model fallback the plan states — stays the open question this plan carries, and is not
+built. These would have prevented, or announced in advance, both stalls in `remaining-plans-3`.
 
 **Serves** Run, Report and Explain.
 

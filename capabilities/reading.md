@@ -70,8 +70,12 @@ build --run <id>` rather than reporting from the one behind it silently.
    node has no such line, its transcript is not on disk, which is said rather than filled in.
    This needs no engine server, like everything else here.
 
-A question about what a run cost is not one Cairn answers; say that in one line and go on
-with what the record does hold.
+A question about what a run cost is answered from the record and nowhere else: each agent
+step carries the provider's own account of every session it opened — the API-equivalent cost,
+the tokens by kind, and how much of each subscription window the step moved — and the run
+carries the total. Quote those figures; never work one out, and never offer one for a run
+whose steps accounted for nothing. A window the record states no delta for was measured once,
+not moved by nothing.
 
 If the honest answer is "this needs to be run", say so and stop. Running is
 [running.md](running.md)'s, and it needs its own turn.

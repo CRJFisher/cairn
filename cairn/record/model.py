@@ -125,6 +125,52 @@ class Headroom(TypedDict):
     holding: AllowanceHold | None
 
 
+class ModelSpend(TypedDict):
+    """What one model did of a step's work, and what the provider charged for it."""
+
+    model: str
+    cost_usd: float | None
+    tokens: dict[str, int]
+
+
+class ConsumptionWindow(TypedDict):
+    """One window read before a step and again after it, and the distance between.
+
+    `delta` is present only where both readings carried a figure, both spoke for the same
+    window — the same `resets_at` — and the second was taken after the first. A window
+    measured once carries its one reading and no delta: a difference inferred from a single
+    measurement would read as a figure Cairn never took ([45 A]).
+    """
+
+    window: str
+    before: float | None
+    before_read_at: str | None
+    after: float | None
+    after_read_at: str | None
+    resets_at: str | None
+    delta: float | None
+
+
+class Consumption(TypedDict):
+    """What a step spent, summed across every session it opened.
+
+    The provider's own account of itself and nothing derived from it: the tokens it counted,
+    the API-equivalent cost it charged, and which model did the work. `kind` and `model` are
+    what the step was, which is what groups one step's record with the records a forecast of
+    the next queue rests on ([cairn/forecast.py]).
+
+    On the run it is every step's summed: `kind` and `model` are absent there, because a run
+    whose steps ran on two models is not of one kind.
+    """
+
+    kind: str | None
+    model: str | None
+    cost_usd: float | None
+    tokens: dict[str, int]
+    by_model: list[ModelSpend]
+    windows: list[ConsumptionWindow]
+
+
 class StepRecord(TypedDict):
     """One step of the plan, and everything this run knows about it."""
 
@@ -185,6 +231,10 @@ class StepRecord(TypedDict):
     remedy: Remedy | None
     # Present on an agent step that reached its session's admission, or is holding now.
     headroom: Headroom | None
+    # What the step spent, from the provider's own account of every session it opened, with
+    # the window readings it was measured between. Present on an agent step and on nothing
+    # else: a command step opens no session for a provider to account for.
+    consumption: Consumption | None
     # Present only while the step is running: which turn its session is on, what it last
     # called and on what, and how long since its transcript was last written. It is what
     # lets a report say where a live session is rather than only that it is live ([20 A]).
@@ -382,6 +432,10 @@ class RunRecord(TypedDict):
     # and the source of each — so a reader can see how full the account was, and how old
     # that knowledge is, without opening a step.
     allowance: list[AllowanceWindow]
+    # What the whole run spent, summed from its steps: the tokens, the API-equivalent cost
+    # and, per window, the first reading any step was admitted on against the last reading
+    # any step left behind. Absent on a run with no agent step to account for.
+    consumption: Consumption | None
     # Every subscription this run's sessions were funded by, each named once. A run whose
     # steps ran either side of a credential switch was funded by two.
     accounts: list[AllowanceAccount]
@@ -414,6 +468,8 @@ __all__ = [
     "AllowanceHold",
     "AllowanceWindow",
     "Attention",
+    "Consumption",
+    "ConsumptionWindow",
     "Diffstat",
     "Divergence",
     "Edge",
@@ -425,6 +481,7 @@ __all__ = [
     "Infrastructure",
     "Integrity",
     "Lineage",
+    "ModelSpend",
     "NextAction",
     "PendingResume",
     "Remedy",

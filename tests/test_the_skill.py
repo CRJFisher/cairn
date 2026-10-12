@@ -41,6 +41,7 @@ from unittest.mock import patch
 from cairn.core import CairnError
 from cairn.enginehome import ENGINE_BINARY
 from cairn.gitio import runs_root
+from cairn.headroom import record_endpoint_choice
 from cairn.layout import RECORD_FILE, check_run_id
 from cairn.marker import mint_occasion
 from cairn.parameters import refuse_misfiled_records
@@ -2102,6 +2103,62 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("author this plan for this repository", said)
 
+    def _recorded_spend(self, delta: float) -> None:
+        """One past run of a step like this queue's, with a measured window delta."""
+        directory = runs_root(self.repository) / "20260101T000000Z-aaaabbbb"
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / RECORD_FILE).write_text(
+            json.dumps(
+                {
+                    "steps": [
+                        {
+                            "consumption": {
+                                "kind": "agent.claude",
+                                "model": "opus",
+                                "cost_usd": 23.8,
+                                "tokens": {},
+                                "by_model": {},
+                                "windows": [
+                                    {
+                                        "window": "seven_day",
+                                        "before": 0.77,
+                                        "after": 0.77 + delta,
+                                        "delta": delta,
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def test_a_queue_no_record_speaks_for_is_said_to_be_unestimated(self) -> None:
+        """[45 B]: the forecast is stated before the launch, and where there is nothing to
+        estimate from it says so rather than implying a figure."""
+        _, said = self._start()
+        self.assertIn("forecast no past runs to estimate from", said)
+        self.assertLess(said.index("forecast"), said.index("started "))
+
+    def test_the_forecast_states_what_the_queue_cost_and_what_remains(self) -> None:
+        self._recorded_spend(0.31)
+        _, said = self._start()
+        self.assertIn("have cost about 31% of the weekly allowance", said)
+        self.assertIn("from 1 record(s)", said)
+
+    def test_a_start_names_the_windows_nothing_measures_below_ninety_percent(self) -> None:
+        """[45 D]: with the endpoint off the stream is silent below 90%, and a reader who
+        does not know that reads the silence as room."""
+        _, said = self._start()
+        self.assertIn("measured only from 90% up", said)
+        self.assertIn("the 5-hour allowance and the weekly allowance", said)
+
+    def test_a_recorded_answer_of_on_stops_the_blindness_being_claimed(self) -> None:
+        record_endpoint_choice(runs_root(self.repository), on=True, now=0.0)
+        _, said = self._start()
+        self.assertNotIn("measured only from 90% up", said)
+
     def test_a_recovery_with_no_run_named_says_which_flag_is_missing(self) -> None:
         code, said = self._start("--trigger", "recovery")
         self.assertEqual(code, 1)
@@ -2140,6 +2197,8 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
         said = spoken.getvalue()
         self.assertIn("lock_acquire", said)
         self.assertIn("not a clean success", said)
+        # [45 B]: the same figure `run start` states, had without starting a run.
+        self.assertIn("forecast no past runs to estimate from", said)
         self.assertEqual([command for command in launched if command[0] == ENGINE_BINARY], [])
 
 

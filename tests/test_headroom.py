@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
 import tempfile
 import threading
 import time
@@ -22,7 +23,7 @@ import unittest
 from collections.abc import Callable
 from contextlib import redirect_stdout
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import patch
 
 from cairn.core import (
@@ -34,12 +35,14 @@ from cairn.core import (
     RuntimeContext,
     held_before_session,
 )
+from cairn.gitio import runs_root
 from cairn.headroom import (
     ACCOUNT_UNKNOWN,
     ADMITTED,
     AFTER_LIMIT,
     AFTER_OUTAGE,
     BEFORE_SESSION,
+    ENDPOINT_FILE,
     HELD,
     INERT,
     OUTAGE_BACKOFF,
@@ -51,9 +54,13 @@ from cairn.headroom import (
     Gauge,
     Hold,
     Instruments,
+    blind_windows,
+    blindness,
     decide,
+    endpoint_choice,
     endpoint_enabled,
     measure,
+    record_endpoint_choice,
     session_within_allowance,
     usage_windows,
     within_allowance,
@@ -82,6 +89,7 @@ from cairn.record.vocabulary import (
 from cairn.report.compose import document
 from cairn.report.phrases import SENTENCE_BY_ACTION
 from cairn.report.terminal import render
+from cairn.supervise_cli import main as supervise_main
 from cairn.verify import (
     PROVIDER_UNREACHABLE,
     QUOTA_HELD,
@@ -213,6 +221,8 @@ class Fixture(unittest.TestCase):
         *,
         probe: Probe | None = None,
         model: str = "sonnet",
+        kind: str | None = None,
+        estimate: dict[str, float] | None = None,
     ) -> CommandResult:
         def refuse(_session: str, _told: str, _deadline: float) -> CommandResult:
             raise AssertionError("no resume was expected")
@@ -225,6 +235,8 @@ class Fixture(unittest.TestCase):
             instruments=self.instruments(probe),
             announce=self.announced.append,
             sleep=self.clock.sleep,
+            kind=kind,
+            estimate=estimate,
         )
 
 
@@ -523,9 +535,9 @@ class OneMeasurementServesEveryStep(Fixture):
         self.assertIn("no space left on device", notes)
 
     def test_the_endpoint_is_off_unless_the_owner_says_so(self) -> None:
-        self.assertFalse(endpoint_enabled({}))
-        self.assertFalse(endpoint_enabled({HEADROOM_ENDPOINT_ENV: "yes"}))
-        self.assertTrue(endpoint_enabled({HEADROOM_ENDPOINT_ENV: "1"}))
+        self.assertFalse(endpoint_enabled(environment={}))
+        self.assertFalse(endpoint_enabled(environment={HEADROOM_ENDPOINT_ENV: "yes"}))
+        self.assertTrue(endpoint_enabled(environment={HEADROOM_ENDPOINT_ENV: "1"}))
 
     def test_an_expired_credential_is_unknown_and_never_refreshed(self) -> None:
         stored = json.dumps(
@@ -1279,6 +1291,258 @@ class NoEmailAndNoTokenIsEverWritten(Fixture):
             self.assertNotIn(secret, written)
             self.assertNotIn(secret, reported)
         self.assertIn("org-team", written)
+
+
+class AWindowIsPacedAndNotOnlyThresholded(Fixture):
+    """[45 C]: a step whose estimate exceeds what is left of a window before its reset is
+    held at admission instead of being started into it."""
+
+    WEEKLY_RESET = FIVE_HOUR_RESET + 86_400
+
+    def weekly(self, used: float) -> None:
+        self.gauge.observe(event("seven_day", "allowed", self.WEEKLY_RESET, used))
+
+    def never_called(self, _deadline: float) -> CommandResult:
+        raise AssertionError("a step held at admission opened a session")
+
+    def test_a_step_that_would_not_fit_is_held_until_the_window_reopens(self) -> None:
+        self.weekly(0.77)
+        decision = decide(
+            self.gauge.read(), now=NOW, model="opus", estimate={"seven_day": 0.3}
+        )
+        self.assertEqual(decision.admission, HELD)
+        self.assertEqual(decision.window, "seven_day")
+        self.assertEqual(decision.until, float(self.WEEKLY_RESET))
+
+    def test_the_reason_names_where_the_window_stands_what_it_costs_and_what_is_left(self) -> None:
+        self.weekly(0.77)
+        decision = decide(
+            self.gauge.read(), now=NOW, model="opus", estimate={"seven_day": 0.3}
+        )
+        assert decision.reason is not None
+        for figure in ("77%", "30%", "23%"):
+            self.assertIn(figure, decision.reason)
+
+    def test_a_step_that_fits_is_admitted(self) -> None:
+        self.weekly(0.77)
+        decision = decide(
+            self.gauge.read(), now=NOW, model="opus", estimate={"seven_day": 0.2}
+        )
+        self.assertEqual(decision.admission, ADMITTED)
+
+    def test_a_window_with_no_figure_is_admitted_on_the_thresholds_alone(self) -> None:
+        """Most of a window's life has no figure at all, and an estimate measured against
+        nothing would hold every step on a blind instrument ([45 D])."""
+        self.gauge.observe(event("seven_day", "allowed", self.WEEKLY_RESET))
+        decision = decide(
+            self.gauge.read(), now=NOW, model="opus", estimate={"seven_day": 0.9}
+        )
+        self.assertEqual(decision.admission, ADMITTED)
+
+    def test_the_threshold_still_holds_a_step_with_no_estimate(self) -> None:
+        self.weekly(0.96)
+        self.assertEqual(
+            decide(self.gauge.read(), now=NOW, model="opus").admission, HELD
+        )
+        self.assertEqual(
+            decide(self.gauge.read(), now=NOW, model="opus", estimate={}).admission, HELD
+        )
+
+    def test_the_step_never_opens_a_session_and_says_what_stopped_it(self) -> None:
+        self.weekly(0.77)
+        result = self.run_step(
+            self.never_called, model="opus", estimate={"seven_day": 0.3}
+        )
+        self.assertEqual(result.cause, QUOTA_HELD)
+        self.assertTrue(held_before_session({"detail": result.detail}))
+        self.assertIn("nothing was done", result.summary)
+        self.assertEqual(result.detail["headroom"]["held_window"], "seven_day")
+
+    def test_the_estimate_decides_nothing_once_the_session_has_run(self) -> None:
+        """After a session the step is holding on a limit it actually met; re-pacing there
+        would strand the work that session left rather than prevent any ([45 C])."""
+        self.weekly(0.5)
+        opened: list[float] = []
+
+        def first(deadline: float) -> CommandResult:
+            opened.append(deadline)
+            self.weekly(0.8)
+            return done()
+
+        result = self.run_step(first, model="opus", estimate={"seven_day": 0.3})
+        self.assertEqual(result.status, "done")
+        self.assertEqual(len(opened), 1)
+
+
+class AStepSaysWhatItSpent(Fixture):
+    """[45 A]: the provider's own account of every session the step opened, and the window
+    readings it was measured between."""
+
+    SPENT: ClassVar[dict[str, Any]] = {
+        "cost_usd": 2.5,
+        "tokens": {"input": 10, "output": 20, "cache_read": 300},
+        "by_model": {"claude-opus-4-5": {"cost_usd": 2.5, "tokens": {"input": 10}}},
+    }
+
+    def spent(self, **extra: Any) -> CommandResult:
+        return done()._replace(detail={**done().detail, "consumption": self.SPENT, **extra})
+
+    def test_the_providers_figures_reach_the_steps_own_account(self) -> None:
+        self.gauge.observe(event(utilization=0.1))
+        found = self.run_step(lambda _deadline: self.spent()).detail["consumption"]
+        self.assertEqual(found["cost_usd"], 2.5)
+        self.assertEqual(found["tokens"]["cache_read"], 300)
+        self.assertEqual(found["by_model"]["claude-opus-4-5"]["cost_usd"], 2.5)
+        self.assertEqual(found["kind"], None)
+        self.assertEqual(found["model"], "sonnet")
+
+    def test_a_window_measured_twice_carries_both_readings_and_their_difference(self) -> None:
+        self.gauge.observe(event(utilization=0.1))
+
+        def first(_deadline: float) -> CommandResult:
+            self.clock.now += 60
+            self.gauge.observe(event(utilization=0.3))
+            return self.spent()
+
+        found = self.run_step(first).detail["consumption"]
+        window = next(entry for entry in found["windows"] if entry["window"] == "five_hour")
+        self.assertAlmostEqual(window["before"], 0.1)
+        self.assertAlmostEqual(window["after"], 0.3)
+        self.assertAlmostEqual(window["delta"], 0.2)
+
+    def test_a_window_measured_once_states_its_one_reading_and_no_delta(self) -> None:
+        """A delta is stated only between two measurements, never inferred from one."""
+        self.gauge.observe(event(utilization=0.1))
+        found = self.run_step(lambda _deadline: self.spent()).detail["consumption"]
+        window = next(entry for entry in found["windows"] if entry["window"] == "five_hour")
+        self.assertAlmostEqual(window["before"], 0.1)
+        self.assertIsNone(window["delta"])
+
+    def test_a_window_that_reset_between_the_readings_states_both_and_no_delta(self) -> None:
+        self.gauge.observe(event(utilization=0.9))
+
+        def first(_deadline: float) -> CommandResult:
+            self.clock.now += 60
+            self.gauge.observe(
+                event(resets_at=FIVE_HOUR_RESET + 18_000, utilization=0.05)
+            )
+            return self.spent()
+
+        found = self.run_step(first).detail["consumption"]
+        window = next(entry for entry in found["windows"] if entry["window"] == "five_hour")
+        self.assertAlmostEqual(window["before"], 0.9)
+        self.assertAlmostEqual(window["after"], 0.05)
+        self.assertIsNone(window["delta"])
+
+    def test_a_step_held_before_its_session_accounts_for_the_nothing_it_spent(self) -> None:
+        self.gauge.observe(
+            event("seven_day", "rejected", FIVE_HOUR_RESET + 86_400, 0.99)
+        )
+        found = self.run_step(
+            lambda _deadline: self.spent(), model="opus"
+        ).detail["consumption"]
+        self.assertIsNone(found["cost_usd"])
+        self.assertEqual(found["tokens"], {})
+
+    def test_what_every_session_spent_is_summed_across_a_hold_and_its_resume(self) -> None:
+        """A session whose result was discarded still spent what it spent."""
+        self.gauge.observe(event(utilization=0.1))
+        later = {**self.SPENT, "cost_usd": 1.0, "tokens": {"input": 5}}
+        result = self.run_step(
+            lambda _deadline: limited(FIVE_HOUR_RESET)._replace(
+                detail={
+                    "session_id": "session-1",
+                    "turn_count": 3,
+                    "rate_limits": [event("five_hour", "rejected", FIVE_HOUR_RESET)],
+                    "consumption": self.SPENT,
+                }
+            ),
+            lambda _s, _t, _d: done()._replace(
+                detail={"session_id": "session-1", "turn_count": 2, "consumption": later}
+            ),
+            probe=Probe(lambda: [event(utilization=0.2)]),
+        )
+        self.assertEqual(result.status, "done")
+        self.assertEqual(result.detail["consumption"]["cost_usd"], 3.5)
+        self.assertEqual(result.detail["consumption"]["tokens"]["input"], 15)
+
+
+class TheEndpointsAnswerIsAskedOnceAndRecorded(Fixture):
+    """[45 D]: the owner's choice is recorded rather than asked at every run, and the
+    blindness it leaves is named."""
+
+    def test_nobody_answering_is_a_different_fact_from_answering_off(self) -> None:
+        root = Path(self.directory.name)
+        self.assertIsNone(endpoint_choice(root))
+        record_endpoint_choice(root, on=False, now=NOW)
+        self.assertIs(endpoint_choice(root), False)
+        record_endpoint_choice(root, on=True, now=NOW)
+        self.assertIs(endpoint_choice(root), True)
+
+    def test_the_recorded_answer_wins_over_the_environment(self) -> None:
+        root = Path(self.directory.name)
+        self.assertTrue(endpoint_enabled(root, {HEADROOM_ENDPOINT_ENV: "1"}))
+        record_endpoint_choice(root, on=False, now=NOW)
+        self.assertFalse(endpoint_enabled(root, {HEADROOM_ENDPOINT_ENV: "1"}))
+        record_endpoint_choice(root, on=True, now=NOW)
+        self.assertTrue(endpoint_enabled(root, {}))
+
+    def test_an_unreadable_answer_is_nobody_having_answered(self) -> None:
+        root = Path(self.directory.name)
+        headroom_directory(root).mkdir(parents=True, exist_ok=True)
+        (headroom_directory(root) / ENDPOINT_FILE).write_text("{not json", encoding="utf-8")
+        self.assertIsNone(endpoint_choice(root))
+
+    def test_the_windows_nothing_can_put_a_figure_on_are_named(self) -> None:
+        self.gauge.observe(event())
+        blind = blind_windows(self.gauge.read(), now=NOW)
+        self.assertEqual(blind, ["five_hour", "seven_day"])
+        said = blindness(self.gauge.read(), now=NOW)
+        assert said is not None
+        self.assertIn("the 5-hour allowance and the weekly allowance", said)
+        self.assertIn("only from 90% up", said)
+
+    def test_a_window_with_a_figure_is_not_blind(self) -> None:
+        self.gauge.observe(event(utilization=0.4))
+        self.gauge.observe(event("seven_day", "allowed", FIVE_HOUR_RESET, 0.77))
+        self.assertEqual(blind_windows(self.gauge.read(), now=NOW), [])
+        self.assertIsNone(blindness(self.gauge.read(), now=NOW))
+
+
+class TheOwnerAnswersTheEndpointThroughOneVerb(unittest.TestCase):
+    """`cairn supervise headroom` is where the answer is given and read back."""
+
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.repository = Path(self.directory.name)
+        subprocess.run(("git", "init", "-q"), cwd=self.repository, check=True)
+
+    def said(self, *argv: str) -> str:
+        spoken = io.StringIO()
+        with redirect_stdout(spoken):
+            self.assertEqual(
+                supervise_main(["headroom", "--repository", str(self.repository), *argv]), 0
+            )
+        return spoken.getvalue()
+
+    def test_the_answer_is_recorded_and_read_back(self) -> None:
+        self.assertIn("nobody has answered here", self.said())
+        self.assertIn("endpoint on", self.said("--endpoint", "on"))
+        self.assertIs(endpoint_choice(runs_root(self.repository)), True)
+        said = self.said()
+        self.assertIn("endpoint on", said)
+        self.assertNotIn("nobody has answered", said)
+
+    def test_with_the_endpoint_off_the_blindness_is_named(self) -> None:
+        self.said("--endpoint", "off")
+        gauge = Gauge(
+            headroom_directory(runs_root(self.repository)),
+            clock=lambda: NOW,
+            account_reader=lambda: PERSONAL,
+        )
+        gauge.observe(event())
+        self.assertIn("measured only from 90% up", self.said())
 
 
 if __name__ == "__main__":

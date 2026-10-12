@@ -820,13 +820,73 @@ class TheReceiptsArePasteable(unittest.TestCase):
                     assert value is not None
                     self.assertIn(loose(str(value)), text)
 
-    def test_a_report_on_any_run_shows_no_cost(self) -> None:
+    SPENT: ClassVar[Any] = {
+        "kind": "agent.claude",
+        "model": "opus",
+        "cost_usd": 23.8,
+        "tokens": {"input": 1234, "output": 5678, "cache_read": 33_400_000},
+        "by_model": [{"model": "claude-opus-4-5", "cost_usd": 23.8, "tokens": {"input": 1234}}],
+        "windows": [
+            {
+                "window": "seven_day",
+                "before": 0.77,
+                "before_read_at": "2026-10-10T14:51:00Z",
+                "after": 0.96,
+                "after_read_at": "2026-10-11T00:23:00Z",
+                "resets_at": "2026-10-13T05:00:00Z",
+                "delta": 0.19,
+            }
+        ],
+    }
+
+    def _spending(self) -> RunRecord:
+        record = record_of("agent")
+        record["steps"][0]["consumption"] = self.SPENT
+        record["consumption"] = self.SPENT
+        return record
+
+    def test_what_a_step_and_a_run_spent_reaches_every_rendering(self) -> None:
+        """[45 A]: the record carries the provider's own account and the report shows it,
+        per step and for the run beside the allowance it read."""
+        record = self._spending()
+        for sink in SINKS:
+            text = loose(rendered(record, sink).text)
+            with self.subTest(sink=sink):
+                self.assertIn("$23.80 API-equivalent", text)
+                self.assertIn("33,400,000 cache read", text)
+                self.assertIn("claude-opus-4-5", text)
+                self.assertIn("77% before, 96% after, 19% of the window", text)
+
+    def test_the_runs_own_total_is_rendered_even_where_no_step_carries_one(self) -> None:
+        """The run's total is a receipt of its own, beside the allowance it read."""
+        record = record_of("agent")
+        record["consumption"] = self.SPENT
+        for sink in SINKS:
+            with self.subTest(sink=sink):
+                text = loose(rendered(record, sink).text)
+                self.assertIsNone(record["steps"][0]["consumption"])
+                self.assertIn("$23.80 API-equivalent", text)
+
+    def test_a_window_measured_once_is_never_rendered_as_having_moved_by_nothing(self) -> None:
+        record = self._spending()
+        once = {**self.SPENT["windows"][0], "after": None, "after_read_at": None, "delta": None}
+        record["steps"][0]["consumption"] = cast(Any, {**self.SPENT, "windows": [once]})
+        for sink in SINKS:
+            with self.subTest(sink=sink):
+                self.assertIn(
+                    "no delta between two measurements",
+                    loose(rendered(record, sink).text),
+                )
+
+    def test_a_run_whose_steps_accounted_for_nothing_states_no_figure(self) -> None:
+        """Cost is a receipt the record carries, never one a report works out: a run with
+        no account to quote quotes none rather than a zero."""
         for shape in SHAPES:
             for sink in SINKS:
                 with self.subTest(shape=shape, sink=sink):
-                    text = rendered(record_of(shape), sink).text
-                    self.assertNotRegex(text, r"\$\d")
-                    self.assertNotIn("API-equivalent", text)
+                    record = record_of(shape)
+                    self.assertIsNone(record["consumption"])
+                    self.assertNotRegex(rendered(record, sink).text, r"\$\d")
 
     def test_the_engines_own_view_of_the_run_is_rendered(self) -> None:
         record = record_of("green")

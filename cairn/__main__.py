@@ -43,6 +43,7 @@ from cairn.core import (
     write_report,
 )
 from cairn.enginehome import run_records_path
+from cairn.forecast import pace
 from cairn.gitio import refuse_unusable_repository
 from cairn.headroom import session_within_allowance
 from cairn.hooks import HOOK_VERB, hook_main
@@ -220,6 +221,10 @@ def _agent(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
         model=args.model,
         tools=args.tool or [],
         resume_session=resume,
+        # What a step of this kind and model has cost each window here before. Admission
+        # holds a step whose estimate exceeds what is left of a window before its reset,
+        # rather than starting a session that would meet the limit mid-turn ([45 C]).
+        estimate=pace(context.runs_root, kind=f"agent.{args.provider}", model=args.model),
     )
     if remedy:
         result = result._replace(detail={**result.detail, **remedy})

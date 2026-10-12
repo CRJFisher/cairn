@@ -105,6 +105,185 @@ def _required(record: dict[str, Any], names: tuple[str, ...]) -> None:
         )
 
 
+# --- what one session spent ------------------------------------------------------------
+#
+# Every session ends with the provider's own account of itself, and it is the only account
+# of what the work cost there is. Measured on Claude Code 2.1.220: the result message carries
+# `total_cost_usd`, a `usage` block of token counts for the session, and `modelUsage` keyed by
+# the model that did the work — the session block spelling its fields in snake case and the
+# per-model blocks in camel case.
+TOKEN_INPUT = "input"
+TOKEN_OUTPUT = "output"
+TOKEN_CACHE_READ = "cache_read"
+TOKEN_CACHE_CREATION = "cache_creation"
+TOKEN_KINDS: tuple[str, ...] = (
+    TOKEN_INPUT,
+    TOKEN_OUTPUT,
+    TOKEN_CACHE_READ,
+    TOKEN_CACHE_CREATION,
+)
+SESSION_TOKEN_FIELDS: dict[str, str] = {
+    TOKEN_INPUT: "input_tokens",
+    TOKEN_OUTPUT: "output_tokens",
+    TOKEN_CACHE_READ: "cache_read_input_tokens",
+    TOKEN_CACHE_CREATION: "cache_creation_input_tokens",
+}
+MODEL_TOKEN_FIELDS: dict[str, str] = {
+    TOKEN_INPUT: "inputTokens",
+    TOKEN_OUTPUT: "outputTokens",
+    TOKEN_CACHE_READ: "cacheReadInputTokens",
+    TOKEN_CACHE_CREATION: "cacheCreationInputTokens",
+}
+
+
+class ModelSpend(TypedDict):
+    """What one model did of the work, and what the provider charged for it."""
+
+    cost_usd: float | None
+    tokens: dict[str, int]
+
+
+class Spend(TypedDict):
+    """What sessions spent, summed across every session one step opened.
+
+    `cost_usd` is None where no session gave a figure, and a number where any did: an
+    absence is never a measured zero, which is the same rule the window readings keep.
+    """
+
+    cost_usd: float | None
+    tokens: dict[str, int]
+    by_model: dict[str, ModelSpend]
+
+
+def empty_spend() -> Spend:
+    return Spend(cost_usd=None, tokens={}, by_model={})
+
+
+def _count(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if not math.isfinite(number) or number < 0:
+        return None
+    return int(number)
+
+
+def _money(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) and number >= 0 else None
+
+
+def _token_counts(raw: object, fields: dict[str, str]) -> dict[str, int]:
+    """One block of token counts, keeping only the kinds it actually reported."""
+    if not isinstance(raw, dict):
+        return {}
+    block = cast(dict[str, Any], raw)
+    found: dict[str, int] = {}
+    for kind in TOKEN_KINDS:
+        number = _count(block.get(fields[kind]))
+        if number is not None:
+            found[kind] = number
+    return found
+
+
+def session_spend(result: dict[str, Any]) -> Spend:
+    """What one session spent, read off the provider's own result message.
+
+    Tolerant to the bone: a provider that reports no figure leaves an absence rather than a
+    zero, and the step is accounted for by whatever it did report.
+    """
+    by_model: dict[str, ModelSpend] = {}
+    usage: object = result.get("modelUsage")
+    if isinstance(usage, dict):
+        for name, entry in cast(dict[Any, Any], usage).items():
+            if not isinstance(name, str) or not isinstance(entry, dict):
+                continue
+            fields = cast(dict[str, Any], entry)
+            by_model[name] = ModelSpend(
+                cost_usd=_money(fields.get("costUSD")),
+                tokens=_token_counts(fields, MODEL_TOKEN_FIELDS),
+            )
+    return Spend(
+        cost_usd=_money(result.get("total_cost_usd")),
+        tokens=_token_counts(result.get("usage"), SESSION_TOKEN_FIELDS),
+        by_model=by_model,
+    )
+
+
+def _added_tokens(earlier: dict[str, int], later: dict[str, int]) -> dict[str, int]:
+    return {
+        kind: earlier.get(kind, 0) + later.get(kind, 0)
+        for kind in TOKEN_KINDS
+        if kind in earlier or kind in later
+    }
+
+
+def _added_money(earlier: float | None, later: float | None) -> float | None:
+    if earlier is None:
+        return later
+    if later is None:
+        return earlier
+    return earlier + later
+
+
+def add_spend(earlier: Spend, later: Spend) -> Spend:
+    """One step's account across every session it opened: first, resumes and rescue alike.
+
+    A session whose result was discarded in favour of a later one still spent what it spent,
+    so every session's account is summed and none is dropped with the result that carried it.
+    """
+    models = {**earlier["by_model"]}
+    for name, spend in later["by_model"].items():
+        held = models.get(name)
+        models[name] = (
+            spend
+            if held is None
+            else ModelSpend(
+                cost_usd=_added_money(held["cost_usd"], spend["cost_usd"]),
+                tokens=_added_tokens(held["tokens"], spend["tokens"]),
+            )
+        )
+    return Spend(
+        cost_usd=_added_money(earlier["cost_usd"], later["cost_usd"]),
+        tokens=_added_tokens(earlier["tokens"], later["tokens"]),
+        by_model=models,
+    )
+
+
+def spend_from(raw: object) -> Spend:
+    """A stored account, with anything unreadable dropped rather than trusted."""
+    spend = empty_spend()
+    if not isinstance(raw, dict):
+        return spend
+    stored = cast(dict[str, Any], raw)
+    spend["cost_usd"] = _money(stored.get("cost_usd"))
+    tokens: object = stored.get("tokens")
+    if isinstance(tokens, dict):
+        for kind in TOKEN_KINDS:
+            number = _count(cast(dict[str, Any], tokens).get(kind))
+            if number is not None:
+                spend["tokens"][kind] = number
+    by_model: object = stored.get("by_model")
+    if isinstance(by_model, dict):
+        for name, entry in cast(dict[Any, Any], by_model).items():
+            if not isinstance(name, str) or not isinstance(entry, dict):
+                continue
+            fields = cast(dict[str, Any], entry)
+            counts: dict[str, int] = {}
+            held: object = fields.get("tokens")
+            if isinstance(held, dict):
+                for kind in TOKEN_KINDS:
+                    number = _count(cast(dict[str, Any], held).get(kind))
+                    if number is not None:
+                        counts[kind] = number
+            spend["by_model"][name] = ModelSpend(
+                cost_usd=_money(fields.get("cost_usd")), tokens=counts
+            )
+    return spend
+
+
 # The tool a session files its report through. Its calls are in the stream, which is where
 # the report is read from ([_parse_lines]).
 REPORT_TOOL = "StructuredOutput"
@@ -313,11 +492,15 @@ def _translate_result(
     permission_mode: str,
     deny_patterns: list[str],
     model: str | None,
+    spend: Spend,
 ) -> CommandResult:
     structured = result.get("structured_output")
     raw_terminal_reason: object = result.get("terminal_reason")
     terminal_reason = raw_terminal_reason if isinstance(raw_terminal_reason, str) else None
     detail: dict[str, Any] = {
+        # Every session the step opened, not only the one whose result is kept below: a
+        # session whose account was discarded still spent what it spent.
+        "consumption": spend,
         "resets_at": _latest_reset(rate_limits),
         "session_id": result["session_id"],
         "generated_session_id": generated_session_id,
@@ -721,6 +904,7 @@ def run_claude(
 
     opened = resume_session is not None
     remaining = deadline_seconds
+    spent = empty_spend()
     commanded: dict[str, Any] | None = None
     command_limits: list[dict[str, Any]] = []
     command_exited = True
@@ -740,6 +924,7 @@ def run_claude(
         except CairnError as exc:
             name_the_session(exc)
             raise
+        spent = add_spend(spent, session_spend(commanded))
         if command_code != 0:
             # The command's own failure is the step's, with the typed cause it ended on.
             failed = _translate_result(
@@ -750,6 +935,7 @@ def run_claude(
                 permission_mode=permission_mode,
                 deny_patterns=denied,
                 model=model,
+                spend=spent,
             )
             return failed._replace(detail={**failed.detail, **led})
         opened = True
@@ -770,6 +956,7 @@ def run_claude(
     except CairnError as exc:
         name_the_session(exc)
         raise
+    spent = add_spend(spent, session_spend(result))
     if commanded is not None:
         # Measured: each pass of a session reports its own invocation's turns, so the
         # step's are the sum of its passes.
@@ -806,6 +993,7 @@ def run_claude(
             "session_id": result.get("session_id"),
             "turn_count": result.get("num_turns"),
             "terminal_reason": result.get("terminal_reason"),
+            "consumption": spent,
         }
         try:
             (
@@ -851,6 +1039,7 @@ def run_claude(
                 "resumed_for_report": RESUME_FAILED,
             }
             raise
+        spent = add_spend(spent, session_spend(resumed))
         # A first process that had to be stopped after giving its result is a leak the
         # record names; the resume's own exit must not erase it.
         exited_on_its_own = exited_on_its_own and resumed_exited
@@ -903,6 +1092,7 @@ def run_claude(
         except (Deadline, CairnError):
             rescue["refiled"] = RESUME_FAILED
         else:
+            spent = add_spend(spent, session_spend(refile))
             exited_on_its_own = exited_on_its_own and refile_exited
             rate_limits = [*rate_limits, *refile_limits]
             if refile_code != 0 or refile.get("structured_output") is None:
@@ -927,12 +1117,18 @@ def run_claude(
             permission_mode=permission_mode,
             deny_patterns=denied,
             model=model,
+            spend=spent,
         )
     except CairnError as unreported:
         # The rescue's own account has to survive the failure it was trying to prevent:
         # a step recorded `provider_protocol` with no word about whether a resume was
         # attempted leaves nobody able to tell a rescue that failed from one never tried.
-        unreported.detail = {**unreported.detail, **rescue, **led}
+        unreported.detail = {
+            **unreported.detail,
+            "consumption": spent,
+            **rescue,
+            **led,
+        }
         raise
     detail = {**translated.detail, **rescue, **led}
     if not exited_on_its_own:
@@ -998,7 +1194,13 @@ def _report_after_deadline(
         return silence(RESUME_STILL_SILENT, {})
     except CairnError as unreachable:
         return silence(RESUME_FAILED, unreachable.detail)
-    account = {"turn_count": int(_as_float(resumed.get("num_turns")))}
+    # The first pass gave no result message, so this resume's account is the only one the
+    # provider ever offered for the step.
+    spent = session_spend(resumed)
+    account = {
+        "turn_count": int(_as_float(resumed.get("num_turns"))),
+        "consumption": spent,
+    }
     if resumed.get("structured_output") is None:
         return silence(RESUME_STILL_SILENT, account)
     try:
@@ -1010,6 +1212,7 @@ def _report_after_deadline(
             permission_mode=permission_mode,
             deny_patterns=deny_patterns,
             model=model,
+            spend=spent,
         )
     except CairnError as unreadable:
         return silence(RESUME_FAILED, {**account, **unreadable.detail})

@@ -33,14 +33,17 @@ from typing import Any, cast
 
 from cairn.core import EXIT_OK, CairnError
 from cairn.enginehome import run_records_path
+from cairn.forecast import forecast, queue_of
+from cairn.forecast import lines as forecast_lines
 from cairn.gitio import runs_root
+from cairn.headroom import Gauge, blindness, endpoint_enabled, headroom_directory
 from cairn.layout import RECORD_FILE, check_run_id
 from cairn.locks import refuse_dirty_repository, refuse_unresolved_merge
 from cairn.marker import mint_occasion
 from cairn.record.store import build_run_record
 from cairn.record.vocabulary import RESUME_REFUSED, RESUME_STARTED
 from cairn.resume import Waiter, cancel, supersede
-from cairn.skill.explain import explainable, meaning, why_excluded, would_do
+from cairn.skill.explain import WouldDo, explainable, meaning, why_excluded, would_do
 from cairn.skill.resolve import (
     OccasionDecision,
     OccasionSignal,
@@ -153,6 +156,34 @@ def _has_run_before(repository: Path, plan: str) -> bool:
         if isinstance(recorded, dict) and cast(dict[str, Any], recorded).get("plan") == plan:
             return True
     return False
+
+
+def _say_what_it_will_cost(repository: Path, account: WouldDo) -> None:
+    """What this queue has cost before, against what is left, and what cannot be measured.
+
+    Printed by `run start` and by `explain workflow` alike, from one composer, so the figure
+    a person weighs before asking for a run is the figure the run then states. It is a
+    sentence and never a refusal: what to do about it is theirs (principle 3). Where no
+    record can speak for the queue it says so and says nothing else ([45 B]).
+
+    The blindness line is the instruments' own: with the usage endpoint off, the stream puts
+    a figure on a window only from 90% up, so a reader is told which windows the figures
+    above were silent about ([45 D]).
+    """
+    root = runs_root(repository)
+    gauge = Gauge(headroom_directory(root))
+    reading = gauge.read()
+    now = gauge.clock()
+    for line in forecast_lines(
+        forecast(root, queue_of(step.subcommand for step in account.steps)),
+        reading,
+        now=now,
+    ):
+        print(f"forecast {line}")
+    if not endpoint_enabled(root):
+        blind = blindness(reading, now=now)
+        if blind is not None:
+            print(f"blind    {blind}")
 
 
 def _admitted_graph(admission: Admission) -> str | None:
@@ -280,6 +311,12 @@ def _cmd_start(args: argparse.Namespace) -> int:
     if reading.disclose:
         print(f"occasion  {reading.reading}: {reading.taken}")
         print(f"          the other reading would mean: {reading.forgone}")
+    try:
+        _say_what_it_will_cost(repository, would_do(Path(launch.workflow), launch.plan))
+    except (CairnError, OSError) as unread:
+        # A forecast is a sentence a person weighs, never a precondition on the run: a
+        # record that could not be read costs the sentence and nothing else ([45 B]).
+        print(f"forecast could not be stated: {unread}")
 
     started = start(where, records=records, wait=bool(args.wait))
     if not started.taken_on:
@@ -377,6 +414,7 @@ def _cmd_explain_workflow(args: argparse.Namespace) -> int:
     print(f"schedule  {account.schedule or 'none — it runs when it is asked to'}")
     print(f"agents    {account.agent_steps} agent step(s)")
     print(f"file      {account.provenance.summary}")
+    _say_what_it_will_cost(repository, account)
     print("steps")
     for step in account.steps:
         does = " ".join(step.subcommand) or (step.assertion or "—")

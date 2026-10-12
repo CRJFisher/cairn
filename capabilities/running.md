@@ -38,7 +38,12 @@ conversation is in>` and, where the request's subjects are documents, `--subject
 
 4. **Check what would run, if the person has not seen it.**
    `python3 -m cairn explain workflow --plan <slug> --repository <path>` says what the
-   definition does and whether it is still the file Cairn wrote, and starts nothing.
+   definition does and whether it is still the file Cairn wrote, and starts no run. It also
+   states the `forecast` — what this queue's agent steps have cost each subscription window
+   here before, how many records that rests on, and what is left of the window now — so the
+   figure can be had without starting a run. Repeat it; a queue that plainly does not fit
+   in what remains is the person's to re-order, re-model or put off, and never yours to
+   decline on their behalf.
 
 5. **Check that the address you are about to hand over loads.** `python3 -m cairn view
 status` answers `serving`, `absent` or `foreign` and starts nothing. It is about the view and
@@ -80,7 +85,10 @@ status` answers `serving`, `absent` or `foreign` and starts nothing. It is about
    will not load — and a reply that announced a start before the refusal is a claim the
    person acts on and an incident log keeps. The watch line is
    the address step 5 read, so say what that reading was where it was not `serving`. Where the plan has run here before it also states the
-   occasion reading it took and what the other reading would have meant; say that too. It
+   occasion reading it took and what the other reading would have meant; say that too. After
+   the occasion it prints the `forecast` step 4 describes, and — where the usage endpoint is
+   off — a `blind` line naming the windows nothing can put a figure on below 90%. Repeat both:
+   a reader who does not know a window is unmeasured below 90% reads the silence as room. It
    then returns as soon as the engine has taken the run on, not when the run ends: a long
    plan is a blocked terminal otherwise, and an agent harness kills its own tool call long
    before that. The run keeps going without it; the engine is launched in its own session

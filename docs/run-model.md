@@ -316,9 +316,9 @@ Four things the engine never supplies, and where each field's authority sits ins
 Declared in `cairn/record/model.py`. The run carries `record_version`, `run_id`, `plan`,
 `graph_sha256`, `attempt_id`, `attempts`, `engine_version`, `engine_run_status`,
 `engine_run_status_name`, `engine_contradicted`, `owner_alive`, `verdict`, `exit_code`,
-`view_url`, `started_at`, `finished_at`, `allowance`, `accounts`, `account_in_use`,
-`trigger`, `lineage`, `steps`, `infrastructure`, `nodes`, `edges`, `waves`, `attention`,
-`integrity`, `git`, `next_action`, `resume` and `provenance`.
+`view_url`, `started_at`, `finished_at`, `allowance`, `consumption`, `accounts`,
+`account_in_use`, `trigger`, `lineage`, `steps`, `infrastructure`, `nodes`, `edges`,
+`waves`, `attention`, `integrity`, `git`, `next_action`, `resume` and `provenance`.
 
 `integrity` is every piece of this run's own evidence the record refused, and is empty on a
 run whose evidence is whole.
@@ -328,6 +328,13 @@ rested on: how full it was (`used`, a fraction, where the measurement gave one),
 `status`, when it `resets_at`, the `source` that measured it and when (`read_at`). It is how
 a reader sees what the account looked like, and how old that knowledge is, without opening a
 step ([supervision.md](supervision.md)).
+
+`consumption` is what the whole run spent, summed from the steps that accounted for
+themselves and `derived` rather than recorded: the API-equivalent `cost_usd` the provider
+charged, the `tokens` it counted by kind, what each model did of the work (`by_model`), and
+per window the first reading any step was admitted on against the last reading any step left
+behind. It sits beside `allowance` because what a queue cost and how much of the account it
+moved are one question. It is absent on a run with no agent step to account for.
 
 `accounts` is every subscription this run's sessions were funded by, each named once by its
 `org_id` and `subscription_type` — two entries for a run whose steps ran either side of a
@@ -364,8 +371,8 @@ Each step carries `step_id`, `title`, `slug`, `outcome`, `overlays`, `cause`, `p
 `commit`, `diffstat`, `left_uncommitted`, `turns`, `session_id`, `model`, `transcript`,
 `stderr_log`, `resume_command`, `follow_up_work`, `started_at`, `finished_at`, `exit_code`,
 `assertion_exit`, `assertion_source`, `assertion_backed_by`, `timeout_seconds`,
-`elapsed_seconds`, `assertion_stdout`, `assertion_stderr`, `remedy`, `headroom`, `where`,
-`nodes` and `provenance`.
+`elapsed_seconds`, `assertion_stdout`, `assertion_stderr`, `remedy`, `headroom`,
+`consumption`, `where`, `nodes` and `provenance`.
 
 `title` and `slug` are what the plan document calls the step: its title, and the name it was
 written under. `step_id` is that name sanitised into the engine's identifier grammar, with a
@@ -388,6 +395,18 @@ after a hold, and, on a step that stopped at the allowance, the `held_window` an
 `runs/<run-id>/holds/` and only while the engine still calls the step running — which is what
 lets a run waiting hours for a window, or for the provider to answer again, read as waiting
 rather than stalled.
+
+`consumption` is on an agent step and on nothing else — a command step opens no session for
+a provider to account for. It carries the step's `kind` and `model`, the API-equivalent
+`cost_usd` and the `tokens` the provider counted across **every** session the step opened
+(first, resumes after a hold, and the rescue that asks a silent session for its report), what
+each model did of the work (`by_model`), and the `windows` it was measured between. Each
+window carries the reading admission rested on (`before`, `before_read_at`), the reading the
+session's own events left behind (`after`, `after_read_at`), the `resets_at` those readings
+speak for, and a `delta` — present **only** where both readings carried a figure, both spoke
+for the same window, and the second was taken after the first. A window measured once carries
+its one reading and no delta: a difference inferred from a single measurement would read as a
+figure Cairn never took ([supervision.md](supervision.md)).
 
 `where` is on a step that is running now, and only on one: which turn its session is on
 (`turns`, counted from the transcript, and the session's own turns rather than a subagent's —

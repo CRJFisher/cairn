@@ -696,6 +696,10 @@ def _receipts(record: RunRecord, view_state: str) -> list[Block]:
                 ("the engine's own view", Fact(("run.view_url",), RULE_LINK)),
                 ("engine version", Fact(("run.engine_version",))),
                 ("subscription allowance, latest reading", Fact(("run.allowance",))),
+                # The run's whole spend, beside the allowance it read it against: what a
+                # queue cost and how much of the account it moved are one question ([45 A]).
+                ("what the run spent", Fact(("run.consumption",))),
+                ("the allowance it moved", Fact(("run.consumption_windows",))),
                 ("funded by", Fact(("run.accounts",))),
                 ("the account in use now", Fact(("run.account_in_use",))),
             ),
@@ -730,6 +734,8 @@ def _receipts(record: RunRecord, view_state: str) -> list[Block]:
                     ("assertion exit before the remedy", Fact((f"{key}.remedy_first_exit",))),
                     ("stopped at its bound of", Fact((f"{key}.timeout_seconds",))),
                     ("after running for", Fact((f"{key}.elapsed_seconds",))),
+                    ("what it spent", Fact((f"{key}.consumption",))),
+                    ("the allowance it moved", Fact((f"{key}.consumption_windows",))),
                     ("admitted to the allowance", Fact((f"{key}.allowance",))),
                     ("because", Fact((f"{key}.allowance_reason",))),
                     ("funded by", Fact((f"{key}.account",))),
