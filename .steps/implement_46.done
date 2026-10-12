@@ -1,0 +1,7 @@
+{
+  "key": "once",
+  "run_id": "20261012T083259Z-0a1251e8",
+  "scope": "once",
+  "step_id": "implement_46",
+  "summary": "Every acceptance criterion of plan 46 that can hold inside this repository now holds. A and B were already built and were left untouched; C was open and is now built. Functionality: when a step did i\u2026"
+}

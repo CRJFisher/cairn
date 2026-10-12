@@ -204,9 +204,10 @@ SENTENCE_BY_CAUSE: dict[str, str] = {
     ),
     CAUSE_PROVIDER_PROTOCOL: (
         "the step left no readable account of itself — most often a session that ended a "
-        "turn without the structured report it is constrained to give. This is not a step "
-        "that reported failure; it is a step whose account is missing, and its work may be "
-        "sitting in the tree. The step's own summary says which of the two it was"
+        "turn without the structured report it is constrained to give, or one that filed "
+        "its account and had every version of it refused. This is not a step that reported "
+        "failure; it is a step whose account is missing, and its work may be sitting in the "
+        "tree. The step's own summary says which of them it was"
     ),
     CAUSE_USER_DECISION_REQUIRED: (
         "the step reached a decision it cannot make for itself, so it left the run rather "

@@ -4,7 +4,7 @@
 did its work should not be recorded as a failure because its account came out malformed. The
 work is the person's; the report is how they learn about it.
 
-**Status: A and B built; C and D open.** Found in run `20261011T154219Z-f8e59892` of
+**Status: A, B and C built; D open.** Found in run `20261011T154219Z-f8e59892` of
 `remaining-plans-3`.
 
 **Serves** Run and Report.
@@ -44,11 +44,17 @@ summary written as plain sentences with no markup. The rescue is recorded like t
 free-text field. A session that closes it wrongly then garbles only the summary, and the fields
 the record keys on are already written.
 
-### C — The gate says which absence it was (open)
+### C — The gate says which absence it was (built)
 
-The verify gate's sentence for a rescued-but-still-unreported step is _the step's session ended
-without reporting_. For a session whose reports were all refused, it should read _every report
-the step's session filed was refused_. The fact needed is already in `detail.subtype`.
+The verify gate's sentence for a step whose account never arrived says which absence it was. A
+session the provider stopped after refusing every report it filed reads _every report the
+step's session filed was refused_, and its divergence's word is `refused`; a session that
+ended a turn without reporting reads _the step's session ended without reporting_, with
+`nothing`; every other unreadable-protocol fault reads _the step left no readable account of
+itself_, with `unreadable`. The fact the gate turns on is the session's `terminal_reason` —
+the same fact the rescue in A keys on — written into the step's `detail` by the runtime and
+spelled once as `core.REPORTS_EXHAUSTED`. It survives a resume that never answered, so the
+sentence holds wherever the refused first pass is the whole account there is.
 
 ### D — Measure whether B removed the failure (open)
 
@@ -66,11 +72,14 @@ going to `follow_up_work`.
   record (built).
 - The schema's last property and last required field is `summary`, and the document carries
   the schema and the ask verbatim (built; `tests/test_step_protocol.py`).
-- The gate's sentence distinguishes a refused account from a silent one (C).
+- The gate's sentence distinguishes a refused account from a silent one (built; tested in
+  `tests/test_verify_gate.py` and, across the seam the fact crosses, in
+  `tests/test_step_kinds.py`).
 - A summary of refusals across ten runs is recorded here (D).
 
 ## Touches
 
 `cairn/protocol.py`, `cairn/providers.py`, `docs/step-protocol.md`, `docs/cli-contract.md`,
-`tests/test_step_kinds.py`, `tests/test_step_protocol.py`; for C, `cairn/verify.py` and
-`cairn/report/phrases.py`.
+`tests/test_step_kinds.py`, `tests/test_step_protocol.py`; for C, `cairn/core.py`,
+`cairn/verify.py`, `cairn/report/phrases.py`, `docs/verify-gate.md` and
+`tests/test_verify_gate.py`.

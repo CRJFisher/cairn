@@ -304,10 +304,21 @@ nothing at all. The word appears in two vocabularies, as `reported_failure` and
 seen from the runtime's side, and an exclusion cause seen from the gate's.
 
 **Where the assertion passed, the divergence is still recorded**, with the step's own word
-given as `nothing`. That is the only channel the fact has: a mark report contributes its
-cause, its position and its divergence to the run record, and neither the gate's summary nor
-the assertion's exit status reaches it. Without the divergence, a step whose work is sitting
-verified in the tree would be indistinguishable from one that did nothing.
+for itself in place of the status it never gave. That is the only channel the fact has: a
+mark report contributes its cause, its position and its divergence to the run record, and
+neither the gate's summary nor the assertion's exit status reaches it. Without the
+divergence, a step whose work is sitting verified in the tree would be indistinguishable
+from one that did nothing.
+
+**That word says which absence it was.** A session that ended a turn without reporting is
+`nothing` — _the step's session ended without reporting_. A session the provider stopped
+after refusing every report it filed is `refused` — _every report the step's session filed
+was refused_; that step had an account of itself and could not get it accepted, which is a
+different thing for a person to act on than a step that never spoke. Every other
+unreadable-protocol fault is `unreadable` — _the step left no readable account of itself_.
+The gate reads the facts the runtime recorded beside the cause — `ended_without_reporting`
+and the session's `terminal_reason` — because the cause is broader than any one of them, and
+the gate's summary and the divergence beside it are then the same sentence about one step.
 
 **A marker that outlived its work is surfaced, not repaired.** A step whose marker is fresh
 is skipped, and its assertion still runs; if the tree has since regressed the assertion

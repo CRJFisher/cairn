@@ -33,6 +33,7 @@ from cairn.core import (
     ENDED_WITHOUT_REPORTING,
     EXIT_FAILED,
     EXIT_OK,
+    REPORTS_EXHAUSTED,
     CairnError,
     CommandResult,
     RuntimeContext,
@@ -119,10 +120,14 @@ GATE_EXCLUDE_IT = EXIT_FAILED
 # only status a report can carry when there is nothing to carry — and quoting `failed` back
 # puts a verdict in the session's mouth that it never gave ([19 D]).
 REPORTED_NOTHING = "nothing"
-# And where the step did say something Cairn could not read. Two readings rather than one,
-# because the divergence is the only channel this fact has into the record and a single
+# And where the step did say something Cairn could not read. Separate readings rather than
+# one, because the divergence is the only channel this fact has into the record and a single
 # word would make the run record contradict the gate's own summary beside it.
 REPORTED_UNREADABLE = "unreadable"
+# And where the step filed its account and the provider refused every version of it. The
+# narrowest of the three: the session had something to say and the shape of the saying is
+# what stopped it, which is a different thing to fix from a session that never spoke ([46 C]).
+REPORTED_REFUSED = "refused"
 # And where the step was stopped at a bound before it could say anything: the engine's, read
 # back out of its record ([22 A]), or its own, enforced by the wrapper ([22 B]). The
 # assertion still ran over whatever the step left, and this is the reading that lets the
@@ -211,6 +216,8 @@ def divergence_line(divergence: Divergence) -> str:
     asserted = "passed" if divergence["asserted"] else "did not pass"
     if divergence["reported"] == REPORTED_NOTHING:
         return f"the step's session ended without reporting, and its assertion {asserted}"
+    if divergence["reported"] == REPORTED_REFUSED:
+        return f"every report the step's session filed was refused, and its assertion {asserted}"
     if divergence["reported"] == REPORTED_UNREADABLE:
         return f"the step left no readable account of itself, and its assertion {asserted}"
     if divergence["reported"] == REPORTED_KILLED:
@@ -315,16 +322,23 @@ def judge(verify_exit: int | None, report: dict[str, Any] | None) -> Verdict:
         # contradicted, and tells the person their session claimed something it never did.
         #
         # **The cause is broader than the sentence.** `provider_protocol` covers every
-        # unreadable-protocol fault, and only one of them is a session that said nothing at
-        # all — so the summary is narrowed by the fact the runtime recorded rather than by
-        # the cause, which means more than that ([core.ENDED_WITHOUT_REPORTING]).
-        silent = _detail(report).get(ENDED_WITHOUT_REPORTING) is True
-        reading = REPORTED_NOTHING if silent else REPORTED_UNREADABLE
-        said = (
-            "the step's session ended without reporting"
-            if silent
-            else "the step left no readable account of itself"
-        )
+        # unreadable-protocol fault, and a session that said nothing at all is only one of
+        # them — so the summary is narrowed by the facts the runtime recorded rather than by
+        # the cause, which means more than any of them ([core.ENDED_WITHOUT_REPORTING],
+        # [core.REPORTS_EXHAUSTED]). A session whose every report the provider refused had
+        # an account and could not get it accepted, which is a different thing for a person
+        # to act on than a session that never spoke ([46 C]).
+        detail = _detail(report)
+        silent = detail.get(ENDED_WITHOUT_REPORTING) is True
+        if not silent:
+            reading = REPORTED_UNREADABLE
+            said = "the step left no readable account of itself"
+        elif detail.get("terminal_reason") == REPORTS_EXHAUSTED:
+            reading = REPORTED_REFUSED
+            said = "every report the step's session filed was refused"
+        else:
+            reading = REPORTED_NOTHING
+            said = "the step's session ended without reporting"
         return Verdict(
             record=False,
             cause=PROVIDER_PROTOCOL,
@@ -622,6 +636,7 @@ __all__ = [
     "PROVIDER_UNREACHABLE",
     "REPORTED_KILLED",
     "REPORTED_NOTHING",
+    "REPORTED_REFUSED",
     "REPORTED_UNREADABLE",
     "Divergence",
     "Verdict",

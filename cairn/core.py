@@ -39,6 +39,12 @@ STATUSES = ("done", "noop", "failed")
 # failing — the gate would silently fall back to its broader sentence for ever.
 ENDED_WITHOUT_REPORTING = "ended_without_reporting"
 
+# The `terminal_reason` a session carries when the provider stopped it for refusing every
+# report it filed. It crosses the same seam as the key above, and for the same reason: the
+# provider decides a session with this reason gave no account rather than failed ([46 A]),
+# and the gate reads it back to say which absence the step's missing account was.
+REPORTS_EXHAUSTED = "structured_output_retry_exhausted"
+
 # The admission a step records when the subscription's allowance stopped it before its
 # session. Minted here rather than in [headroom.py], which writes it, because the readers
 # that key on it — the assertion's gate, the verify gate, the run record — all sit below
@@ -500,6 +506,7 @@ __all__ = [
     "EXIT_OK",
     "EXIT_RATE_LIMITED",
     "HELD",
+    "REPORTS_EXHAUSTED",
     "STATUSES",
     "CairnError",
     "Cancelled",

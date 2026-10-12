@@ -20,6 +20,7 @@ from cairn.__main__ import COMMAND_HANDLERS, main
 from cairn.commands import run_exec, run_wait_duration, run_wait_until, stop_child
 from cairn.core import (
     EXIT_OK,
+    REPORTS_EXHAUSTED,
     CairnError,
     CommandResult,
     PopenFactory,
@@ -64,6 +65,7 @@ from cairn.verify import (
     PROVIDER_UNREACHABLE,
     REPORTED_KILLED,
     REPORTED_NOTHING,
+    REPORTED_REFUSED,
     TIMED_OUT,
     judge,
 )
@@ -1468,6 +1470,17 @@ class ProviderBehavior(unittest.TestCase):
             )
 
 
+def gate_report(status: str, cause: str | None, detail: dict[str, Any]) -> dict[str, Any]:
+    """A step's report as the verify gate reads it, from what the runtime decided."""
+    return {
+        "status": status,
+        "cause": cause,
+        "summary": "x",
+        "needs_user_decision": False,
+        "detail": detail,
+    }
+
+
 class ASessionThatEndedWithoutReportingIsResumedOnce(unittest.TestCase):
     """A session that ended a turn without reporting is not a session that failed.
 
@@ -1637,6 +1650,56 @@ class ASessionThatEndedWithoutReportingIsResumedOnce(unittest.TestCase):
         self.assertEqual(result.cause, "provider_protocol")
         self.assertEqual(result.detail["resumed_for_report"], RESUME_STILL_SILENT)
         self.assertIs(result.detail[ENDED_WITHOUT_REPORTING], True)
+
+    def test_the_gate_tells_a_refused_account_from_a_silent_one(self) -> None:
+        """The two absences cross one seam: the runtime writes the session's terminal reason
+        into the step's `detail` and the gate reads it back. Spelled apart, the gate would
+        tell a person whose review filed five accounts that it never spoke ([46 C])."""
+        factory, _ = self._scripted(self.REFUSED_EVERY_REPORT, self.REFUSED_EVERY_REPORT)
+        refused = self._ran(factory)
+        verdict = judge(0, gate_report(refused.status, refused.cause, refused.detail))
+        self.assertEqual(
+            verdict["divergence"], {"reported": REPORTED_REFUSED, "asserted": True}
+        )
+        self.assertIn(
+            "every report the step's session filed was refused", verdict["summary"]
+        )
+        factory, _ = self._scripted(self.UNREPORTED, self.UNREPORTED)
+        with self.assertRaises(CairnError) as caught:
+            self._ran(factory)
+        silent = judge(0, gate_report("failed", caught.exception.cause, caught.exception.detail))
+        self.assertEqual(
+            silent["divergence"], {"reported": REPORTED_NOTHING, "asserted": True}
+        )
+        self.assertIn("ended without reporting", silent["summary"])
+
+    def test_a_refused_account_whose_resume_never_answered_is_still_refused(self) -> None:
+        """The first pass is then the whole account there is, so the fact the gate's
+        sentence turns on has to survive in it."""
+        made: list[FakeProcess] = []
+        replies = [dict(self.REFUSED_EVERY_REPORT)]
+
+        def factory(command: list[str], **kwargs: object) -> FakeProcess:
+            process = FakeProcess(command, **kwargs)
+            if replies:
+                said = replies.pop(0)
+                process.returncode = int(said.pop("exit"))
+                process.stdout = FakeOutput(session_stream({**process.output(), **said}))
+            else:
+                process.stdout = FakeOutput("")
+            made.append(process)
+            return process
+
+        with self.assertRaises(CairnError) as caught:
+            self._ran(factory)
+        self.assertEqual(len(made), 2)
+        detail = caught.exception.detail
+        self.assertEqual(detail["resumed_for_report"], RESUME_FAILED)
+        self.assertEqual(detail["terminal_reason"], REPORTS_EXHAUSTED)
+        verdict = judge(0, gate_report("failed", caught.exception.cause, detail))
+        self.assertEqual(
+            verdict["divergence"], {"reported": REPORTED_REFUSED, "asserted": True}
+        )
 
     def test_a_resume_that_fails_for_its_own_reason_stays_the_silence_it_was(self) -> None:
         """A resume that ends on its own terminal reason must not overwrite the honest cause:

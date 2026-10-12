@@ -27,6 +27,7 @@ from cairn.core import (
     EXIT_FAILED,
     EXIT_OK,
     EXIT_RATE_LIMITED,
+    REPORTS_EXHAUSTED,
     CairnError,
     CommandResult,
     PopenFactory,
@@ -420,8 +421,6 @@ PROVIDER_BINARY = "claude"
 # three `Cron*` tools are gone from the session's tool list and `Monitor` and `Agent` remain.
 # An unmatched deny pattern is silently a no-op, which reads as protection while being none.
 NEVER_DELIVERED: tuple[str, ...] = ("ScheduleWakeup", "Cron*")
-# The terminal reason of a session the provider stopped after refusing every report it filed.
-REPORTS_EXHAUSTED = "structured_output_retry_exhausted"
 
 # Under `-p` the provider stops waiting for background subagents at a ceiling of its own and
 # terminates them, so a long high-effort review would end silently short of its findings.
@@ -798,10 +797,15 @@ def run_claude(
             ENDED_WITHOUT_REPORTING: True,
             "resumed_for_report": RESUME_ATTEMPTED,
         }
-        # What the first pass is worth saying even if the resume never answers.
+        # What the first pass is worth saying even if the resume never answers. Its
+        # `terminal_reason` is here because the gate's sentence for the step turns on it:
+        # a resume that never answered leaves the first pass as the whole account, and
+        # without this the gate would call a session whose every report was refused a
+        # session that said nothing ([46 C]).
         first_detail: dict[str, Any] = {
             "session_id": result.get("session_id"),
             "turn_count": result.get("num_turns"),
+            "terminal_reason": result.get("terminal_reason"),
         }
         try:
             (

@@ -38,7 +38,12 @@ from cairn.assertions import (
     decision_of,
     tree_digest,
 )
-from cairn.core import ENDED_WITHOUT_REPORTING, RuntimeContext, write_json
+from cairn.core import (
+    ENDED_WITHOUT_REPORTING,
+    REPORTS_EXHAUSTED,
+    RuntimeContext,
+    write_json,
+)
 from cairn.emitters import (
     assertion_gate,
     emit_commit,
@@ -80,6 +85,7 @@ from cairn.verify import (
     GATE_RECORD_IT,
     QUOTA_HELD,
     REPORTED_NOTHING,
+    REPORTED_REFUSED,
     REPORTED_UNREADABLE,
     Divergence,
     divergence_line,
@@ -1654,6 +1660,24 @@ class AStepThatReportedNothingIsNotAStepThatReportedFailure(unittest.TestCase):
         self.assertTrue(divergence["asserted"])
         self.assertIn("ended without reporting", divergence_line(divergence))
         self.assertNotIn("'failed'", divergence_line(divergence))
+
+    def test_a_step_whose_every_report_was_refused_says_that_instead(self) -> None:
+        """Measured: a review that found nothing to fix filed its account five times and had
+        each one refused. Told its session "ended without reporting", a person goes looking
+        for a session that stopped early; what there is to act on is the report's shape."""
+        refused = report(status="failed", cause="provider_protocol")
+        refused["detail"] = {
+            ENDED_WITHOUT_REPORTING: True,
+            "terminal_reason": REPORTS_EXHAUSTED,
+        }
+        found = judge(0, refused)
+        divergence = cast(Divergence, found["divergence"])
+        self.assertEqual(divergence["reported"], REPORTED_REFUSED)
+        self.assertIn("every report the step's session filed was refused", found["summary"])
+        self.assertIn(
+            "every report the step's session filed was refused", divergence_line(divergence)
+        )
+        self.assertNotIn("ended without reporting", divergence_line(divergence))
 
     def test_a_step_whose_account_was_unreadable_says_that_instead(self) -> None:
         """`provider_protocol` covers every unreadable-protocol fault and only the
