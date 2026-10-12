@@ -1,12 +1,12 @@
 # 36 — Keeping tabs: a live, plain-language summary of every session
 
-**North star ([principle 2](../PRINCIPLES.md)).** A person glances at one page and knows, for each
-running session, what it is doing, what it has done, and whether it looks stuck — in sentences,
-not JSONL, and current to within a minute or so.
-
-**Status: idea, not a plan.** Extends [20](20-watching-a-live-session.md), whose `where` line is a
+**Status: idea.** Extends [20](../archive/20-watching-a-live-session.md), whose `where` line is a
 mechanical fact (turn, last tool, age). This adds a _meaning_ layer on top. Answering questions is
 [35](35-human-in-the-loop-steps.md).
+
+**North star ([principle 2](../../PRINCIPLES.md)).** A person glances at one page and knows, for each
+running session, what it is doing, what it has done, and whether it looks stuck — in sentences,
+not JSONL, and current to within a minute or so.
 
 ## The idea
 

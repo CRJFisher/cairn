@@ -1,6 +1,6 @@
 # 45 — Spending the allowance knowingly: what each step costs, what the queue will cost
 
-**North star ([principle 4](../PRINCIPLES.md), [principle 3](../PRINCIPLES.md)).** A queue is
+**North star ([principle 4](../../PRINCIPLES.md), [principle 3](../../PRINCIPLES.md)).** A queue is
 bounded by the allowance behind it. Cairn holds at a threshold, but it cannot say what a step
 costs or whether the rest of the queue fits in what is left. So a person learns that the week
 ran out from a failed run, rather than from a sentence before the run began, when they could
@@ -82,7 +82,7 @@ usage endpoint for figures below that_.
 [38](38-subscription-headroom.md) names three answers to a long hold: wait, switch to a
 cheaper model, or stop. Only waiting is built. A plan sentence such as _if the weekly Opus
 allowance is low, use sonnet_ would let the derivation record a fallback per step, and
-admission would take it rather than hold. Per [SKILL.md](../SKILL.md) a model is never chosen
+admission would take it rather than hold. Per [SKILL.md](../../SKILL.md) a model is never chosen
 on the person's behalf, so this is offered only where the plan says it. Whether to build it is
 the open question this plan carries.
 

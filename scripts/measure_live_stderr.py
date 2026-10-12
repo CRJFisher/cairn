@@ -6,7 +6,7 @@ This is [20]'s gate. The breadcrumb Cairn writes beside the transcript — one l
 per turn of an agent session — is worth building only if a person watching the node sees
 those lines as they happen. Whether the view does that is a property of the pinned engine,
 not something the design may assume, so it is measured here and the result is written into
-`planning/20-watching-a-live-session.md`.
+`planning/archive/20-watching-a-live-session.md`.
 
 A step writes one prefixed line to standard error every couple of seconds for half a minute.
 While it is still running, three things are read: the node's `.err` file on disk, the

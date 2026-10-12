@@ -94,7 +94,7 @@ claims below describe.
 repository location, no dependency on a configuration layout only one person has. A generated
 workflow is the one deliberate exception: it is a **per-machine build product**, not a portable
 artifact. It encodes the package root, the repository and the runs root of the machine it was
-authored on, by design ([workflow.md](../docs/workflow.md)), and it is authored on the machine
+authored on, by design ([workflow.md](../../docs/workflow.md)), and it is authored on the machine
 that runs it — re-authoring there is the whole of moving one. That stands until binary
 resolution (item 15) replaces the interpreter resolution baked into every file; until then a
 definition that names another machine's paths is a definition to re-author, never one to edit.

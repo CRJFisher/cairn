@@ -1,12 +1,12 @@
 # 35 — Human in the loop: a run asks a person, and carries on
 
-**North star ([principle 3](../PRINCIPLES.md)).** A person is asked for a decision or a missing
+**Status: idea.** Seeing what sessions are doing is a separate capability,
+[36](36-keeping-tabs.md); one surface for both is [37](37-one-plane-for-watching-and-answering.md).
+
+**North star ([principle 3](../../PRINCIPLES.md)).** A person is asked for a decision or a missing
 fact at the moment the work needs it, answers, and the work carries on with that answer — without
 re-running the plan by hand. Software is complex: no plan anticipates every decision, so asking is
 an expected part of a run, not a failure.
-
-**Status: idea, not a plan.** Seeing what sessions are doing is a separate capability,
-[36](36-keeping-tabs.md); one surface for both is [37](37-one-plane-for-watching-and-answering.md).
 
 ## Two kinds of question
 
@@ -18,7 +18,7 @@ an expected part of a run, not a failure.
   it, so it needs a different mechanism. Candidates:
   - **Park and resume.** The session ends with a `needs_input` outcome and a written question; its
     branch parks, independent branches continue; the answer seeds a follow-on run
-    ([34](34-follow-on-runs.md)). Fits every current invariant; loses the session's context.
+    ([34](../archive/34-follow-on-runs.md)). Fits every current invariant; loses the session's context.
   - **Block in place.** The session gets an `ask_human` tool (a small MCP server) that writes the
     question to a store and blocks until an answer appears. Keeps the full context and is the most
     natural for the agent; costs a held session, a held lock, and needs a timeout.
@@ -46,7 +46,7 @@ Where the answer lands decides question 3 below, and is shared with [37](37-one-
 
 ## Where it meets Cairn
 
-The graph layer is closed on purpose ([34](34-follow-on-runs.md), [11](11-emitter-and-preflight.md)):
+The graph layer is closed on purpose ([34](../archive/34-follow-on-runs.md), [11](11-emitter-and-preflight.md)):
 `action:` and `with:` are refused by preflight, the root key set is a closed frozenset, and a step
 body is one quoted invocation. Both engine mechanisms sit outside that today, so adopting either is
 a generator version bump that reopens part of the closed surface — the same cost 34 names for
@@ -60,7 +60,7 @@ Invariants any version must keep:
 - **The plan document stays the source of truth.** The decision point and the shape of its answer
   are authored in the plan, validated at parse, and digest-stamped into the emitted graph.
 - **The graph stays static.** A form is declared up front; nothing is generated mid-run.
-- **Recovery is re-running the plan, never `dagu retry`** ([34](34-follow-on-runs.md)). A waiting
+- **Recovery is re-running the plan, never `dagu retry`** ([34](../archive/34-follow-on-runs.md)). A waiting
   run is a new kind of resting state that this rule has to account for.
 
 ## Open questions

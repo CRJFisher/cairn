@@ -52,7 +52,7 @@ facts below that it does not restate were not re-measured.
   no approval step, so in every workflow Cairn generates the hook never fires: a session that has
   stalled is a running node, not a waiting DAG. Adopting it would also change every emitted
   definition for no observable effect. It is reconsidered if Cairn ever emits an approval gate,
-  as its own decision with its own fixture change — which [35](35-human-in-the-loop-steps.md) proposes on
+  as its own decision with its own fixture change — which [35](../ideas/35-human-in-the-loop-steps.md) proposes on
   the 2.18.2 `human.task` ([41](41-dagu-2-18-upgrade.md) O1).
 - **OpenTelemetry tracing.** It needs a collector listening at an endpoint, which is a server
   Cairn would have to run or require, and Watch requires none. Spans also arrive per step, not per

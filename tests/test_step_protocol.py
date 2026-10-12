@@ -54,6 +54,9 @@ from tests.ownership import own_repository
 
 CAIRN_ROOT = Path(__file__).resolve().parent.parent
 PROTOCOL_DOC = CAIRN_ROOT / "docs" / "step-protocol.md"
+# A Markdown link's target. One with a scheme or only an anchor names no file.
+MARKDOWN_LINK = re.compile(r"\]\((?P<target>[^)\s]+)\)")
+NOT_A_FILE = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|#)")
 # Pinned to a year the suite can never be run in, so a key read from the wall clock
 # instead of from the occasion cannot coincide with the expected one and pass by luck.
 OCCASION = "20190412T215838Z-a6beaee2"
@@ -407,11 +410,17 @@ class TheProtocolIsStatedOnce(unittest.TestCase):
 
     def test_no_document_reaches_outside_the_package(self) -> None:
         """The directory is extracted by a move, so a link that escapes it dies there."""
-        escaping = {
-            path.name
-            for path in CAIRN_ROOT.glob("**/*.md")
-            if "](../../" in path.read_text(encoding="utf-8")
-        }
+        escaping: set[str] = set()
+        for path in CAIRN_ROOT.glob("**/*.md"):
+            for link in MARKDOWN_LINK.finditer(path.read_text(encoding="utf-8")):
+                if NOT_A_FILE.match(link["target"]):
+                    continue
+                target = link["target"].partition("#")[0]
+                # Normalised rather than resolved: a symlink inside the package that points
+                # out of it is the move's concern, not the link's.
+                lands = Path(os.path.normpath(path.parent / target))
+                if not lands.is_relative_to(CAIRN_ROOT):
+                    escaping.add(f"{path.relative_to(CAIRN_ROOT)} -> {link['target']}")
         self.assertEqual(escaping, set())
 
 

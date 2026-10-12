@@ -49,7 +49,7 @@ the suite runs on.
 - `cairn/layout.py` builds the address from `CAIRN_VIEW_BASE`, then the engine's
   `DAGU_HOST`/`DAGU_PORT`, then `127.0.0.1:8080`. `trigger.address` prints it, and the run
   record stores it as `view_url`. Nothing checks that anything is listening there.
-- Cairn deliberately starts no server. [docs/triggers.md](../docs/triggers.md) says "Cairn
+- Cairn deliberately starts no server. [docs/triggers.md](../../docs/triggers.md) says "Cairn
   neither starts nor manages the process", and [20](20-watching-a-live-session.md) says "no
   engine server is required for the `where` line". This document starts the view server, and
   only the view server. The scheduler is unaffected.
@@ -90,14 +90,14 @@ improvises.
 **Only the view.** The command Cairn runs is `dagu server`, never `dagu start-all` and never
 `dagu scheduler`. `start-all` starts the scheduler too, and the scheduler's retry scanner
 re-executes failed runs across the machine. That is
-[scheduling.md](../capabilities/scheduling.md)'s escalation, and a request to see the graph
+[scheduling.md](../../capabilities/scheduling.md)'s escalation, and a request to see the graph
 never reaches it.
 
 **The two things a started server owes the person, said in the same reply:**
 
 - **Claim the admin account.** The server starts with authentication unclaimed, and the first
   local process to call its setup endpoint becomes administrator
-  ([triggers.md](../docs/triggers.md)). The reply says to open the address now and claim it.
+  ([triggers.md](../../docs/triggers.md)). The reply says to open the address now and claim it.
 - **How to stop it**, and that stopping it loses nothing, because it holds no run state.
 
 **The sandbox wall, before the question.** A shell that may not bind a TCP port fails to

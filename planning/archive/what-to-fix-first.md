@@ -199,13 +199,13 @@ and B are what produced the loudest complaint in the record.
 Three items were questions rather than work. Each has its answer, recorded where the contract
 it touches lives. Two of the three then took build work to record the answer — the timeout
 warning is a new parse-report warning, and the build-product ruling rewrote
-[16](16-release.md) as well as [docs/workflow.md](../docs/workflow.md). The verify-retry
+[16](16-release.md) as well as [docs/workflow.md](../../docs/workflow.md). The verify-retry
 answer took none: it is a sentence beside `retries`.
 
 - **May a verify retry once?** ([24 C](24-recovery-economics.md)) **No.** The engine records
   no per-node retry count, so a retried pass would read exactly like a first-try pass in the
   run record; the remedy for an assertion that flakes is the plan stating one that does not.
-  Recorded beside `retries` in [plan-contract.md](../docs/plan-contract.md), with what
+  Recorded beside `retries` in [plan-contract.md](../../docs/plan-contract.md), with what
   24 A says leaving a flaky assertion in does: one shared proof closes every gate quoting it.
 - **Does a non-default assertion timeout carry its evidence, the way an edge does?**
   ([22](22-timed-out-step.md)) **It warns.** A `verify_timeout` that differs from the default
@@ -213,5 +213,5 @@ answer took none: it is a sentence beside `retries`.
   document's words for it — never a refusal, and no schema change.
 - **Is an emitted definition a portable artifact or a per-machine build product?**
   ([23 C](23-reading-a-broken-run.md)) **A per-machine build product**, authored on the machine
-  that runs it, until binary resolution lands. [docs/workflow.md](../docs/workflow.md)'s
+  that runs it, until binary resolution lands. [docs/workflow.md](../../docs/workflow.md)'s
   design stands and [16](16-release.md) now says the same.

@@ -10,7 +10,7 @@ no route for the most ordinary shape a run request takes.
 **Serves** **Author** and **Run**: a person can hand Cairn a plan in a sentence and get it
 run, and can choose the model that does the work without knowing where that setting lives. No
 invariant moves. The plan document stays the source of truth (I1), and a step's model is still
-set only where the plan's own words state it ([plan-derivation](../docs/plan-derivation.md)).
+set only where the plan's own words state it ([plan-derivation](../../docs/plan-derivation.md)).
 Cost is out of scope here because [32](32-no-cost.md) removes it.
 
 ## What a person hit
@@ -82,7 +82,7 @@ above), `tests/test_the_skill.py`.
 
 **Today.** `SKILL.md` lists two qualifiers, a `repository` and a `cadence`. A step's
 `model` is spelled out only in
-[plan-derivation](../docs/plan-derivation.md) and [plan-contract](../docs/plan-contract.md):
+[plan-derivation](../../docs/plan-derivation.md) and [plan-contract](../../docs/plan-contract.md):
 "pin it to the opus model" becomes a model of `opus`. An agent holding a request that names a
 model, or makes the model a condition of going ahead, has nothing in the file it was handed.
 So it reads the source.
@@ -104,7 +104,7 @@ So it reads the source.
 
 ## C — A plan-wide model binds the merge resolver, and a stop condition is never reinterpreted
 
-**Today.** [merge-step](../docs/merge-step.md) says "the resolver is the plan's own default
+**Today.** [merge-step](../../docs/merge-step.md) says "the resolver is the plan's own default
 agent", but its model is the constant `MERGE_MODEL = AGENT_MODEL`, and no plan can set it. The
 person asked for every step on Sonnet 5.5 and said to stop if that was impossible. The agent
 judged the alias close enough and went on.

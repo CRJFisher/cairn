@@ -1,6 +1,6 @@
 # 42 — A step held before its session started did nothing, and the record says so
 
-**North star ([principle 2](../PRINCIPLES.md), [principle 4](../PRINCIPLES.md)).** A person
+**North star ([principle 2](../../PRINCIPLES.md), [principle 4](../../PRINCIPLES.md)).** A person
 reading a run that stopped at the allowance should see which step was stopped, that it did
 nothing, and what the allowance read when it stopped. Today a step the allowance stopped before
 it started looks like a step that did work and then diverged from its assertion, and the run

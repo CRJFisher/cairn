@@ -1,12 +1,12 @@
 # 40 — The agent's task list as the source for keeping tabs
 
-**North star ([principle 2](../PRINCIPLES.md)).** A person glances at one page and knows what each
+**Status: idea.** Findings, feeding [36](36-keeping-tabs.md). Replaces 36's summariser
+(`claude -p`) in the first iteration. Everything under "Verified" was observed on Claude Code
+2.1.220 with a logging hook on every event, in headless `claude -p` mode.
+
+**North star ([principle 2](../../PRINCIPLES.md)).** A person glances at one page and knows what each
 running session is doing. The agent's own task list is a structured, model-authored statement of
 exactly that — read it instead of summarising the transcript with a second model.
-
-**Status: findings, feeding [36](36-keeping-tabs.md).** Replaces 36's summariser (`claude -p`) in
-the first iteration. Everything under "Verified" was observed on Claude Code 2.1.220 with a logging
-hook on every event, in headless `claude -p` mode.
 
 ## Capability surface
 
@@ -14,7 +14,7 @@ For each running node the page can show the session's task list — each task's 
 (`pending` / `in_progress` / `completed`) and dependencies — current to the moment the agent last
 changed it. No model call, no cost, no summary that can be wrong about what the agent said it was
 doing. A session that never writes a task list shows nothing for this layer and falls back to
-[20](20-watching-a-live-session.md)'s mechanical `where` line.
+[20](../archive/20-watching-a-live-session.md)'s mechanical `where` line.
 
 ## Verified: the agent has two task tools, one at a time
 

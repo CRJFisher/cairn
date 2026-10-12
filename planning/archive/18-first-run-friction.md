@@ -33,13 +33,13 @@ carries over there.
 guesses.** The candidate surface widened past any rule code could hold: the agent that reads
 the plan declares the command it would offer on the step's own `missing_verify` question,
 resting on a sentence quoted verbatim from the document, and code checks the quote and never
-the reading ([../docs/plan-contract.md](../docs/plan-contract.md)). Two mechanisms below are
+the reading ([../docs/plan-contract.md](../../docs/plan-contract.md)). Two mechanisms below are
 therefore void rather than built — there is no `candidate()` to rank, and no candidate rule
 to name on an answer. What stands in for the second is what the answer already carries: the
 offer itself, and an outcome `answer` derives against it rather than being told, so the
 accepted / edited / authored / declined tally cannot be miscounted by whoever ran the
 conversation. Every other decision here landed as written, and the tally this section owes is
-in [../docs/verify-gate.md](../docs/verify-gate.md).
+in [../docs/verify-gate.md](../../docs/verify-gate.md).
 
 **Today, exactly.** The derivation sets `verify` to `null` wherever the document gives no command
 and raises a `missing_verify` question — by rule, and the rule says _never synthesise a command_.

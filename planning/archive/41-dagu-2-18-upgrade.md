@@ -1,6 +1,6 @@
 # 41 — Moving the engine pin from Dagu 2.11.0 to 2.18.2
 
-**North star ([principles 1–4](../PRINCIPLES.md)).** The engine is what runs a person's planned work
+**North star ([principles 1–4](../../PRINCIPLES.md)).** The engine is what runs a person's planned work
 while they are away. A pin move is worth making only if nothing a person relies on changes under
 them, and if the new engine gives a better answer to "what is it doing" and "what does it need
 from me".
@@ -204,7 +204,7 @@ claim that a step gets a curated environment so the caller's `PYTHONPATH` does n
 Ordered by value to the principles. Effort is Cairn work, not engine work.
 
 **O1. Human tasks with push-back, rewind and artifacts — principle 3.** `human.task` exists in
-2.11.0 (planning [35](35-human-in-the-loop-steps.md) already designs on it). Added since:
+2.11.0 (planning [35](../ideas/35-human-in-the-loop-steps.md) already designs on it). Added since:
 push-back that rewinds to a named earlier step with typed feedback (`DAG_PUSHBACK`) [R 2.17.2 #2840, S schema `humanTaskPushBackConfig`]; run artifacts attached to a task as review context [R
 2.17.0 #2824]; **independent branches resume while a task waits** [R 2.17.2 #2838] — without
 this a task in one wave would stall every sibling; approvals recovered and direct resumes
@@ -255,7 +255,7 @@ documentation only.
 individual downloads [R 2.17.0 #2781, 2.17.2 #2837]; an Artifacts page [R 2.17.0 #2788]; live step
 output after starting a run [R 2.16.5 #2752]; the run inspector over MCP [R 2.11.3 #2480]. These
 help the engine's own view that Cairn already links to ([33](33-the-view-link-answers.md),
-[36](36-keeping-tabs.md)). Effort: low.
+[36](../ideas/36-keeping-tabs.md)). Effort: low.
 
 **Nothing found for the sleep timeout.** The step timeout is `context.WithTimeout` in
 `internal/runtime/node.go` at both tags [S]; 2.18.2 only adds an elapsed-time measurement for the

@@ -41,7 +41,7 @@ cannot exercise the race, so the concurrent one is what the sharing stands on.
 
 **What happened.** One failed assertion at the chain's second step skipped every downstream work node — and every downstream **verify** still ran, thirteen more full-suite executions against a tree the missing work never touched, ~30 minutes of CPU whose results no gate could use: each downstream gate closed as `not_reached` regardless, because its work step left no report. The run's last half hour existed to decorate a verdict that was already decided.
 
-**Today.** The verify node runs under `continue_on: {failure: true, skipped: true}` so that a _cascade-skipped_ work step's assertion can still pass and be distinguished from work never attempted ([verify-gate.md](../docs/verify-gate.md)) — but the gate reads the absent work report and refuses either way, so on the chain-broken path the assertion's result is unreadable by construction.
+**Today.** The verify node runs under `continue_on: {failure: true, skipped: true}` so that a _cascade-skipped_ work step's assertion can still pass and be distinguished from work never attempted ([verify-gate.md](../../docs/verify-gate.md)) — but the gate reads the absent work report and refuses either way, so on the chain-broken path the assertion's result is unreadable by construction.
 
 **The change.** A verify whose work node the engine skipped for an upstream cause — not a marker no-op, which must keep its assertion — is skipped with it, and its gate records `not_reached` directly. The distinction the current design protects is preserved by reading the _cause_ of the work skip: a marker no-op keeps its verify; an upstream-skip drops it.
 
@@ -53,7 +53,7 @@ cannot exercise the race, so the concurrent one is what the sharing stands on.
 
 **What happened.** Two consecutive recoveries died on a single test exceeding vitest's 5,000 ms default under load — a different test each time, in a suite of 4,360 — each one read by the gate as a failed assertion, each cascading fifteen steps. The repair belonged to the repository and was made there (an explicit `testTimeout` stating the machine's real bound). What belongs here is the observation: an assertion that runs a whole test suite makes the gate's false-negative rate the suite's flake rate times fourteen executions per recovery.
 
-**The open question, recorded rather than decided.** Verify nodes are emitted with `retries: 0` like everything else, on the plan contract's reasoning that arbitrary shell is not idempotent and a session must not run twice. Neither reason applies to an assertion: it is read-only by contract and opens no session. Whether a verify may retry once — turning a transient false negative into a second read instead of a fifteen-step cascade — is a plan-contract question ([plan-contract.md](../docs/plan-contract.md)'s `retries` paragraph), and the counterargument is real: a flaky assertion that passes on retry has asserted less, and the honest fix is the plan stating an assertion that does not flake. Recorded for the contract's owner to decide.
+**The open question, recorded rather than decided.** Verify nodes are emitted with `retries: 0` like everything else, on the plan contract's reasoning that arbitrary shell is not idempotent and a session must not run twice. Neither reason applies to an assertion: it is read-only by contract and opens no session. Whether a verify may retry once — turning a transient false negative into a second read instead of a fifteen-step cascade — is a plan-contract question ([plan-contract.md](../../docs/plan-contract.md)'s `retries` paragraph), and the counterargument is real: a flaky assertion that passes on retry has asserted less, and the honest fix is the plan stating an assertion that does not flake. Recorded for the contract's owner to decide.
 
 ## Acceptance
 
@@ -63,7 +63,7 @@ cannot exercise the race, so the concurrent one is what the sharing stands on.
 - Concurrent passing and failing executions for one proof key always leave failure standing,
   regardless of write order or process timing.
 - A run whose chain breaks at step k runs no assertion for steps after k that were skipped for the upstream cause, and its wall clock past the fault is seconds, not minutes; a marker no-op's assertion still runs.
-- The verify-retry question is answered in [plan-contract.md](../docs/plan-contract.md) one way or the other, with the reasoning recorded beside `retries`.
+- The verify-retry question is answered in [plan-contract.md](../../docs/plan-contract.md) one way or the other, with the reasoning recorded beside `retries`.
 
 ## Implementation Notes
 
@@ -78,13 +78,13 @@ still names an assertion and its exit status, and a step nobody asserted still n
   declines an assertion whose exact command has already been proven in this run against
   exactly this tree. The key is the command's bytes plus the commit the tree stands on plus
   every dirty path's content, with `.steps/` and the runs root left out because Cairn writes
-  to both on every step ([cairn/assertions.py](../cairn/assertions.py)). The mark gate
+  to both on every step ([cairn/assertions.py](../../cairn/assertions.py)). The mark gate
   completes the assertion node's report with the exit it read and files that exit as the
   proof later gates share, so the record says for every step whether its verdict was
   `executed` or `shared` and which step's execution backed it. Publication happens inside an
   advisory lock on the proof's own key, re-reads the standing result there, and never
   replaces a failure with a pass; `exclusive_lock`
-  ([cairn/locks.py](../cairn/locks.py)) is the one implementation of that lock, shared with
+  ([cairn/locks.py](../../cairn/locks.py)) is the one implementation of that lock, shared with
   the git write mutex, and the kernel drops it when its holder dies. A key that cannot be
   taken publishes nothing, so the fallback is a spared execution rather than a weaker proof.
   `PublishingAProofIsOneDecision` releases three and four writers through a file barrier in
@@ -97,7 +97,7 @@ still names an assertion and its exit status, and a step nobody asserted still n
   than the engine's exit-status reference, because `${<id>.exit_code}` reads `0` for a node
   its precondition skipped and a gate trusting it would record a marker over an assertion
   that never ran.
-- **C.** Answered in [plan-contract.md](../docs/plan-contract.md) beside `retries`: an
+- **C.** Answered in [plan-contract.md](../../docs/plan-contract.md) beside `retries`: an
   assertion never retries, whatever the step's own value. The engine records no per-node
   retry count, so a retried pass would read exactly like a first-try pass in the run record,
   and an assertion that passes on its second asking has asserted less while looking like

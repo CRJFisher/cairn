@@ -1,6 +1,6 @@
 # 44 — A held run resumes itself when its window reopens
 
-**North star ([principle 1](../PRINCIPLES.md), [principle 4](../PRINCIPLES.md)).** A person
+**North star ([principle 1](../../PRINCIPLES.md), [principle 4](../../PRINCIPLES.md)).** A person
 queues work and walks away. When the queue stops at the allowance, it should start again when
 the allowance reopens, not when the person next looks. [38](38-subscription-headroom.md) left
 this unbuilt: _the scheduler's own resume at the reported moment is not built: a `quota_held`
@@ -31,7 +31,7 @@ the exact recovery command.
 When `lock release` (the run's `onExit`) writes a record whose next action is
 `await_allowance` with a known moment, it arms **one** resume for that run: a detached Cairn
 process, `cairn run resume-at --run <id>`, started in its own session the way `run start`
-starts the engine. It is not the engine's scheduler. [SKILL.md](../SKILL.md)'s first rule
+starts the engine. It is not the engine's scheduler. [SKILL.md](../../SKILL.md)'s first rule
 stands: a scheduler's retry scanner re-executes runs Cairn never wrote, and this must not need
 one running.
 

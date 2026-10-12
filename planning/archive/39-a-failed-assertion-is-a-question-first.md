@@ -6,10 +6,10 @@ assertion, the whole suite (`python3 -m unittest discover -s tests -t .`), was t
 SIGTERM after 7m53s. The mark gate refused `implement_24`, and the ten steps behind it, across
 plans 24, 32, 27 and 28, were never reached.
 
-**Serves** [principle 1](../PRINCIPLES.md) (a pre-planned tree runs hands-free, so one broken
+**Serves** [principle 1](../../PRINCIPLES.md) (a pre-planned tree runs hands-free, so one broken
 assertion should not cost the rest of the tree without a reason a person can read),
-[principle 2](../PRINCIPLES.md) (the report says what actually happened) and
-[principle 3](../PRINCIPLES.md) (a failing assertion is an expected event with a defined next move).
+[principle 2](../../PRINCIPLES.md) (the report says what actually happened) and
+[principle 3](../../PRINCIPLES.md) (a failing assertion is an expected event with a defined next move).
 No invariant moves: a verdict stays something a declared assertion proved, run unchanged.
 
 ## What was measured
@@ -94,7 +94,7 @@ becomes `work → verify → remedy → recheck → mark → commit`:
   the engine's log tail, which avoids [29](29-operator-and-report-ergonomics.md)'s noisy tail but
   costs one more run of the assertion inside the session.
 - **Asking first.** Whether a declared remedy should be offered to a person, as a
-  [35](35-human-in-the-loop-steps.md) approval gate on `remedy_<id>`.
+  [35](../ideas/35-human-in-the-loop-steps.md) approval gate on `remedy_<id>`.
 - **The suite this incident ran.** This repository's own whole-suite assertion takes about 844s;
   the plan that runs it needs `verify_timeout` stated, and the suite itself mutates the repository
   it stands in, which [27](27-cross-plan-git-and-lock-isolation.md) owns.

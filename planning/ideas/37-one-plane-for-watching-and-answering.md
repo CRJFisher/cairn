@@ -1,10 +1,10 @@
 # 37 — One plane for watching and answering
 
-**North star ([principles 2 and 3](../PRINCIPLES.md)).** The page where a person keeps tabs on
-sessions is also where they answer the ones that are asking. One place to look, one place to act.
+**Status: idea.** Downstream of [36](36-keeping-tabs.md) and
+[35](35-human-in-the-loop-steps.md): it follows once each works alone.
 
-**Status: downstream idea**, after [36](36-keeping-tabs.md) and [35](35-human-in-the-loop-steps.md)
-each work alone.
+**North star ([principles 2 and 3](../../PRINCIPLES.md)).** The page where a person keeps tabs on
+sessions is also where they answer the ones that are asking. One place to look, one place to act.
 
 ## Why
 

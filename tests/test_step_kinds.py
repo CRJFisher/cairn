@@ -2394,7 +2394,7 @@ class TheBreadcrumbSaysWhereTheSessionIs(unittest.TestCase):
     Measured on the pinned engine: a node's `.err` file is written as the step runs and the
     view's own step-log endpoint serves it mid-run, so a line written there is a line a
     person watching sees while the session is still working
-    ([planning/20-watching-a-live-session.md]).
+    ([planning/archive/20-watching-a-live-session.md]).
     """
 
     def _session(self, prompt: StepPrompt) -> tuple[str, str]:

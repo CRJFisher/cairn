@@ -1,13 +1,13 @@
 # 38 — Subscription headroom: a queue holds at the limit and resumes when the window reopens
 
-**North star ([principle 4](../PRINCIPLES.md)).** A person queues a large set of steps and walks
+**North star ([principle 4](../../PRINCIPLES.md)).** A person queues a large set of steps and walks
 away. When the Claude subscription's 5-hour or weekly allowance runs low, Cairn stops starting
 paid sessions, waits until the window that blocks the work reopens, and carries on. A limit is a
 pause in the run, never the end of it.
 
 **Status: built.** A–E are implemented (`cairn/headroom.py`, with the provider's own
 instruments in `cairn/providers.py`), merge resolutions are held the same way, and the
-contract is [supervision.md § Working within the subscription](../docs/supervision.md). The
+contract is [supervision.md § Working within the subscription](../../docs/supervision.md). The
 probe's command line was measured on Claude Code 2.1.220 (one settings-free haiku turn,
 its `rate_limit_event` arriving before the reply). Spikes 1, 2, 3 and 5 still need
 a real limit hit or the owner's say-so on the credential, and the scheduler's own resume at
@@ -27,7 +27,7 @@ A subscription limit is a failure of the step that meets it.
   `terminal_reason: blocking_limit` (`cairn/providers.py`, `_translate_result`). The step fails,
   everything downstream of it is skipped, and the run halts. The marker of every step that landed
   survives, so a person re-runs the plan by hand once the window reopens.
-  [supervision.md](../docs/supervision.md) states this on purpose: the engine's retry policy
+  [supervision.md](../../docs/supervision.md) states this on purpose: the engine's retry policy
   cannot read a reset time, so the moment is _reported_ rather than waited out.
 - The reported moment is lost. `_latest_reset` reads `event["resetsAt"]` and requires a string.
   A real event nests it as `rate_limit_info.resetsAt` and carries an integer (measured on Claude
@@ -164,7 +164,7 @@ Every consumer sees `read_at` and `source` with the number. A reading older than
 
 Unknown admits because the backstop in § C makes a wrong admit recoverable, and a guard that
 blocks on its own blindness would stall a queue for a fault in the instrument. That is the same
-fail-open reasoning [hooks.py](../cairn/hooks.py) states for its own hook, and the inverse of the
+fail-open reasoning [hooks.py](../../cairn/hooks.py) states for its own hook, and the inverse of the
 verify gate: nothing durable depends on this check having run.
 
 A step funded by an API key (`apiKeySource` ≠ `none`) has no subscription windows. The guard is
@@ -179,8 +179,8 @@ and the run's maximum duration and lock-reclaim window stay derivable.
 beyond `quota_wait` (a weekly window days away) does not sleep a worker for days: the step exits
 with a new cause `quota_held`, carrying `resets_at` and which window, and the report states
 _held until Thursday 04:00 — weekly allowance at 97%_. It is the human-in-the-loop path
-([35](35-human-in-the-loop-steps.md)): the person chooses to wait, to switch to a cheaper model,
-or to stop. With the scheduler ([triggers.md](../docs/triggers.md)) the same fact schedules the
+([35](../ideas/35-human-in-the-loop-steps.md)): the person chooses to wait, to switch to a cheaper model,
+or to stop. With the scheduler ([triggers.md](../../docs/triggers.md)) the same fact schedules the
 resume for the reported moment.
 
 **After the wait, measure again.** The step does not assume the window reopened because the clock
@@ -215,7 +215,7 @@ the current "reported moment" a lie, and the wait is built on it.
 
 The report and the live view say, for a run: the latest reading with its age and source; each hold
 (step, window, from, until, why); each resume. A held run reads as _waiting for the 5-hour window,
-reopens 14:10_, not as stalled. This is the tab-keeping surface of [36](36-keeping-tabs.md) and
+reopens 14:10_, not as stalled. This is the tab-keeping surface of [36](../ideas/36-keeping-tabs.md) and
 [20](20-watching-a-live-session.md) carrying one more fact.
 
 ## Where a hook fits

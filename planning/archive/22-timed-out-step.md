@@ -57,7 +57,7 @@ agent step.
 
 ## A plan sets no bound on a session
 
-[plan-derivation.md](../docs/plan-derivation.md) derives no time limit for a step from a plan's
+[plan-derivation.md](../../docs/plan-derivation.md) derives no time limit for a step from a plan's
 sentences. A session is stopped only by the hang guard, a constant in Cairn, so no bound
 reaches the engine that nothing in a document could justify.
 

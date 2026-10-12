@@ -1,6 +1,6 @@
 # 43 — The allowance belongs to an account
 
-**North star ([principle 4](../PRINCIPLES.md)).** Cairn's holds are statements about one
+**North star ([principle 4](../../PRINCIPLES.md)).** Cairn's holds are statements about one
 subscription's windows. When the credential behind Claude Code changes, those statements stop
 describing the sessions Cairn is about to start. A person who switched to an account with
 headroom should be told that the queue can go on, not that it has to wait for another

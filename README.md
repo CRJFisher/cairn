@@ -431,8 +431,9 @@ declared size limits.
 Python 3.11 and the standard library, and nothing in this directory imports anything
 outside it — which is what makes the checkout both the package and the skill, and makes
 moving it the whole of packaging. The numbered documents these files cite — doc 05, doc 09
-and so on — are the planning series this was built from; `planning/` here carries the ones
-that are still open.
+and so on — are the planning series this was built from. `planning/` here carries the plans
+written since, and [planning/README.md](planning/README.md) indexes each one with its state and
+what is left of it.
 
 ## License
 

@@ -90,7 +90,7 @@ closed by A.
   `declined`) whose admissible outcomes are fixed per kind in `RESOLUTIONS_BY_KIND`; edge
   questions name their other end in `dep`; an edge an answer adds has origin `answered`.
   `plan answer --kind …` writes the reading into the graph fact and the answer beside the
-  question in one act ([cairn/plan/questions.py](../cairn/plan/questions.py)), and the
+  question in one act ([cairn/plan/questions.py](../../cairn/plan/questions.py)), and the
   validator refuses an answer the facts contradict (`unapplied_answer`, `unanswered_edge`).
   `missing_verify` keeps its answer on the step's `assertion`. `plan propose` lists every open
   question and exits 0 whenever it listed; `--json` carries `complete`.

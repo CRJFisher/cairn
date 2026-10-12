@@ -1,6 +1,6 @@
 # 46 — A finished step whose every report was refused is asked once more, not failed
 
-**North star ([principle 2](../PRINCIPLES.md), [principle 3](../PRINCIPLES.md)).** A step that
+**North star ([principle 2](../../PRINCIPLES.md), [principle 3](../../PRINCIPLES.md)).** A step that
 did its work should not be recorded as a failure because its account came out malformed. The
 work is the person's; the report is how they learn about it.
 
@@ -23,7 +23,7 @@ for its report did not run, because it fired only for a session that exited 0 wi
 The run halted with `pause_after_29`, `implement_20` and `review_20` unreached, over a review
 that had nothing to fix.
 
-The failure mode is old. [step-protocol.md](../docs/step-protocol.md) already recorded seven
+The failure mode is old. [step-protocol.md](../../docs/step-protocol.md) already recorded seven
 review sessions with `follow_up_work` written inside `summary`. In run
 `20261009T224737Z-151a689d`, `review_33` filed four refused reports before one was accepted.
 
