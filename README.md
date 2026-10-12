@@ -171,10 +171,11 @@ what renders it is the ordinary `cairn report` surface.
 
 **Type `/cairn`, then say what you want.** Cairn is a skill and it opens only when it is
 asked for by name: author a workflow from a plan, change one, run it, put it on a schedule,
-read what a past run did, or ask what a workflow would do, what a verdict means, or why a
-step was excluded. Six capabilities, all reachable by asking, and none of them needing a
-second surface — though where the engine's own view is the better answer, the skill links to
-it and says what it will never tell you.
+read what a past run did, turn the work a run found but did not do into the next plan, or
+ask what a workflow would do, what a verdict means, or why a step was excluded. Seven
+capabilities, all reachable by asking, and none of them needing a second surface — though
+where the engine's own view is the better answer, the skill links to it and says what it
+will never tell you.
 
 Nothing else opens it. A sentence that describes the work without naming Cairn — "run my
 plan", "schedule this nightly" — reaches whatever else is installed, and Cairn stays silent
@@ -202,6 +203,10 @@ terminal, a repository or a browser with
 `python3 -m cairn report --run <run-id> --repository <path>`, which answers in order whether
 it worked, what to do next, what needs attention, what each step did, and what shape the run was. Every run leaves that record whether anyone watched it or not.
 And start a run of the definition that would execute, handing the engine exactly that one run.
+Turn the work a settled run's steps reported finding and not doing into the next plan document
+with `python3 -m cairn plan draft --from-run <run-id>`, which transcribes each item beside the
+step that surfaced it and writes nothing where a run left nothing — so a sequence of rounds
+closes itself, and every round is an ordinary plan a person authors, asserts and runs.
 Every agent session runs within the subscription's allowance: a step holds where the 5-hour
 or weekly window is closed or nearly so, resumes a session that met the limit once the window
 reopens, and ends `quota_held`, naming the moment, only where the wait is longer than a step
@@ -215,17 +220,19 @@ that keep a run's writes under control, the generator and its preflight, the run
 rendered surface reads, the triggers and schedules that start one, the three renderings, and
 the skill that drives all of it.
 
-- [SKILL.md](SKILL.md) — what `/cairn` opens: the six capabilities, the table a request is
+- [SKILL.md](SKILL.md) — what `/cairn` opens: the seven capabilities, the table a request is
   read against, the ask list, and where each procedure lives.
-- `capabilities/` — four documents holding six capabilities' procedures, read when one is
-  selected: authoring (with editing), running, scheduling, and reading (with explaining).
-  Each states its entry preconditions and what it is bound to on entry. **Adding a seventh**
+- `capabilities/` — five documents holding seven capabilities' procedures, read when one is
+  selected: authoring (with editing), running, scheduling, reading (with explaining), and
+  continuing.
+  Each states its entry preconditions and what it is bound to on entry. **Adding an eighth**
   touches: `cairn/skill/vocabulary.py` (the constant, its rank in `CAPABILITY_ORDER` — which
   must stay between the mutating prefix and the reads-only suffix — and
   `DOCUMENT_BY_CAPABILITY`), `cairn/skill/dispatch.py` (the cells that reach it — a new verb class is a new
   row of `DISPATCH_RULES`, and a capability reached only by an ask needs a reason,
   a question and a family too),
-  `SKILL.md` (the summary and the table), a document here, and `fixtures/invocations/`.
+  `SKILL.md` (the summary and the table), a document here, `fixtures/invocations/`, and the
+  trigger limit in `cairn/skill/surface.py` where the new row outgrows it.
 - [docs/plan-contract.md](docs/plan-contract.md) — the step-graph schema, the identifier
   and slug rules, every validator check, and the readings the derivation declares.
 - [docs/plan-derivation.md](docs/plan-derivation.md) — the two-pass procedure an agent
@@ -412,9 +419,9 @@ Measured by `python3 -m scripts.measure_surface`. Tokens are an estimate at 4 ch
 
 | Read                          | What                                   | Characters | Lines | Tokens (est.) |
 | ----------------------------- | -------------------------------------- | ---------: | ----: | ------------: |
-| when Cairn is named           | the skill's description                |      `211` |   `1` |          `53` |
-| when Cairn is named           | `SKILL.md`                             |    `13778` | `199` |        `3445` |
-| when a capability is selected | `capabilities/running.md`, the largest |    `13274` | `199` |        `3319` |
+| when Cairn is named           | the skill's description                |      `262` |   `1` |          `66` |
+| when Cairn is named           | `SKILL.md`                             |    `14903` | `208` |        `3726` |
+| when a capability is selected | `capabilities/running.md`, the largest |    `13955` | `207` |        `3489` |
 
 **None of it is read unless asked for.** Cairn declares `disable-model-invocation: true`, so
 its description stays out of a session's context until someone types `/cairn` — a session

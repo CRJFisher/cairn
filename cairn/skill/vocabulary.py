@@ -7,7 +7,7 @@ record, for the same reason: a plausible default is indistinguishable from a dec
 
 The surface that *executes* these rules is `SKILL.md`, which a model reads. Nothing here is
 imported at dispatch time and nothing here classifies English. What a model cannot be asked
-to do reliably is keep a rule set disjoint and total in its head across eight verb classes
+to do reliably is keep a rule set disjoint and total in its head across nine verb classes
 and six object shapes, and that is exactly what this module makes checkable.
 """
 
@@ -17,6 +17,7 @@ CAPABILITY_RUN = "run"
 CAPABILITY_SCHEDULE = "schedule"
 CAPABILITY_EDIT = "edit"
 CAPABILITY_AUTHOR = "author"
+CAPABILITY_CONTINUE = "continue"
 CAPABILITY_REPORT = "report"
 CAPABILITY_EXPLAIN = "explain"
 
@@ -31,6 +32,7 @@ CAPABILITY_ORDER: tuple[str, ...] = (
     CAPABILITY_SCHEDULE,  # arms a daemon whose retry scanner reaches runs Cairn never wrote
     CAPABILITY_EDIT,  # replaces a definition that exists, wholesale, never merged
     CAPABILITY_AUTHOR,  # writes a definition that did not exist
+    CAPABILITY_CONTINUE,  # writes a plan document, and nothing that executes one
     CAPABILITY_REPORT,  # reads
     CAPABILITY_EXPLAIN,  # reads, and needs no run to exist
 )
@@ -45,6 +47,7 @@ VERB_AUTHORING = "authoring"
 VERB_MUTATING = "mutating"
 VERB_EXECUTING = "executing"
 VERB_RECOVERING = "recovering"
+VERB_FOLLOWING_ON = "following_on"
 VERB_WATCHING = "watching"
 VERB_RECOUNTING = "recounting"
 VERB_ARRANGING = "arranging"
@@ -55,6 +58,7 @@ VERB_CLASSES: tuple[str, ...] = (
     VERB_MUTATING,
     VERB_EXECUTING,
     VERB_RECOVERING,
+    VERB_FOLLOWING_ON,
     VERB_WATCHING,
     VERB_RECOUNTING,
     VERB_ARRANGING,
@@ -66,6 +70,13 @@ VERB_CLASSES: tuple[str, ...] = (
 # recovering and everything else mints a new one ([resolve.py], [docs/triggers.md]). Folded
 # into `executing`, that decision would have to be inferred from the object's tense, which
 # is the guess doc 15 forbids and which yields either redone work or a stale answer.
+#
+# `following_on` is a class of its own for the same shape of reason, and it is the one most
+# easily confused with `recovering`: both are said as "continue". A recovery re-runs the plan
+# that ran, no-opping what is done, and finishes the work that plan asked for; following on
+# takes the work that run *found and did not do* and makes a new plan of it. One finishes a
+# plan, the other writes one, and reading either as the other either re-runs a settled plan
+# or leaves the found work undone.
 
 
 SHAPE_PLAN_DOCUMENT = "plan_document"  # a markdown plan, or a folder of task documents
@@ -90,7 +101,7 @@ SHAPE_CADENCE = "cadence"  # "every night", a cron expression, a webhook
 SHAPE_MODEL = "model"  # "all steps on sonnet 5.5", "pin it to the opus model"
 
 # A qualifier modifies how a capability proceeds and can never be what a request is about.
-# Keeping the two axes apart is what lets the table stay 48 cells instead of 384: a request
+# Keeping the two axes apart is what lets the table stay 54 cells instead of 432: a request
 # names any combination of the three, and folding them into the subject axis would key the
 # table on every one of those combinations.
 QUALIFIER_SHAPES: tuple[str, ...] = (SHAPE_REPOSITORY, SHAPE_CADENCE, SHAPE_MODEL)
@@ -177,13 +188,14 @@ CONSEQUENCE_BY_READING: dict[str, str] = {
 
 # Which document holds each capability's procedure. Here rather than only in `SKILL.md`'s
 # prose and a test constant, because it is the answer to "what do I change to add one" and
-# it is the mapping a totality assertion can be keyed on. Four documents for six
+# it is the mapping a totality assertion can be keyed on. Five documents for seven
 # capabilities: Edit is authoring under I1, and Report and Explain both only read.
 DOCUMENT_BY_CAPABILITY: dict[str, str] = {
     CAPABILITY_AUTHOR: "authoring.md",
     CAPABILITY_EDIT: "authoring.md",
     CAPABILITY_RUN: "running.md",
     CAPABILITY_SCHEDULE: "scheduling.md",
+    CAPABILITY_CONTINUE: "continuing.md",
     CAPABILITY_REPORT: "reading.md",
     CAPABILITY_EXPLAIN: "reading.md",
 }
@@ -192,12 +204,13 @@ DOCUMENT_BY_CAPABILITY: dict[str, str] = {
 # What each capability is, said as the thing a person asks for rather than as the verb class
 # that routes it. Stated here, beside the vocabulary and total over it, because it is what
 # the command line's own first screen leads with: somebody who went looking for a command
-# line arrived at the wrong door, and the six tasks are what they were looking for ([29 A]).
+# line arrived at the wrong door, and these tasks are what they were looking for ([29 A]).
 TASK_BY_CAPABILITY: dict[str, str] = {
     CAPABILITY_RUN: "run a plan, now, and watch it",
     CAPABILITY_SCHEDULE: "put a plan on a schedule, or behind an external trigger",
     CAPABILITY_EDIT: "change a plan that already has a workflow",
     CAPABILITY_AUTHOR: "turn a plan document into a workflow",
+    CAPABILITY_CONTINUE: "turn what a run found but did not do into the next plan",
     CAPABILITY_REPORT: "read what a past run did",
     CAPABILITY_EXPLAIN: "ask what a workflow would do, what a verdict means, why a step was excluded",
 }
@@ -242,6 +255,7 @@ __all__ = [
     "CANDIDATE_STATED",
     "CANDIDATE_SUBJECTS",
     "CAPABILITY_AUTHOR",
+    "CAPABILITY_CONTINUE",
     "CAPABILITY_EDIT",
     "CAPABILITY_EXPLAIN",
     "CAPABILITY_ORDER",
@@ -279,6 +293,7 @@ __all__ = [
     "VERB_AUTHORING",
     "VERB_CLASSES",
     "VERB_EXECUTING",
+    "VERB_FOLLOWING_ON",
     "VERB_INTERROGATING",
     "VERB_MUTATING",
     "VERB_RECOUNTING",

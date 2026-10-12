@@ -40,7 +40,7 @@ CHARACTERS_PER_TOKEN = 4
 # The description is what tells a person what `/cairn` is for, in the moment they have
 # already asked for it, so it is held to a sentence and a half.
 DESCRIPTION_CHARACTER_LIMIT = 600
-# The trigger limit sits a little above the lean prose, because the dispatch table is 48
+# The trigger limit sits a little above the lean prose, because the dispatch table is 54
 # aligned cells and its padding is not slack — it is the one artifact a reader has to apply
 # exactly, and a table nobody can scan is worse than a longer file. It moves down when the
 # file does, and up only for a sentence a sweep over real sessions showed was missing rather
@@ -61,7 +61,14 @@ DESCRIPTION_CHARACTER_LIMIT = 600
 # A run printed a live address nothing was listening at, and the person was left to find that
 # out in a browser and to discover `dagu server` for themselves — while the two sentences the
 # file did carry about the engine made the view sound like something already running.
-ON_TRIGGER_CHARACTER_LIMIT = 13_800
+#
+# It moved up a fourth time, for the seventh capability ([34]): a row of the table, the widening
+# of three of its columns, a verb class, and the sentences that keep that class apart from
+# `recovering`. Both are said as "continue" and they do different work — one re-runs the plan
+# that ran, the other writes a plan out of what that run found — so the distinction is the
+# whole of what the new row is worth, and a table carrying the row without it would route the
+# commoner phrasing to the wrong cell.
+ON_TRIGGER_CHARACTER_LIMIT = 15_000
 
 
 class Size(NamedTuple):

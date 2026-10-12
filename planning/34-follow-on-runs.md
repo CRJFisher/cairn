@@ -12,6 +12,17 @@ something a declared assertion proved ([08](08-verify-gate.md)), the plan docume
 of truth (I1), and the emitted graph stays static, digest-stamped, and free of logic
 ([11](11-emitter-and-preflight.md)).
 
+**Status: implemented. Every section below is done.** A person asks to follow on from a settled
+run and gets a plan document: `python3 -m cairn plan draft --from-run <run-id>` reads that run's
+record, transcribes every step's follow-up work with the step that surfaced it, and writes
+`<git-common-dir>/cairn/plans/<plan>-after-<run>.md` — which is then authored, asserted and run
+like any other plan. A run still `running` refuses by naming its state, a run with no record
+refuses by naming that, and a harvest that comes back empty writes nothing and says the sequence
+is closed. **Continue** is the seventh capability, reached by the `following_on` verb class over a
+run and carried by `capabilities/continuing.md`; the harvest is `cairn/record/harvest.py` and the
+drafting `cairn/plan/draft.py`. Nothing touched the emitted graph: every recorded workflow
+regenerates byte-identical, and the reserved `parallel` + `dag.run` shape stays unadopted.
+
 ## Today
 
 Every step report is required to carry `follow_up_work: string[]` — _"list work you found but did

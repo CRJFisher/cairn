@@ -70,6 +70,7 @@ from cairn.skill.vocabulary import (
     CANDIDATE_STATED,
     CANDIDATE_SUBJECTS,
     CANDIDATES,
+    CAPABILITY_CONTINUE,
     CAPABILITY_EXPLAIN,
     CAPABILITY_ORDER,
     CAPABILITY_RUN,
@@ -82,10 +83,12 @@ from cairn.skill.vocabulary import (
     OCCASION_READINGS,
     QUALIFIER_SHAPES,
     READING_BY_TRIGGER,
+    SHAPE_RUN,
     SUBJECT_SHAPES,
     TRIGGER_SCHEDULED,
     TRIGGER_SHAPES,
     VERB_CLASSES,
+    VERB_FOLLOWING_ON,
     VERB_INTERROGATING,
     VERB_RECOUNTING,
     WRITES_NOTHING,
@@ -499,6 +502,53 @@ class EveryCapabilityDocumentDeclaresItsContract(unittest.TestCase):
             text = (CAPABILITIES / document).read_text(encoding="utf-8")
             with self.subTest(document=document):
                 self.assertNotIn("](../../", text)
+
+
+class WorkARunFoundBecomesTheNextPlan(unittest.TestCase):
+    """Doc 34. Follow-up work survived the whole pipeline and stopped at the report; Continue
+    is what takes it forward, and these are the sentences that keep it from being taken
+    forward as anything else."""
+
+    def setUp(self) -> None:
+        self.document = (CAPABILITIES / "continuing.md").read_text(encoding="utf-8")
+        self.skill = SKILL.read_text(encoding="utf-8")
+
+    def test_it_is_reached_only_by_a_following_on_verb_over_a_run(self) -> None:
+        """Every other cell of that row asks which run, because a harvest is one run's and
+        taking the newest would harvest a run nobody chose."""
+        self.assertEqual(
+            {
+                pair
+                for pair, outcome in DISPATCH_RULES.items()
+                if outcome == CAPABILITY_CONTINUE
+            },
+            {(VERB_FOLLOWING_ON, SHAPE_RUN)},
+        )
+
+    def test_the_two_requests_said_as_continue_are_told_apart(self) -> None:
+        """`recovering` finishes the plan that ran; `following_on` writes a plan out of what
+        that run found. One word reaches both, so the file has to separate them."""
+        self.assertIn("Both this and `recovering` are", self.skill)
+        self.assertIn("that is `many_verbs` and is asked", self.skill)
+
+    def test_it_drafts_and_starts_nothing(self) -> None:
+        self.assertIn("cairn plan draft --from-run", self.document)
+        self.assertNotIn("dagu start", self.document)
+
+    def test_every_drafted_step_goes_through_the_assertion_conversation(self) -> None:
+        self.assertIn("missing_verify", self.document)
+        self.assertIn("authoring.md", self.document)
+
+    def test_an_empty_harvest_ends_the_sequence_rather_than_opening_another(self) -> None:
+        self.assertIn("sequence is closed", self.document)
+        self.assertIn("Never invent work to keep a sequence going", self.document)
+
+    def test_a_scheduled_sequence_says_how_many_rounds_before_it_is_installed(self) -> None:
+        """A sequence that cannot say when it stops is one nobody can reason about ([13])."""
+        self.assertIn("rounds it is to run for before anything is installed", self.document)
+
+    def test_a_follow_up_is_never_made_a_step_of_the_run_that_reported_it(self) -> None:
+        self.assertIn("no authored assertion exists for it", self.document)
 
 
 def _engine_that_exited(code: int | None) -> Callable[..., "FakeEngine"]:

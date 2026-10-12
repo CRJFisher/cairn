@@ -492,12 +492,12 @@ def first_screen() -> str:
     """What somebody who typed this command by mistake needs, before any of the plumbing.
 
     Going looking for a command line is how a person who did not build this arrives at the
-    wrong door, so the first screen is the way back: what Cairn is driven by, the six things
-    a person asks it for, what has to be installed first, and one example that spends
+    wrong door, so the first screen is the way back: what Cairn is driven by, every thing a
+    person asks it for, what has to be installed first, and one example that spends
     nothing. The subcommands below it are the implementation ([29 A]).
 
-    The six tasks are read from the skill's own vocabulary rather than listed again here, so
-    a seventh capability cannot be added without this screen naming it.
+    The tasks are read from the skill's own vocabulary rather than listed again here, so a
+    capability added there cannot be added without this screen naming it.
     """
     tasks = "\n".join(
         f"  - {TASK_BY_CAPABILITY[capability]}" for capability in CAPABILITY_ORDER

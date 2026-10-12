@@ -140,6 +140,38 @@
       "why": "a second recovering verb"
     },
     {
+      "id": "continue-from-what-a-run-found",
+      "family": "canonical",
+      "utterance": "follow on from run 20260810T031500Z-a1b2c3d4 — turn what it found into the next plan",
+      "reading": {"verbs": ["following_on"], "subjects": ["run"], "qualifiers": []},
+      "expect": {"capability": "continue", "ask": null, "readings": []},
+      "why": "the canonical Continue: one run named, and the work it reported finding is what the request is after"
+    },
+    {
+      "id": "continue-what-was-left-undone",
+      "family": "canonical",
+      "utterance": "what did run 20260810T031500Z-a1b2c3d4 leave undone? draft a plan for it",
+      "reading": {"verbs": ["following_on"], "subjects": ["run"], "qualifiers": []},
+      "expect": {"capability": "continue", "ask": null, "readings": []},
+      "why": "asking what a run left and asking for it to be planned is one request, not a Report and a Continue: the plan is what is wanted"
+    },
+    {
+      "id": "continue-the-follow-up-work",
+      "family": "canonical",
+      "utterance": "take the follow-up work from run 20260810T031500Z-a1b2c3d4 and make the next round of it, in /Users/me/src/product",
+      "reading": {"verbs": ["following_on"], "subjects": ["run"], "qualifiers": ["repository"]},
+      "expect": {"capability": "continue", "ask": null, "readings": []},
+      "why": "a repository given qualifies the harvest and adds no reading; the round is the next plan, never a step of the run that reported it"
+    },
+    {
+      "id": "continue-the-last-run-of-a-plan",
+      "family": "canonical",
+      "utterance": "carry on from where the last offline-export run got to — the bits it said it hadn't done",
+      "reading": {"verbs": ["following_on"], "subjects": ["run"], "qualifiers": []},
+      "expect": {"capability": "continue", "ask": null, "readings": []},
+      "why": "\"the last run of a plan\" is a reference to a past execution, so the subject is a run; which run it is is Continue's to put to the person"
+    },
+    {
       "id": "report-what-happened",
       "family": "canonical",
       "utterance": "what happened in run 20260810T031500Z-a1b2c3d4",
@@ -300,6 +332,14 @@
       "why": "a recovery continues a particular run, so it needs one named; guessing the latest would continue an occasion nobody chose"
     },
     {
+      "id": "ask-following-on-without-a-run",
+      "family": "ask",
+      "utterance": "pick up the loose ends from offline-export",
+      "reading": {"verbs": ["following_on"], "subjects": ["workflow"], "qualifiers": []},
+      "expect": {"capability": null, "ask": "following_on_without_a_run", "readings": []},
+      "why": "follow-up work belongs to the run whose steps reported it, and a plan's runs each left a different list; taking the newest would harvest a run nobody chose"
+    },
+    {
       "id": "ask-watching-a-plan",
       "family": "ask",
       "utterance": "watch .planning/offline-export/WORKLIST.md",
@@ -436,6 +476,14 @@
       "why": "doc 15's second named adversarial. 'Again' is an executing verb and a run is a past execution, so this is a fresh run of the plan that execution ran; continuing it takes a recovering verb"
     },
     {
+      "id": "adversarial-continue-a-run-either-way",
+      "family": "adversarial",
+      "utterance": "continue run 20260810T031500Z-a1b2c3d4",
+      "reading": {"verbs": ["recovering", "following_on"], "subjects": ["run"], "qualifiers": []},
+      "expect": {"capability": null, "ask": "many_verbs", "readings": ["run", "continue"]},
+      "why": "\"continue\" fits finishing the plan that ran and taking forward what it found, and the two do different work: one re-runs a settled plan, the other writes a new one"
+    },
+    {
       "id": "adversarial-execute-the-last-run",
       "family": "adversarial",
       "utterance": "execute that last run of offline-export one more time",
@@ -480,8 +528,8 @@
       "family": "adversarial",
       "utterance": "20260810T031500Z-a1b2c3d4",
       "reading": {"verbs": [], "subjects": ["run"], "qualifiers": []},
-      "expect": {"capability": null, "ask": "no_verb", "readings": ["run", "report", "explain"]},
-      "why": "a bare run id could be Report or Explain, both harmless — but a recovering verb over a run is a Run, so the readings are not all safe and it is asked"
+      "expect": {"capability": null, "ask": "no_verb", "readings": ["run", "continue", "report", "explain"]},
+      "why": "a bare run id could be Report or Explain, both harmless — but a recovering verb over a run is a Run and a following-on verb is a Continue, so the readings are not all safe and it is asked"
     },
     {
       "id": "adversarial-bare-plan-document",

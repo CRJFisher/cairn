@@ -1,6 +1,6 @@
 ---
 name: cairn
-description: Runs a markdown plan document as verified, concurrent coding-agent work against a git repository — author a workflow from a plan, edit it, run it, schedule it, report on a past run, or explain what one would do.
+description: Runs a markdown plan document as verified, concurrent coding-agent work against a git repository — author a workflow from a plan, edit it, run it, schedule it, report on a past run, explain what one would do, or continue from the work a run found and did not do.
 disable-model-invocation: true
 ---
 
@@ -14,13 +14,14 @@ assertion proved. The result can be trusted without having watched it run.
 the target repository — and no capability's steps. Keep it in mind; the steps are in the one
 document named against a capability below, read when it is selected and not before.
 
-## The six capabilities
+## The seven capabilities
 
 **Author** turns a plan document into an executable workflow. **Edit** changes what one does,
 by changing its plan and authoring again. **Run** executes one and reports the result.
 **Report** says what happened in a past run, triggering nothing. **Schedule** arranges a
 cadence or an external trigger. **Explain** answers what a workflow would do, what a verdict
-means, and why a step was excluded.
+means, and why a step was excluded. **Continue** turns the work a settled run found but did
+not do into the next plan document, and starts nothing.
 
 ## Two rules above all others
 
@@ -55,6 +56,11 @@ them names — tidy up, see to, deal with — is no verb Cairn holds, and the re
 - `recovering` — continue a run that stopped: recover, resume, pick up run X. Where a run is
   named, steps named with it are that run's and the subject is the run; where none is, a step
   is a `step` and takes its own cell.
+- `following_on` — take forward the work a run found and did not do: follow on from run X,
+  what did it leave, turn its follow-ups into the next plan. Both this and `recovering` are
+  said as "continue", and they are not the same request: a recovery finishes the plan that
+  ran, this one writes a new plan out of what that run reported finding. Where the words fit
+  both, that is `many_verbs` and is asked.
 - `watching` — see something as it happens: watch, keep an eye on, where can I see it.
 - `recounting` — ask what happened: how did it go, did it work, the report.
 - `arranging` — ask for a cadence: schedule, nightly, cron, webhook. A cadence makes it this
@@ -89,16 +95,17 @@ If the model type isn't configurable, stop and tell me" is one: where it cannot 
 exactly, say so and stop before authoring. A near miss is never decided to meet it on their
 behalf.
 
-| verb class \ subject | `plan_document`                | `plan_graph`                   | `workflow`                     | `run`                  | `step`                    | `verdict_word`              |
-| -------------------- | ------------------------------ | ------------------------------ | ------------------------------ | ---------------------- | ------------------------- | --------------------------- |
-| `authoring`          | **author**                     | **author**                     | **author**                     | ask `authoring_a_run`  | ask `authoring_a_step`    | ask `verb_on_a_frozen_word` |
-| `mutating`           | **edit**                       | **edit**                       | **edit**                       | ask `mutating_a_run`   | **edit**                  | ask `verb_on_a_frozen_word` |
-| `executing`          | **run**                        | **run**                        | **run**                        | **run**                | ask `executing_one_step`  | ask `verb_on_a_frozen_word` |
-| `recovering`         | ask `recovering_without_a_run` | ask `recovering_without_a_run` | ask `recovering_without_a_run` | **run**                | ask `recovering_one_step` | ask `verb_on_a_frozen_word` |
-| `watching`           | ask `watching_a_plan`          | ask `watching_a_plan`          | ask `watching_a_workflow`      | **report**             | **report**                | ask `verb_on_a_frozen_word` |
-| `recounting`         | **report**                     | **report**                     | **report**                     | **report**             | **report**                | **explain**                 |
-| `arranging`          | **schedule**                   | **schedule**                   | **schedule**                   | ask `scheduling_a_run` | ask `scheduling_a_step`   | ask `verb_on_a_frozen_word` |
-| `interrogating`      | **explain**                    | **explain**                    | **explain**                    | **explain**            | **explain**               | **explain**                 |
+| verb class \ subject | `plan_document`                  | `plan_graph`                     | `workflow`                       | `run`                  | `step`                           | `verdict_word`              |
+| -------------------- | -------------------------------- | -------------------------------- | -------------------------------- | ---------------------- | -------------------------------- | --------------------------- |
+| `authoring`          | **author**                       | **author**                       | **author**                       | ask `authoring_a_run`  | ask `authoring_a_step`           | ask `verb_on_a_frozen_word` |
+| `mutating`           | **edit**                         | **edit**                         | **edit**                         | ask `mutating_a_run`   | **edit**                         | ask `verb_on_a_frozen_word` |
+| `executing`          | **run**                          | **run**                          | **run**                          | **run**                | ask `executing_one_step`         | ask `verb_on_a_frozen_word` |
+| `recovering`         | ask `recovering_without_a_run`   | ask `recovering_without_a_run`   | ask `recovering_without_a_run`   | **run**                | ask `recovering_one_step`        | ask `verb_on_a_frozen_word` |
+| `following_on`       | ask `following_on_without_a_run` | ask `following_on_without_a_run` | ask `following_on_without_a_run` | **continue**           | ask `following_on_without_a_run` | ask `verb_on_a_frozen_word` |
+| `watching`           | ask `watching_a_plan`            | ask `watching_a_plan`            | ask `watching_a_workflow`        | **report**             | **report**                       | ask `verb_on_a_frozen_word` |
+| `recounting`         | **report**                       | **report**                       | **report**                       | **report**             | **report**                       | **explain**                 |
+| `arranging`          | **schedule**                     | **schedule**                     | **schedule**                     | ask `scheduling_a_run` | ask `scheduling_a_step`          | ask `verb_on_a_frozen_word` |
+| `interrogating`      | **explain**                      | **explain**                      | **explain**                      | **explain**            | **explain**                      | **explain**                 |
 
 **The ask list.** Five shapes never reach the table at all, and each is a question. The
 _readings_ of a request are the capabilities its cells hold: a subject's readings are its
@@ -120,8 +127,9 @@ column, a verb's are its row.
 - `nothing_recognised` — no plan, workflow, run or Cairn word in the request at all.
 
 A run verb over a past execution — "do that one again" — is a fresh run of the plan that
-execution ran; continuing the execution is `recovering`. A bare workflow name is `no_verb`,
-whose column includes Run, so it is asked.
+execution ran; continuing the execution is `recovering`, and taking up what it found and left
+is `following_on`. A bare workflow name is `no_verb`, whose column includes Run, so it is
+asked.
 
 ## A new occasion, or the one being recovered
 
@@ -165,12 +173,13 @@ exists never answers it unasked. Never reconcile the two.
 | [capabilities/running.md](capabilities/running.md)       | **Run**                    |
 | [capabilities/scheduling.md](capabilities/scheduling.md) | **Schedule**               |
 | [capabilities/reading.md](capabilities/reading.md)       | **Report** and **Explain** |
+| [capabilities/continuing.md](capabilities/continuing.md) | **Continue**               |
 
-Each states its entry preconditions and what it is bound to on entry. Read one, not four —
-the single exception is that running a plan with no definition yet is authoring first, and
-that document says so where it arises. Every command in them is `python3 -m cairn …`, run
-from the directory this file is in. They link into `docs/` for the contracts behind them;
-follow those only when sent.
+Each states its entry preconditions and what it is bound to on entry. Read one, not five —
+there are two exceptions, and each document says so where it arises: running a plan with no
+definition yet is authoring first, and a drafted follow-on plan is authored like any other.
+Every command in them is `python3 -m cairn …`, run from the directory this file is in. They
+link into `docs/` for the contracts behind them; follow those only when sent.
 
 ## The engine, and where it is the better answer
 

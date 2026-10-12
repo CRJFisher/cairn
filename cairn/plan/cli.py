@@ -1,7 +1,8 @@
 """`python3 -m cairn plan` — the deterministic half of the plan contract.
 
-These commands run at derivation time, against a graph on disk and outside any run, so
-they take no runtime identity and leave no step report.
+These commands run at derivation time, outside any run, so they take no runtime identity and
+leave no step report. All but one act on a graph on disk; `draft` acts on a settled run's
+record, because the plan it writes is that run's own follow-up work ([plan/draft.py]).
 """
 
 import argparse
@@ -11,8 +12,10 @@ from pathlib import Path
 from typing import Any, cast
 
 from cairn.core import CairnError, read_standard_json, write_json
+from cairn.gitio import runs_root
 from cairn.plan.assertions import AnswerError, answer, propose
 from cairn.plan.assertions import render as render_proposals
+from cairn.plan.draft import draft_path, write_draft
 from cairn.plan.home import graph_path, plan_document_path, refuse_shared_graph
 from cairn.plan.ids import assign_ids, derive_plan_slug, plan_slug_collisions
 from cairn.plan.questions import ResolutionError, resolve
@@ -26,6 +29,9 @@ from cairn.plan.schema import (
     normalise,
 )
 from cairn.plan.validate import open_questions, validate
+from cairn.record.harvest import harvest
+from cairn.record.store import read_record
+from cairn.record.vocabulary import EXIT_NO_RECORD
 
 
 class UsageError(Exception):
@@ -173,6 +179,41 @@ def _cmd_answer(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_draft(args: argparse.Namespace) -> int:
+    """Turn one settled run's follow-up work into a plan document, or close the sequence.
+
+    The two outcomes a caller acts on are a document and a sentence saying there is nothing
+    to draft, and nothing here decides between them: the harvest does. A run with no record,
+    and one still running, each exit on the code that run's own state carries
+    ([record/vocabulary.py]), so a scheduled round can tell "not finished yet" from "nothing
+    left to do" without reading the words.
+    """
+    repository = Path(args.repository).resolve()
+    root = Path(args.reports) if args.reports else runs_root(repository)
+    try:
+        record = read_record(root, args.run)
+    except CairnError as exc:
+        # A record that cannot be read is a record that cannot be harvested, and its remedy
+        # is the one an absent record gets — build it again — so it answers on the same code
+        # rather than on one that reads as a refusal about the follow-up work.
+        print(f"error  {exc}", file=sys.stderr)
+        return EXIT_NO_RECORD
+    if record is None:
+        print(f"no record of run {args.run!r} under {root}", file=sys.stderr)
+        return EXIT_NO_RECORD
+    harvested = harvest(record)
+    if not harvested.items:
+        print(
+            f"run {harvested.run_id} left no follow-up work: the sequence is closed",
+        )
+        return 0
+    out = Path(args.out) if args.out else None
+    existing = (out if out is not None else draft_path(repository, harvested)).exists()
+    path = write_draft(repository, harvested, out)
+    print(f"{'replaced' if existing else 'drafted'} {path}")
+    return 0
+
+
 def _cmd_home(args: argparse.Namespace) -> int:
     repository = Path(args.repository).resolve()
     try:
@@ -239,6 +280,15 @@ def main(argv: list[str] | None = None) -> int:
     child.add_argument("--out")
     child.set_defaults(handler=_cmd_answer)
 
+    child = sub.add_parser("draft")
+    child.add_argument("--from-run", dest="run", required=True)
+    child.add_argument("--repository", default=".")
+    # The one caller reading a recorded corpus rather than a tree has a runs root and no
+    # repository to derive one from, exactly as `cairn record` does ([record/cli.py]).
+    child.add_argument("--reports")
+    child.add_argument("--out")
+    child.set_defaults(handler=_cmd_draft)
+
     child = sub.add_parser("home")
     child.add_argument("slug")
     child.add_argument("--repository", required=True)
@@ -271,3 +321,8 @@ def main(argv: list[str] | None = None) -> int:
     except UsageError as exc:
         print(str(exc), file=sys.stderr)
         return 2
+    except CairnError as exc:
+        # A refusal about the run a draft was asked for, which exits on that run's own code
+        # rather than on this command's health ([_cmd_draft]).
+        print(f"error  {exc}", file=sys.stderr)
+        return exc.exit_code

@@ -81,12 +81,13 @@ Doc 10 adds `merge_conflict`, `merge_not_landed`, `conflict_markers_committed`,
 `merge_environment_redirected`. Doc 13 adds `engine_paths_unreadable`, which `lock
 acquire` raises when the engine cannot say where it keeps its run history.
 `base_catchup_enabled` is **not** in that vocabulary: it is raised only by `cairn schedule`,
-which leaves no report, so like the three below it is an exit diagnosis rather than a
+which leaves no report, so like the four below it is an exit diagnosis rather than a
 cause.
-`run_record_unreadable`, `engine_status_unmapped` and `invalid_run_id` are not in that
-vocabulary: the first two are raised only by `cairn supervise` and `cairn record`, which
-leave no report, so they are exit diagnoses rather than causes. `invalid_run_id` is raised
-where runtime identity itself is being resolved, which is before there is anywhere to write.
+`run_record_unreadable`, `engine_status_unmapped`, `run_still_running` and `invalid_run_id`
+are not in that vocabulary either: the first three are raised only by `cairn supervise`,
+`cairn record` and `cairn plan draft`, which leave no report, so they are exit diagnoses
+rather than causes. `invalid_run_id` is raised where runtime identity itself is being
+resolved, which is before there is anywhere to write.
 
 Why a step contributed no verified work is a **second, distinct vocabulary**: it answers a
 question about a branch in a run rather than about one process's exit status, and it is
@@ -157,6 +158,8 @@ python3 -m cairn marker write  --step <id> --scope <scope> [--reads <path>]…
 python3 -m cairn verify needed --step <id> --command-digest <sha256>
 python3 -m cairn verify gate   --step <id> --position <chain|branch> [--verify-exit <status>]
 python3 -m cairn plan home     <plan-slug> --repository <path>
+python3 -m cairn plan draft    --from-run <id> [--repository <path>] [--reports <runs-root>]
+                               [--out <path>]
 python3 -m cairn plan propose  <graph> [--json]
 python3 -m cairn plan answer   <graph> --kind <kind> [--step <id>] [--dep <id>]
                                (--command <text> | --accept | --edit <text> | --decline)
@@ -213,6 +216,15 @@ unaided are derived rather than declared. Every other kind is `--accept`, `--edi
 argument, so no invocation can drop or misquote the proposal. `plan home` prints the plan's own
 graph path, `<git-common-dir>/cairn/graphs/<plan>.json`, and refuses, naming the file, while
 the shared `graph.json` of the old one-graph-per-repository layout remains; nothing migrates it.
+
+`plan draft` is the one command under `plan` that acts on a run rather than a graph: it reads
+one settled run's record and writes that run's follow-up work as a plan document beside the
+graphs, `<git-common-dir>/cairn/plans/<plan>-after-<run>.md`, printing the path it drafted or
+replaced ([plan-contract.md](plan-contract.md)). It exits `0` having written nothing where the
+run left no follow-up work, saying that the sequence is closed, and it refuses on the code the
+named run's own state carries rather than on its own health: `5` for a run still running,
+whose steps have not all reported, and `6` for a run whose record is not there or cannot be
+read.
 
 `lock acquire` is the run's first act and does eight things before its first agent session: assert
 the engine's DAG-level retry is off, **judge every parameter a caller varied**

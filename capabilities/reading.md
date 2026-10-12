@@ -78,7 +78,10 @@ whose steps accounted for nothing. A window the record states no delta for was m
 not moved by nothing.
 
 If the honest answer is "this needs to be run", say so and stop. Running is
-[running.md](running.md)'s, and it needs its own turn.
+[running.md](running.md)'s, and it needs its own turn. The same goes for the `follow_up`
+items the attention section carries: report them in the step's own words, and where what is
+wanted is that work done rather than read, that is [continuing.md](continuing.md)'s and it
+needs its own turn too.
 
 ## Explaining
 

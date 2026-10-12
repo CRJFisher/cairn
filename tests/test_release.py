@@ -403,9 +403,10 @@ class TheReadmeStatesWhatItMayNotSoften(unittest.TestCase):
 class TheCommandLinesFirstScreenLeadsBackToTheSkill(unittest.TestCase):
     """Plan 29 A: going looking for a command line is how somebody arrives at the wrong door.
 
-    The screen is held to leading with the way back rather than to its wording: the six
-    tasks, the name that opens the skill, what has to be installed, and one example that
-    spends nothing — all of it above the subcommands an emitted workflow invokes.
+    The screen is held to leading with the way back rather than to its wording: every task
+    a person asks for, the name that opens the skill, what has to be installed, and one
+    example that spends nothing — all of it above the subcommands an emitted workflow
+    invokes.
     """
 
     def setUp(self) -> None:
@@ -415,7 +416,7 @@ class TheCommandLinesFirstScreenLeadsBackToTheSkill(unittest.TestCase):
         self.assertIn("is internal", " ".join(self.screen.split()))
         self.assertIn("/cairn", self.screen)
 
-    def test_it_leads_with_all_six_tasks_a_person_asks_for(self) -> None:
+    def test_it_leads_with_every_task_a_person_asks_for(self) -> None:
         for capability in CAPABILITY_ORDER:
             with self.subTest(capability=capability):
                 self.assertIn(TASK_BY_CAPABILITY[capability], self.screen)

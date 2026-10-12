@@ -158,6 +158,16 @@ written a report at all.
 step. A reported `needs_user_decision` surfaces as blocked — a distinct non-green state,
 not a failure. A reported success green-lights nothing: verification owns the green path.
 
+**`follow_up_work` is the next run's plan, and nothing in this one.** A session that finds
+work outside its task names it here; the record keeps each item beside the step that surfaced
+it and raises it as a `follow_up` attention item ([run-model.md](run-model.md)). What becomes
+of it is `python3 -m cairn plan draft --from-run <run-id>`, which transcribes a settled run's
+items into an ordinary plan document that a person authors, asserts and runs as its own run
+([plan-contract.md](plan-contract.md)). It is never turned into a step of the run that
+reported it: work discovered mid-run has no authored assertion, and a step with no assertion
+and no recorded answer is refused at emission ([verify-gate.md](verify-gate.md)). The item is
+an account, so it gains no authority by being read — it lowers no outcome and raises none.
+
 **A missing report is itself an outcome.** A step killed mid-flight produces nothing at
 all, and its cause comes from the engine's own record.
 

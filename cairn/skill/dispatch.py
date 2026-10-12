@@ -7,14 +7,14 @@ and it is a property of the shape of this module rather than of the care taken w
 
 - **Disjoint by construction.** The rules are a mapping, so a pair keys at most one entry.
   There is no rule list to scan, no first-match, and no score to break a tie with.
-- **Total by assertion.** Every one of the 48 cells is present, so a missing pair cannot
+- **Total by assertion.** Every one of the 54 cells is present, so a missing pair cannot
   become an implicit ask, which would be a default by another name.
 - **Every ask's readings come from the same table**, computed rather than restated, so the
   ask list cannot drift from the rules it is the complement of.
 
 `SKILL.md` renders this table in prose and a model applies it. What a model supplies is the
 step no table can — reading an utterance into a verb class and an object shape. What it is
-spared is holding 48 cells in its head consistently, and a test proves the cells it is
+spared is holding 54 cells in its head consistently, and a test proves the cells it is
 holding are these.
 
 This module deliberately imports nothing that can start, lock or write anything, and a test
@@ -29,6 +29,7 @@ from typing import NamedTuple
 from cairn.skill.vocabulary import (
     ASK_FAMILIES,
     CAPABILITY_AUTHOR,
+    CAPABILITY_CONTINUE,
     CAPABILITY_EDIT,
     CAPABILITY_EXPLAIN,
     CAPABILITY_ORDER,
@@ -50,6 +51,7 @@ from cairn.skill.vocabulary import (
     VERB_AUTHORING,
     VERB_CLASSES,
     VERB_EXECUTING,
+    VERB_FOLLOWING_ON,
     VERB_INTERROGATING,
     VERB_MUTATING,
     VERB_RECOUNTING,
@@ -64,6 +66,7 @@ ASK_MUTATING_A_RUN = "mutating_a_run"
 ASK_EXECUTING_ONE_STEP = "executing_one_step"
 ASK_RECOVERING_WITHOUT_A_RUN = "recovering_without_a_run"
 ASK_RECOVERING_ONE_STEP = "recovering_one_step"
+ASK_FOLLOWING_ON_WITHOUT_A_RUN = "following_on_without_a_run"
 ASK_WATCHING_A_PLAN = "watching_a_plan"
 ASK_WATCHING_A_WORKFLOW = "watching_a_workflow"
 ASK_SCHEDULING_A_RUN = "scheduling_a_run"
@@ -76,7 +79,7 @@ ASK_NO_SUBJECT = "no_subject"
 ASK_MANY_SUBJECTS = "many_subjects"
 ASK_NOTHING_RECOGNISED = "nothing_recognised"
 
-# The eleven above are cells of the table; the five below are the shapes an invocation can
+# The twelve above are cells of the table; the five below are the shapes an invocation can
 # have that the table cannot be consulted for at all. Together they are the explicit ask
 # list doc 15 asks for, and a test requires every one of them to be reachable and to be
 # stated in `SKILL.md`.
@@ -87,6 +90,7 @@ ASK_REASONS: tuple[str, ...] = (
     ASK_EXECUTING_ONE_STEP,
     ASK_RECOVERING_WITHOUT_A_RUN,
     ASK_RECOVERING_ONE_STEP,
+    ASK_FOLLOWING_ON_WITHOUT_A_RUN,
     ASK_WATCHING_A_PLAN,
     ASK_WATCHING_A_WORKFLOW,
     ASK_SCHEDULING_A_RUN,
@@ -129,6 +133,15 @@ DISPATCH_RULES: dict[tuple[str, str], str] = {
     (VERB_RECOVERING, SHAPE_RUN): CAPABILITY_RUN,
     (VERB_RECOVERING, SHAPE_STEP): ASK_RECOVERING_ONE_STEP,
     (VERB_RECOVERING, SHAPE_VERDICT_WORD): ASK_VERB_ON_A_FROZEN_WORD,
+    # The harvest is read from one settled run's record, so a plan, a graph or a workflow
+    # names no follow-up work — and a step named without a run does not say which run's
+    # account of it is meant. All four ask which run, rather than taking the last one.
+    (VERB_FOLLOWING_ON, SHAPE_PLAN_DOCUMENT): ASK_FOLLOWING_ON_WITHOUT_A_RUN,
+    (VERB_FOLLOWING_ON, SHAPE_PLAN_GRAPH): ASK_FOLLOWING_ON_WITHOUT_A_RUN,
+    (VERB_FOLLOWING_ON, SHAPE_WORKFLOW): ASK_FOLLOWING_ON_WITHOUT_A_RUN,
+    (VERB_FOLLOWING_ON, SHAPE_RUN): CAPABILITY_CONTINUE,
+    (VERB_FOLLOWING_ON, SHAPE_STEP): ASK_FOLLOWING_ON_WITHOUT_A_RUN,
+    (VERB_FOLLOWING_ON, SHAPE_VERDICT_WORD): ASK_VERB_ON_A_FROZEN_WORD,
     (VERB_WATCHING, SHAPE_PLAN_DOCUMENT): ASK_WATCHING_A_PLAN,
     (VERB_WATCHING, SHAPE_PLAN_GRAPH): ASK_WATCHING_A_PLAN,
     (VERB_WATCHING, SHAPE_WORKFLOW): ASK_WATCHING_A_WORKFLOW,
@@ -179,6 +192,10 @@ QUESTION_BY_ASK: dict[str, str] = {
         "Recovery is re-running the whole plan, which no-ops every step already done. Which "
         "run should be continued?"
     ),
+    ASK_FOLLOWING_ON_WITHOUT_A_RUN: (
+        "Follow-up work belongs to the run whose steps reported it, so it needs one named. "
+        "Which run should I harvest — or do you mean the last run of this plan?"
+    ),
     ASK_WATCHING_A_PLAN: (
         "Do you want this plan started so there is something to watch, or to read the "
         "last run of it?"
@@ -218,7 +235,7 @@ QUESTION_BY_ASK: dict[str, str] = {
 }
 
 # Four of the five structural asks compute their readings from the table; `nothing_recognised`
-# reaches no cell and has none. The eleven tabled ones state theirs, because a cell has no
+# reaches no cell and has none. The twelve tabled ones state theirs, because a cell has no
 # column to derive them from.
 READINGS_BY_TABLED_ASK: dict[str, tuple[str, ...]] = {
     ASK_AUTHORING_A_RUN: (),
@@ -227,6 +244,7 @@ READINGS_BY_TABLED_ASK: dict[str, tuple[str, ...]] = {
     ASK_EXECUTING_ONE_STEP: (),
     ASK_RECOVERING_WITHOUT_A_RUN: (),
     ASK_RECOVERING_ONE_STEP: (),
+    ASK_FOLLOWING_ON_WITHOUT_A_RUN: (),
     ASK_WATCHING_A_PLAN: (CAPABILITY_RUN, CAPABILITY_REPORT),
     ASK_WATCHING_A_WORKFLOW: (CAPABILITY_RUN, CAPABILITY_REPORT),
     ASK_SCHEDULING_A_RUN: (),
@@ -241,6 +259,7 @@ FAMILY_BY_TABLED_ASK: dict[str, str] = {
     ASK_EXECUTING_ONE_STEP: FAMILY_NOTHING_APPLIES,
     ASK_RECOVERING_WITHOUT_A_RUN: FAMILY_NOTHING_APPLIES,
     ASK_RECOVERING_ONE_STEP: FAMILY_NOTHING_APPLIES,
+    ASK_FOLLOWING_ON_WITHOUT_A_RUN: FAMILY_NOTHING_APPLIES,
     ASK_WATCHING_A_PLAN: FAMILY_VERB_UNCLEAR,
     ASK_WATCHING_A_WORKFLOW: FAMILY_VERB_UNCLEAR,
     ASK_SCHEDULING_A_RUN: FAMILY_NOTHING_APPLIES,

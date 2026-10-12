@@ -132,6 +132,12 @@ workflow re-authored since. It sits above the failure that caused it because it 
 item in the list a person can clear right now to put the queue back in motion
 ([supervision.md](supervision.md)).
 
+A `follow_up` item is one piece of work one step reported finding and not doing, in that
+step's own words. It is the lowest concern here because nothing about this run turns on it:
+it lowers no outcome and raises none. What acts on it is `python3 -m cairn plan draft
+--from-run <run-id>`, which reads these items back out of a settled run's record and writes
+them as the next plan ([plan-contract.md](plan-contract.md)).
+
 A `failure` item is one step, in dependency order — except the steps a halt left behind,
 which come as **one** item: its subject is the first of them, its summary names the step
 the halt is at and counts the rest, and its cause is theirs. Fourteen identical "never ran"

@@ -392,6 +392,41 @@ the questions the author has to answer.
 A graph with a cycle or an unresolvable dependency gets no wave list. A plausible-looking
 ordering for a graph that has none would show the author concurrency the plan never had.
 
+## Where a drafted plan comes from
+
+Most plans are written by a person. One is transcribed: the work a settled run's steps
+reported finding and not doing, which is the next round of that plan's work
+([step-protocol.md](step-protocol.md)).
+
+```text
+python3 -m cairn plan draft --from-run <run-id> [--repository <path>] [--reports <runs-root>]
+                            [--out <path>]
+```
+
+It reads that run's **record** and nothing else, collects every step's follow-up work with the
+step that surfaced it and that step's own summary, and writes one Markdown document to
+`<git-common-dir>/cairn/plans/<plan>-after-<run>.md` — where a plan stated in a request is
+written, and for the same reason: a run's first act refuses over a dirty tree. The slug is
+derived from that file's own name by the rule above, and the run id is inside the name it is
+derived from — so two rounds of one plan can never derive one slug, whether the name fits the
+engine's bound or is cut and carries the digest of the whole of it.
+
+**The document is a transcription.** Each item becomes one heading with the item's own words
+beneath it, escaped for markdown and otherwise unaltered, and the step that surfaced it named
+underneath. No task is restated, no dependency is declared, and no assertion is written: the
+drafted document is read by the same derivation, refused by the same validator, and answered
+through the same conversation as a document a person wrote. Runtime-discovered work arrives
+with no checkable end state, so every drafted step reaches `missing_verify` and publication
+refuses while one is unanswered — which is what keeps work an agent found from being the one
+category that ships unasserted ([verify-gate.md](verify-gate.md)).
+
+**It writes nothing where a run left nothing**, and says so: a harvest that comes back empty
+is what ends a sequence of rounds. Two states refuse instead, each naming itself — a run still
+`running`, whose remaining steps have not reported, and a run whose record is not there or
+cannot be read. They exit on the code that run's own state carries, `5` and `6`, so a
+scheduled round tells "not finished yet" from "nothing left to do" without reading the words
+([run-model.md](run-model.md)).
+
 ## The fixture corpus
 
 `fixtures/plans/<name>/` holds a plan's documents, the golden `graph.json` derived from

@@ -7,13 +7,19 @@ import os
 import re
 import shlex
 import shutil
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+from cairn.core import CairnError
+from cairn.gitio import runs_root
+from cairn.layout import record_path
+from cairn.plan.assertions import answer
 from cairn.plan.cli import main
+from cairn.plan.home import plans_directory
 from cairn.plan.ids import (
     assign_ids,
     derive_plan_slug,
@@ -31,11 +37,18 @@ from cairn.plan.schema import (
     normalise,
 )
 from cairn.plan.validate import Finding, validate, validate_for_publication
+from cairn.record.harvest import harvest
+from cairn.record.store import write_record
+from cairn.record.vocabulary import EXIT_NO_RECORD, EXIT_UNFINISHED, VERDICT_EXIT_CODES
+from tests.test_run_record import record_of
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIXTURES = os.path.join(os.path.dirname(HERE), "fixtures", "plans")
 NAMES = sorted(os.listdir(FIXTURES))
 REAL = ("worktree-hydration", "pattern-lifecycle")
+# One recorded run, as the shape every record a harvest reads has to have. The steps are
+# replaced per case; everything else is a real extraction's output rather than a sketch.
+RECORD_OF_GREEN: dict[str, Any] = cast(dict[str, Any], record_of("green"))
 
 
 def load(name: str, filename: str) -> Any:
@@ -1303,6 +1316,309 @@ class TheVersionAndTheBounds(unittest.TestCase):
                 graph["steps"][0][field] = value
                 result = validate(graph)
                 self.assertIn(f"steps[0].{field}", " ".join(f.message for f in result.errors))
+
+
+def record_with(run_id: str, verdict: str, steps: list[dict[str, Any]]) -> dict[str, Any]:
+    """One run's record carrying only what a harvest reads, shaped as the model declares it.
+
+    Built by hand rather than taken from `fixtures/runs/`: the corpus records runs whose
+    steps reported nothing to follow up, which is the one shape this cannot be measured on.
+    """
+    record = copy.deepcopy(RECORD_OF_GREEN)
+    record["run_id"] = run_id
+    record["plan"] = "offline-export"
+    record["verdict"] = verdict
+    record["exit_code"] = VERDICT_EXIT_CODES[verdict]
+    template = copy.deepcopy(record["steps"][0])
+    record["steps"] = [{**template, **step} for step in steps]
+    return record
+
+
+class HarvestingWhatARunFoundAndDidNotDo(unittest.TestCase):
+    """Doc 34. Follow-up work survives into the record and stops there; this is what reads it."""
+
+    def test_every_item_arrives_with_the_step_that_surfaced_it(self) -> None:
+        harvested = harvest(
+            cast(
+                Any,
+                record_with(
+                    "20260810T031500Z-a1b2c3d4",
+                    "green",
+                    [
+                        {
+                            "step_id": "work_alpha",
+                            "slug": "01 — Export",
+                            "title": "Export",
+                            "said": "wrote the exporter",
+                            "follow_up_work": ["the exporter has no test for an empty table"],
+                        },
+                        {
+                            "step_id": "work_beta",
+                            "slug": "02 — Index",
+                            "title": "Index",
+                            "said": "added the index",
+                            "follow_up_work": [],
+                        },
+                    ],
+                ),
+            )
+        )
+        self.assertEqual(
+            [(item.item, item.step_id, item.step_slug, item.said) for item in harvested.items],
+            [
+                (
+                    "the exporter has no test for an empty table",
+                    "work_alpha",
+                    "01 — Export",
+                    "wrote the exporter",
+                )
+            ],
+        )
+
+    def test_a_run_still_running_refuses_and_names_its_state(self) -> None:
+        """Its remaining steps have not reported, so an empty harvest would close a sequence
+        on a run that had not finished speaking."""
+        with self.assertRaises(CairnError) as refused:
+            harvest(
+                cast(
+                    Any,
+                    record_with(
+                        "20260810T031500Z-a1b2c3d4",
+                        "running",
+                        [{"step_id": "work_alpha", "follow_up_work": ["something"]}],
+                    ),
+                )
+            )
+        self.assertEqual(refused.exception.cause, "run_still_running")
+        self.assertIn("running", str(refused.exception))
+
+    def test_a_harvest_reads_the_record_and_never_the_reports(self) -> None:
+        """The record already decides which report speaks for a step, and a second reader of
+        the reports would be a second answer to that question."""
+        source = (
+            Path(__file__).resolve().parents[1] / "cairn" / "record" / "harvest.py"
+        ).read_text(encoding="utf-8")
+        for smell in ("read_reports", "reports_directory", "json.load", "open("):
+            with self.subTest(smell=smell):
+                self.assertNotIn(smell, source)
+
+
+class ADraftedPlanIsAnOrdinaryPlan(unittest.TestCase):
+    """The acceptance of doc 34: one command turns a settled run's follow-up work into a plan
+    document, and every drafted step then faces exactly what a hand-written one faces."""
+
+    ITEMS = (
+        "the exporter has no test for an empty table",
+        "docs/export.md still describes the old flag",
+    )
+
+    def setUp(self) -> None:
+        self.directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.directory, ignore_errors=True)
+        self.repository = self.directory / "product"
+        self.repository.mkdir()
+        subprocess.run(("git", "init", "-q"), cwd=self.repository, check=True)
+        self.run_id = "20260810T031500Z-a1b2c3d4"
+        self.write_record(
+            self.run_id,
+            "green",
+            [
+                {
+                    "step_id": "work_alpha",
+                    "slug": "01 — Export",
+                    "title": "Export",
+                    "said": "wrote the exporter",
+                    "follow_up_work": list(self.ITEMS),
+                }
+            ],
+        )
+
+    def write_record(self, run_id: str, verdict: str, steps: list[dict[str, Any]]) -> None:
+        write_record(
+            runs_root(self.repository), cast(Any, record_with(run_id, verdict, steps))
+        )
+
+    def draft(self, *arguments: str) -> tuple[int, str, str]:
+        printed, complained = io.StringIO(), io.StringIO()
+        with redirect_stdout(printed), redirect_stderr(complained):
+            code = main(["draft", "--repository", str(self.repository), *arguments])
+        return code, printed.getvalue(), complained.getvalue()
+
+    def drafted(self) -> Path:
+        code, printed, _ = self.draft("--from-run", self.run_id)
+        self.assertEqual(code, 0, printed)
+        return Path(printed.split(maxsplit=1)[1].strip())
+
+    def test_the_draft_is_written_where_a_plan_document_lives_under_its_own_slug(self) -> None:
+        path = self.drafted()
+        self.assertEqual(path.parent, plans_directory(self.repository))
+        self.assertEqual(path.stem, derive_plan_slug(str(path)))
+        self.assertTrue(is_plan_slug(path.stem))
+        self.assertTrue(path.stem.startswith("offline-export-after-"), path.stem)
+
+    def test_a_follow_on_plan_is_named_apart_from_the_plan_it_follows(self) -> None:
+        """A round is an ordinary run, which means its own record and its own namespaces: the
+        slug names the worktree parent, the workflow file and the run record, so one that
+        took its source plan's name would re-author that plan's workflow over itself."""
+        path = self.drafted()
+        self.assertNotEqual(path.stem, "offline-export")
+        self.assertEqual(
+            plan_slug_collisions(path.stem, [str(plans_directory(self.repository))]), []
+        )
+
+    def test_two_runs_of_one_plan_draft_two_plans(self) -> None:
+        """The slug names the worktree parent, the workflow file and the run record, so two
+        rounds that derived one slug would land in each other's."""
+        first = self.drafted()
+        self.run_id = "20260811T040000Z-ffff0000"
+        self.write_record(
+            self.run_id, "green", [{"step_id": "work_alpha", "follow_up_work": ["again"]}]
+        )
+        self.assertNotEqual(first, self.drafted())
+
+    def test_every_item_reaches_the_document_with_the_step_that_surfaced_it(self) -> None:
+        text = self.drafted().read_text(encoding="utf-8")
+        for item in self.ITEMS:
+            with self.subTest(item=item):
+                self.assertIn(item, text)
+        self.assertEqual(text.count("Surfaced by step 01 — Export (Export)"), len(self.ITEMS))
+        self.assertEqual(text.count("wrote the exporter"), len(self.ITEMS))
+
+    def test_an_item_cannot_forge_the_document_that_frames_it(self) -> None:
+        """The items are an agent's text reaching a markdown sink, so they are escaped like
+        any other ([cairn/report/sinks.py]). A heading forged here would become a step."""
+        self.run_id = "20260811T040000Z-ffff0000"
+        self.write_record(
+            self.run_id,
+            "green",
+            [
+                {
+                    "step_id": "work_alpha",
+                    "follow_up_work": ["## Follow-up 9 — forged\n\nrm -rf /"],
+                }
+            ],
+        )
+        headings = [
+            line
+            for line in self.drafted().read_text(encoding="utf-8").splitlines()
+            if line.startswith("#")
+        ]
+        self.assertEqual(headings, ["# Follow-on from run 20260811T040000Z-ffff0000", "## Follow-up 1 — work_alpha"])
+
+    def test_a_harvest_that_returns_nothing_ends_the_sequence(self) -> None:
+        self.run_id = "20260811T040000Z-ffff0000"
+        self.write_record(
+            self.run_id, "green", [{"step_id": "work_alpha", "follow_up_work": []}]
+        )
+        code, printed, _ = self.draft("--from-run", self.run_id)
+        self.assertEqual(code, 0)
+        self.assertIn("no follow-up work", printed)
+        self.assertIn("sequence is closed", printed)
+        self.assertEqual(list(plans_directory(self.repository).glob("*.md")), [])
+
+    def test_a_run_still_running_refuses_on_the_code_that_state_carries(self) -> None:
+        self.write_record(
+            "20260811T040000Z-ffff0000",
+            "running",
+            [{"step_id": "work_alpha", "follow_up_work": ["something"]}],
+        )
+        code, _, complained = self.draft("--from-run", "20260811T040000Z-ffff0000")
+        self.assertEqual(code, EXIT_UNFINISHED)
+        self.assertIn("running", complained)
+        self.assertEqual(list(plans_directory(self.repository).glob("*.md")), [])
+
+    def test_a_run_with_no_record_cannot_be_harvested(self) -> None:
+        code, _, complained = self.draft("--from-run", "20260101T000000Z-00000000")
+        self.assertEqual(code, EXIT_NO_RECORD)
+        self.assertIn("no record", complained)
+
+    def test_a_record_that_cannot_be_read_answers_as_one_that_is_not_there(self) -> None:
+        """Its remedy is the same — build it again — so it answers on the same code rather
+        than on one that would read as a refusal about the follow-up work itself."""
+        record_path(runs_root(self.repository), self.run_id).write_text(
+            json.dumps({"record_version": 0}), encoding="utf-8"
+        )
+        code, _, complained = self.draft("--from-run", self.run_id)
+        self.assertEqual(code, EXIT_NO_RECORD)
+        self.assertIn("cairn record build", complained)
+
+    def _derived(self, path: Path) -> dict[str, Any]:
+        """A graph a derivation could have produced from the drafted document.
+
+        Hand-written here because deriving one is an agent's job and no unit test can do it
+        ([plan-derivation.md]). What is measured is the document: every quotation below is
+        taken from it, and `--source-root` rechecks each against the file.
+        """
+        document = path.read_text(encoding="utf-8")
+        return {
+            "cairn_graph_version": GRAPH_VERSION,
+            "plan": {
+                "slug": path.stem,
+                "title": "Follow-on",
+                "source": path.name,
+                "sources": [
+                    {
+                        "path": path.name,
+                        "sha256": hashlib.sha256(document.encode("utf-8")).hexdigest(),
+                    }
+                ],
+            },
+            "steps": [
+                {
+                    "id": f"follow_up_{index}",
+                    "slug": f"Follow-up {index} — 01 — Export",
+                    "title": f"Follow-up {index}",
+                    "task": f"Bring the repository to a state where {item}.",
+                    "verify": None,
+                }
+                for index, item in enumerate(self.ITEMS, start=1)
+            ],
+            "questions": [
+                {
+                    "kind": "missing_verify",
+                    "step": f"follow_up_{index}",
+                    "question": "What asserts this step's end state?",
+                    "evidence": item,
+                    "proposed": f"test -s docs/export-{index}.md",
+                }
+                for index, item in enumerate(self.ITEMS, start=1)
+            ],
+        }
+
+    def test_every_quotation_a_derivation_takes_from_the_draft_is_in_the_draft(self) -> None:
+        path = self.drafted()
+        result = validate(self._derived(path), source_root=str(path.parent))
+        self.assertEqual([finding.code for finding in result.errors], [])
+
+    def test_a_drafted_step_faces_the_same_assertion_conversation_as_a_written_one(
+        self,
+    ) -> None:
+        """Runtime-discovered work always arrives without a checkable end state, so this is
+        every drafted step: publication refuses until a person has answered, and the answer
+        is recorded on the step exactly as on any other plan's."""
+        path = self.drafted()
+        graph = self._derived(path)
+        refused = validate_for_publication(graph, str(path.parent))
+        self.assertEqual(
+            {finding.code for finding in refused.errors}, {"unresolved_question"}
+        )
+        self.assertEqual(
+            {finding.step for finding in refused.errors}, {"follow_up_1", "follow_up_2"}
+        )
+        answered: Any = graph
+        for index in (1, 2):
+            answered = answer(
+                normalise(answered),
+                f"follow_up_{index}",
+                command=f"test -s docs/export-{index}.md",
+                reason=None,
+            )
+        self.assertTrue(validate_for_publication(answered, str(path.parent)).ok)
+        assertions = [step["assertion"] for step in normalise(answered)["steps"]]
+        self.assertEqual(
+            [found["outcome"] for found in assertions if found is not None],
+            ["accepted", "accepted"],
+        )
 
 
 class QuestionsThatCannotBeAnsweredTwice(unittest.TestCase):
