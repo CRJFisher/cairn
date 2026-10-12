@@ -23,6 +23,7 @@ from cairn.core import CairnError
 from cairn.enginehome import run_records_path
 from cairn.gitio import runs_root
 from cairn.headroom import (
+    ENDPOINT_FILE,
     HEADROOM_ENDPOINT_ENV,
     Gauge,
     blindness,
@@ -84,7 +85,7 @@ def _cmd_headroom(args: argparse.Namespace) -> int:
             "environment. Record an answer with --endpoint on|off"
         )
     else:
-        print(f"asked    recorded in {headroom_directory(root) / 'endpoint.json'}")
+        print(f"asked    recorded in {headroom_directory(root) / ENDPOINT_FILE}")
     if not enabled:
         gauge = Gauge(headroom_directory(root))
         blind = blindness(gauge.read(), now=gauge.clock())

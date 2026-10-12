@@ -414,7 +414,12 @@ def _cmd_explain_workflow(args: argparse.Namespace) -> int:
     print(f"schedule  {account.schedule or 'none — it runs when it is asked to'}")
     print(f"agents    {account.agent_steps} agent step(s)")
     print(f"file      {account.provenance.summary}")
-    _say_what_it_will_cost(repository, account)
+    try:
+        _say_what_it_will_cost(repository, account)
+    except (CairnError, OSError) as unread:
+        # What the definition does is this command's answer; a record that could not be read
+        # costs the forecast sentence and never the rest of it ([45 B]).
+        print(f"forecast could not be stated: {unread}")
     print("steps")
     for step in account.steps:
         does = " ".join(step.subcommand) or (step.assertion or "—")

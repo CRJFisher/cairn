@@ -446,6 +446,19 @@ def _tokens(raw: object) -> dict[str, int]:
     return found
 
 
+def _delta(value: object) -> float | None:
+    """A distance between two readings of one window, which may run either way.
+
+    A reading corrected downward by a second feeder is a measured difference like any other,
+    so the band is the whole of -1 to 1 rather than a fraction's 0 to 1: dropping it would
+    state "nothing measured it twice" about a window measured twice ([45 A]).
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if -1.0 <= number <= 1.0 else None
+
+
 def _consumption_window(raw: object) -> ConsumptionWindow | None:
     if not isinstance(raw, dict):
         return None
@@ -460,7 +473,7 @@ def _consumption_window(raw: object) -> ConsumptionWindow | None:
         after=_fraction(entry.get("after")),
         after_read_at=_reported_text(entry.get("after_read_at")),
         resets_at=_reported_text(entry.get("resets_at")),
-        delta=_fraction(entry.get("delta")),
+        delta=_delta(entry.get("delta")),
     )
 
 

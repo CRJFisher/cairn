@@ -90,6 +90,15 @@ class AnEstimateRestsOnMeasuredDifferences(Fixture):
         self.assertEqual(observations(self.root), [])
         self.assertEqual(history(self.root), {})
 
+    def test_a_window_corrected_downward_survives_as_the_measurement_it_is(self) -> None:
+        """A second feeder reading the window lower is a difference between two measurements
+        like any other, so it reaches the history rather than being read as never measured
+        twice ([45 A])."""
+        self.record("run-1", consumption(seven_day=-0.05))
+        self.assertEqual(
+            history(self.root)[QueueStep("agent.claude", "opus")], {"seven_day": [-0.05]}
+        )
+
     def test_every_measured_delta_is_grouped_by_the_kind_and_model_that_spent_it(self) -> None:
         self.record("run-1", consumption(seven_day=0.2), consumption(model="sonnet", seven_day=0.01))
         self.record("run-2", consumption(seven_day=0.1, five_hour=0.4))

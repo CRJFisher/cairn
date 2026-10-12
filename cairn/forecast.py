@@ -153,7 +153,11 @@ def _observations_of(consumption: object) -> list[Observation]:
         delta = fields.get("delta")
         if not isinstance(name, str) or isinstance(delta, bool):
             continue
-        if isinstance(delta, (int, float)) and delta >= 0:
+        # A delta is only ever stated between two readings sharing a reset
+        # ([headroom.Steward.consumption]), so a negative one is a reading corrected downward
+        # rather than a window that rolled over: dropping it would leave a step measured twice
+        # with nothing to estimate from ([45 A]).
+        if isinstance(delta, (int, float)) and -1.0 <= delta <= 1.0:
             found.append(Observation(kind=kind, model=model, window=name, delta=float(delta)))
     return found
 

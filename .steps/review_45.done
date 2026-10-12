@@ -1,0 +1,7 @@
+{
+  "key": "once",
+  "run_id": "20261012T083259Z-0a1251e8",
+  "scope": "once",
+  "step_id": "review_45",
+  "summary": "The end state holds: the reviewed diff now has no remaining fixable findings, and every fix is in the working tree uncommitted. Functionality restored: a step whose allowance window was measured twic\u2026"
+}
