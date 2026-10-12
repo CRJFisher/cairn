@@ -207,6 +207,18 @@ NEXT_ALLOWANCE_ELSEWHERE = "allowance_elsewhere"
 NEXT_START_SCHEDULER = "start_scheduler"
 NEXT_WAIT = "wait"
 NEXT_NOTHING = "nothing"
+NEXT_ACTIONS: tuple[str, ...] = (
+    NEXT_DECIDE,
+    NEXT_SETTLE_MERGE,
+    NEXT_RERUN,
+    NEXT_FIX_ASSERTION,
+    NEXT_AWAIT_ALLOWANCE,
+    NEXT_ALLOWANCE_ELSEWHERE,
+    NEXT_START_SCHEDULER,
+    NEXT_WAIT,
+    NEXT_NOTHING,
+)
+
 # --- the one resume a held run arms for itself ----------------------------------------
 #
 # What the waiter is doing, in the words the record carries. `starting` is a state of its
@@ -224,18 +236,6 @@ RESUME_STATES: tuple[str, ...] = (
     RESUME_STARTED,
     RESUME_REFUSED,
     RESUME_SUPERSEDED,
-)
-
-NEXT_ACTIONS: tuple[str, ...] = (
-    NEXT_DECIDE,
-    NEXT_SETTLE_MERGE,
-    NEXT_RERUN,
-    NEXT_FIX_ASSERTION,
-    NEXT_AWAIT_ALLOWANCE,
-    NEXT_ALLOWANCE_ELSEWHERE,
-    NEXT_START_SCHEDULER,
-    NEXT_WAIT,
-    NEXT_NOTHING,
 )
 
 __all__ = [

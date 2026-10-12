@@ -517,8 +517,8 @@ class TheViewAndTheReportShowAPendingResume(Fixture):
             self.assertEqual(facts[key], "absent", key)
 
     def test_the_release_says_it_where_the_engines_view_shows_it(self) -> None:
-        """A release handler's own output is the only text of Cairn's the engine's view
-        shows for a run that has finished, so the line is printed as well as recorded.
+        """A release handler's own output is the only text of Cairn's that the engine's
+        view shows for a run that has finished, so the line is printed as well as recorded.
 
         The release identifies itself from the engine's environment and the process's own
         directory, so both are stood up around it — a suite that ran this against whatever

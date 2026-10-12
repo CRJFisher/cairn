@@ -261,7 +261,7 @@ def _lock(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
         closing.extend(armed)
         for said in armed:
             # Printed as well as recorded, because this handler's own output is the only
-            # text of Cairn's the engine's view shows for a finished run: a person who
+            # text of Cairn's that the engine's view shows for a finished run: a person who
             # opens the run in a browser reads *resuming after …* there rather than a run
             # that stopped and did nothing ([44 A]).
             print(said)
@@ -341,8 +341,8 @@ def arm_resume(context: RuntimeContext) -> list[str]:
     line, and a run whose resume could not be armed is a run that stopped and said why.
 
     The line it returns is the release's own follow-up, and its caller prints it as well:
-    this handler's output is the only text of Cairn's the engine's view shows for a run
-    that has finished ([44 A]).
+    this handler's output is the only text of Cairn's that the engine's view shows for a
+    run that has finished ([44 A]).
     """
     try:
         return arm(context.runs_root, context.run_id).said

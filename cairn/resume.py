@@ -65,6 +65,7 @@ from cairn.locks import (
     refuse_unresolved_merge,
 )
 from cairn.marker import mint_occasion
+from cairn.providers import iso_moment
 from cairn.record.extract import read_resume
 from cairn.record.model import AllowanceAccount, PendingResume, RunRecord
 from cairn.record.store import read_record
@@ -77,9 +78,8 @@ from cairn.record.vocabulary import (
     RESUME_WAITING,
 )
 from cairn.skill.trigger import launch_detached
+from cairn.workflow.schema import CAIRN_INVOCATION
 from cairn.workflow.stamp import read_stamp, workflow_path
-
-CAIRN_INVOCATION: tuple[str, ...] = ("python3", "-m", "cairn")
 
 # How far ahead a resume will wait. One weekly window, which is the longest allowance a hold
 # can name: a moment beyond it is a run nobody should expect to restart itself, and saying so
@@ -241,8 +241,6 @@ def clear_resume(runs_root: Path, run_id: str) -> bool:
     path = resume_path(runs_root, run_id)
     try:
         path.unlink()
-    except FileNotFoundError:
-        return False
     except OSError:
         return False
     return True
@@ -320,7 +318,7 @@ def _pending(
         pid=os.getpid(),
         reason=reason,
         started_run=started_run,
-        written_at=datetime.fromtimestamp(now).astimezone().isoformat(timespec="seconds"),
+        written_at=iso_moment(now),
     )
 
 
