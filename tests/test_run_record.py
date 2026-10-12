@@ -241,6 +241,7 @@ class TheVocabularyIsFrozen(unittest.TestCase):
             (
                 "blocked",
                 "integrity",
+                "resume_refused",
                 "failure",
                 "excluded",
                 "housekeeping_failure",

@@ -453,6 +453,53 @@ again on a reading of the account actually in use. Both accounts have to be know
 they can differ, so a hold whose account nothing recorded, and a machine that cannot say
 which account it is on, keep `await_allowance` and its moment.
 
+### The run resumes itself
+
+A run that ends `await_allowance` arms **one** resume for itself as its lock is released: a
+detached `python3 -m cairn run resume-at --run <id> --repository <path>`, started in its own
+session the way a run is, so it outlives the terminal and the conversation that armed it.
+No scheduler is started and none is needed — the engine's own scheduler carries a retry
+scanner that re-executes every failed run on the machine ([triggers.md](triggers.md)), and
+this is one process waiting on one moment for one run.
+
+The waiter writes `runs/<run-id>/resume.json`: the moment, the window, the account the hold
+was taken on, the command it will run and its own pid. The record reads that file every time
+it is built, so the run reads as _resuming at Tue 13 Oct 06:00 BST_ rather than as failed and
+idle, and the release's own report says the same thing where the engine's view shows it.
+
+It sleeps until the moment the run recorded plus one minute, then **measures** with the
+allowance's own instruments. It never trusts the clock: a window still closed is backed off
+5, 10, then 20 minutes at a time until a measurement admits, exactly as a hold inside a step
+is. When one admits it runs the recovery command the run's own record carries — the very
+command a person would paste — under a run id minted before the launch, and records that id
+beside the resume.
+
+**It starts nothing, and says why, where a person is needed.** Four refusals, each of them a
+state the recovery would meet anyway:
+
+| Refusal                                                      | What the run says                                             |
+| ------------------------------------------------------------ | ------------------------------------------------------------- |
+| the working tree is dirty, or a merge is half-finished       | the resume needs a clean tree; settle it and run the recovery |
+| the repository's run lock is held by another run             | the holder is named, and the recovery is the person's to run  |
+| the workflow was re-authored from a different graph since    | a recovery would continue this occasion with other steps      |
+| the moment is further off than seven days, one weekly window | the moment is named, and the recovery is the person's to run  |
+
+A refusal never retries in a loop. It is one `resume_refused` attention item on the run
+([run-model.md](run-model.md)).
+
+**It can be called off.** `python3 -m cairn run resume-at --run <id> --repository <path>
+--cancel` stops the waiter and removes the file. Starting any run against the repository
+supersedes every resume still waiting on it — a resume exists to start a run nobody is there
+to start — and the superseded waiter exits without acting.
+
+**The person is told, twice.** The run stopping and the run resuming are the two facts a
+person away from the terminal needs ([principle 2](../PRINCIPLES.md)). Cairn sends both
+through `CAIRN_NOTIFY_COMMAND`, a command the owner configures, given the sentence on
+standard input. It is read where a workflow is generated and carried into the file's `env:`
+block, the way the usage endpoint's opt-in is, because the engine hands a step a curated
+environment. It is unset by default and never required; without it the facts are in the view
+and the report only.
+
 ### The backstop: a limit met mid-session
 
 Admission lowers the odds of meeting a limit; it cannot remove them, because one session

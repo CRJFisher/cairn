@@ -13,7 +13,8 @@ against a graph on disk, `cairn workflow …` generates and checks an engine def
 `cairn supervise …` repairs a run that is over, `cairn record …` reads one
 ([run-model.md](run-model.md)), `cairn report …` renders it ([report.md](report.md)), and
 `cairn schedule …` installs a recurring trigger and starts the daemon it needs
-([triggers.md](triggers.md)), `cairn run start` starts a run, `cairn explain …` answers
+([triggers.md](triggers.md)), `cairn run start` starts a run and `cairn run resume-at` waits
+out the allowance a held run stopped at and starts its recovery, `cairn explain …` answers
 what a workflow would do, what a frozen word means
 and why a step was excluded, `cairn view status` says whether the address a run is watched at
 is being served and `cairn view start` serves it — one detached `dagu server`, never the
@@ -290,6 +291,15 @@ engine is invoked and are printed then, so a caller killed mid-launch has still 
 name of the run — but an affirmative start claim is a line automation and an incident log keep
 forever, and the engine may still decline the run. Where it declines, the output carries no
 claim that the run started; where it has neither registered nor exited, the line is `waiting`.
+
+`cairn run resume-at --run <id>` is the waiting half of a start, and the only other verb
+under `run`. It is the body a held run's release detaches: it sleeps until the moment that
+run recorded its window as reopening, measures the allowance, and then runs the recovery
+command that run's own record carries — composing none of its own. It is the one command in
+Cairn expected to run for hours. It exits `1` where it refuses, `0` otherwise, and it writes
+what it is doing to `runs/<run-id>/resume.json` throughout, which is what the record reads.
+`--cancel` stops a waiter and removes that file instead of waiting
+([supervision.md](supervision.md)).
 
 `cairn explain repository|workflow|word|exclusion` answers which repository a request is
 about, what a definition would do, what one of Cairn's frozen words means, and why a step

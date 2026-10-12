@@ -72,6 +72,7 @@ from cairn.protocol import compose_remedy_task
 from cairn.record.cli import main as record_main
 from cairn.record.store import build_run_record, write_record
 from cairn.report.cli import main as report_main
+from cairn.resume import arm
 from cairn.schedule_cli import main as schedule_main
 from cairn.skill.cli import explain_main, run_main, view_main
 from cairn.skill.vocabulary import CAPABILITY_ORDER, TASK_BY_CAPABILITY
@@ -253,7 +254,17 @@ def _lock(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
             raise
         closing = record_the_run(context, failure)
         if failure is not None:
+            # The repository is still held, so a recovery against it would be refused. A
+            # resume is armed only where the release actually gave the lock back.
             raise failure
+        armed = arm_resume(context)
+        closing.extend(armed)
+        for said in armed:
+            # Printed as well as recorded, because this handler's own output is the only
+            # text of Cairn's the engine's view shows for a finished run: a person who
+            # opens the run in a browser reads *resuming after …* there rather than a run
+            # that stopped and did nothing ([44 A]).
+            print(said)
         if record is None:
             # The release runs however the run ends, including on a run that never took
             # the lock, so having nothing to give back is an outcome and not a failure.
@@ -320,6 +331,23 @@ def _lock(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
             **_authored_plan(repository, args.plan),
         },
     )
+
+
+def arm_resume(context: RuntimeContext) -> list[str]:
+    """Arm this run's own resume where it stopped at the allowance, and say so on the record.
+
+    Bounded exactly as the record write is: nothing here may reach the exit status, because
+    the release's status is the run's ([record_the_run]). So every fault comes back as a
+    line, and a run whose resume could not be armed is a run that stopped and said why.
+
+    The line it returns is the release's own follow-up, and its caller prints it as well:
+    this handler's output is the only text of Cairn's the engine's view shows for a run
+    that has finished ([44 A]).
+    """
+    try:
+        return arm(context.runs_root, context.run_id).said
+    except Exception as exc:  # noqa: BLE001 — see the docstring: nothing may reach the status
+        return [f"no resume could be armed: {exc}"]
 
 
 def record_the_run(

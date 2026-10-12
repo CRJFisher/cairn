@@ -414,7 +414,7 @@ Measured by `python3 -m scripts.measure_surface`. Tokens are an estimate at 4 ch
 | ----------------------------- | -------------------------------------- | ---------: | ----: | ------------: |
 | when Cairn is named           | the skill's description                |      `211` |   `1` |          `53` |
 | when Cairn is named           | `SKILL.md`                             |    `13778` | `199` |        `3445` |
-| when a capability is selected | `capabilities/running.md`, the largest |    `12338` | `183` |        `3085` |
+| when a capability is selected | `capabilities/running.md`, the largest |    `13274` | `199` |        `3319` |
 
 **None of it is read unless asked for.** Cairn declares `disable-model-invocation: true`, so
 its description stays out of a session's context until someone types `/cairn` — a session

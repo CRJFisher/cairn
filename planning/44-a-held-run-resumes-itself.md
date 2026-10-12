@@ -6,7 +6,8 @@ the allowance reopens, not when the person next looks. [38](38-subscription-head
 this unbuilt: _the scheduler's own resume at the reported moment is not built: a `quota_held`
 run carries `await_allowance` and the recovery command, and a person or a schedule runs it._
 
-**Status: proposed.** This would have prevented the stall in run
+**Status: done.** Sections A, B, C and D are all built (`cairn/resume.py`, `cairn run
+resume-at`, `resume` in the run record). This would have prevented the stall in run
 `20261009T224737Z-151a689d`.
 
 **Serves** Run, Schedule and Report.

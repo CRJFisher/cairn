@@ -29,9 +29,15 @@ from typing import Any, Union, cast, get_args, get_origin, get_type_hints
 
 from cairn.core import CairnError, write_json
 from cairn.headroom import current_account
-from cairn.layout import RECORD_FILE, holds_directory, record_path, reports_directory
+from cairn.layout import (
+    RECORD_FILE,
+    holds_directory,
+    record_path,
+    reports_directory,
+    resume_path,
+)
 from cairn.record.engine import RUN_STATUS, TRIGGER_TYPE, find_attempts
-from cairn.record.extract import extract, read_holds, read_reports
+from cairn.record.extract import extract, read_holds, read_reports, read_resume
 from cairn.record.model import RunRecord
 from cairn.record.vocabulary import (
     ATTENTION_ORDER,
@@ -88,6 +94,10 @@ def build_run_record(
     The account the provider is logged in to is read here, once per record built. It is
     about this machine now rather than about the run, and it decides one thing: whether a
     hold the run took is still a precondition on running the recovery ([43 B]).
+
+    The resume a held run armed for itself is read here for the same reason the holds are:
+    it changes while nothing in the run does, so it is read at the moment the record is
+    built rather than frozen into the one the release wrote ([resume.py]).
     """
     attempts = find_attempts(records, run_id)
     found = read_reports(reports_directory(runs_root, run_id), run_id)
@@ -103,6 +113,7 @@ def build_run_record(
         holds=read_holds(holds_directory(runs_root, run_id), run_id),
         integrity=found.integrity,
         account_in_use=current_account(),
+        resume=read_resume(resume_path(runs_root, run_id), run_id),
     )
 
 

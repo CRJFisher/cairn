@@ -53,6 +53,7 @@ from cairn.record.model import (
     Integrity,
     Lineage,
     NextAction,
+    PendingResume,
     Remedy,
     RunRecord,
     StepRecord,
@@ -68,6 +69,7 @@ from cairn.record.vocabulary import (
     ATTENTION_FOLLOW_UP,
     ATTENTION_HOUSEKEEPING_FAILURE,
     ATTENTION_INTEGRITY,
+    ATTENTION_RESUME_REFUSED,
     ATTRIBUTION_CAIRN,
     ATTRIBUTION_PARENT_RUN,
     ATTRIBUTION_RETRY_SCANNER,
@@ -107,6 +109,8 @@ from cairn.record.vocabulary import (
     PROVENANCE_ABSENT,
     PROVENANCE_DERIVED,
     RECORD_VERSION,
+    RESUME_REFUSED,
+    RESUME_STATES,
     VERDICT_ALL_NO_OP,
     VERDICT_BLOCKED,
     VERDICT_EXIT_CODES,
@@ -290,6 +294,41 @@ def read_holds(directory: Path, run_id: str) -> dict[str, dict[str, Any]]:
         if isinstance(raw, dict) and cast(dict[str, Any], raw).get("run_id") == run_id:
             found[path.stem] = cast(dict[str, Any], raw)
     return found
+
+
+def read_resume(path: Path, run_id: str) -> PendingResume | None:
+    """The resume this run armed for itself, or None where there is none to read.
+
+    Read here beside the holds, and validated to the shape the model declares before it is
+    handed back: a record carrying half a resume would show a run as resuming on evidence
+    nothing wrote. A file naming another run is another run's, whatever directory it is in.
+    """
+    try:
+        raw: Any = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    found = cast(dict[str, Any], raw)
+    if found.get("run_id") != run_id or found.get("state") not in RESUME_STATES:
+        return None
+    if not isinstance(found.get("command"), str) or not isinstance(found.get("written_at"), str):
+        return None
+    pid = found.get("pid")
+    if isinstance(pid, bool) or not isinstance(pid, int):
+        return None
+    return PendingResume(
+        run_id=run_id,
+        state=cast(str, found["state"]),
+        at=_reported_text(found.get("at")),
+        window=_reported_text(found.get("window")),
+        account=_allowance_account(found.get("account")),
+        command=flatten(cast(str, found["command"]), limit=LINE_LIMIT),
+        pid=pid,
+        reason=_reported_text(found.get("reason")),
+        started_run=_reported_text(found.get("started_run")),
+        written_at=cast(str, found["written_at"]),
+    )
 
 
 def _fraction(value: object) -> float | None:
@@ -835,6 +874,7 @@ def derive_attention(
     waves: list[WaveCensus],
     order: list[str],
     integrity: Sequence[Integrity],
+    resume: PendingResume | None = None,
 ) -> list[Attention]:
     """Everything a reader has to act on, assembled in the frozen order rather than sorted into it.
 
@@ -867,6 +907,18 @@ def derive_attention(
                 subject=refusal["subject"],
                 summary=refusal["detail"],
                 cause=refusal["fault"],
+            )
+        )
+    # The run armed a resume and the resume will not happen. One item, never a loop: the
+    # waiter has already stopped, and what it names is the one thing a person can clear to
+    # put the queue back in motion ([44 B]).
+    if resume is not None and resume["state"] == RESUME_REFUSED:
+        items.append(
+            Attention(
+                kind=ATTENTION_RESUME_REFUSED,
+                subject=resume["run_id"],
+                summary=resume["reason"] or "the resume this run armed started nothing",
+                cause=None,
             )
         )
     for step_id in order:
@@ -1609,6 +1661,7 @@ def extract(
     holds: dict[str, dict[str, Any]] | None = None,
     integrity: Sequence[Integrity] = (),
     account_in_use: AllowanceAccount | None = None,
+    resume: PendingResume | None = None,
 ) -> RunRecord:
     """One run's whole record, from the engine's last snapshot and this run's own reports.
 
@@ -1619,7 +1672,8 @@ def extract(
     reading of the reports already refused ([read_reports]); everything this derivation
     refuses is added to it. `account_in_use` is which account the provider is logged in to
     where the record is being built — about this machine now, like `owner_alive`, and
-    carried in rather than read here for the reason a derivation reads nothing.
+    carried in rather than read here for the reason a derivation reads nothing. `resume` is
+    the waiter this run armed for itself when it stopped at the allowance ([read_resume]).
     """
     record = status_record if status_record is not None else {}
     refused: list[Integrity] = list(integrity)
@@ -1713,9 +1767,10 @@ def extract(
         waves,
         engine_status_readable=reading.why is None,
     )
-    attention = derive_attention(steps, infrastructure, waves, order, refused)
+    attention = derive_attention(steps, infrastructure, waves, order, refused, resume)
 
     fields: dict[str, object] = {
+        "resume": resume,
         "plan": plan,
         "graph_sha256": engine.text(lock_detail.get("graph_sha256")),
         "attempt_id": engine.text(record.get("attemptId")),

@@ -332,6 +332,29 @@ class NextAction(TypedDict):
     command: str | None
 
 
+class PendingResume(TypedDict):
+    """The one resume armed for a run that stopped at the allowance, and what became of it.
+
+    Written by the waiter itself ([cairn/resume.py]) and read back into the record, so a run
+    that ends `await_allowance` reads as resuming at a stated moment rather than as failed
+    and idle. `pid` is the waiter's own, which is what makes it callable off.
+
+    `reason` carries the whole of a refusal: a waiter that will start nothing says why here,
+    and that sentence is the attention item the run leaves behind.
+    """
+
+    run_id: str
+    state: str
+    at: str | None
+    window: str | None
+    account: AllowanceAccount | None
+    command: str
+    pid: int
+    reason: str | None
+    started_run: str | None
+    written_at: str
+
+
 class RunRecord(TypedDict):
     """What happened in one run. Presentation-free, and the only thing a surface reads."""
 
@@ -379,6 +402,10 @@ class RunRecord(TypedDict):
     integrity: list[Integrity]
     git: GitFacts
     next_action: NextAction
+    # The resume this run armed for itself when it stopped at the allowance, read from the
+    # waiter's own file at the moment the record is built — so a run reads as resuming at a
+    # stated moment, or as having refused to, rather than as failed and idle ([44 A]).
+    resume: PendingResume | None
     provenance: dict[str, str]
 
 
@@ -399,6 +426,7 @@ __all__ = [
     "Integrity",
     "Lineage",
     "NextAction",
+    "PendingResume",
     "Remedy",
     "RunRecord",
     "StepRecord",

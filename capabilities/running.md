@@ -109,6 +109,22 @@ There is no separate resume mode and no repair command (I4). A step already done
 a cheap no-op because its marker is committed alongside the work it describes, so recovering
 a run is an ordinary start carrying the occasion it continues. Never `dagu retry`.
 
+## A run held at the allowance resumes itself
+
+A run that stops at the subscription's allowance arms one resume for itself as it ends: a
+detached process that sleeps until the moment the run recorded, measures the window, and
+then runs the very recovery command the record carries. Nobody has to be there, and no
+scheduler is started.
+
+So when a report's next action is `await_allowance`, read the run's `resume` before offering
+the recovery command: a run that is `waiting` needs nothing from the person, and saying so is
+the answer. A `refused` resume names what a person has to clear first — most often a dirty
+tree — and the recovery is theirs to run once they have.
+
+Starting any run against the repository stands down a resume still waiting on it, and
+`python3 -m cairn run resume-at --run <run-id> --repository <path> --cancel` calls one off
+outright. Both are the person's decision; neither is something to do on their behalf.
+
 ## Refusals
 
 **Before anything is written**, so leaving the repository as it was: a malformed run id, an

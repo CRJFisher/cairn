@@ -114,10 +114,10 @@ in the record, so the causes are named there and quoted here.
 
 ## What needs a person's attention
 
-Seven kinds, in one fixed order, highest concern first:
+Eight kinds, in one fixed order, highest concern first:
 
-`blocked`, `integrity`, `failure`, `excluded`, `housekeeping_failure`, `divergence`,
-`follow_up`.
+`blocked`, `integrity`, `resume_refused`, `failure`, `excluded`, `housekeeping_failure`,
+`divergence`, `follow_up`.
 
 Naming the order here is what makes every renderer conform to one definition rather than
 inventing a subset. It is deliberately **not** the verdict's order: a block outranks a
@@ -125,6 +125,12 @@ failure for a reader, because a person can act on it now, and an `integrity` ite
 every line below it because those lines were read off the same evidence — a reader who does
 not know a report was refused cannot tell which of the facts beneath it are missing rather
 than absent.
+
+A `resume_refused` item is the resume a held run armed for itself saying it will start
+nothing, and its summary is the reason — a dirty tree, a repository another run holds, a
+workflow re-authored since. It sits above the failure that caused it because it is the one
+item in the list a person can clear right now to put the queue back in motion
+([supervision.md](supervision.md)).
 
 A `failure` item is one step, in dependency order — except the steps a halt left behind,
 which come as **one** item: its subject is the first of them, its summary names the step
@@ -312,7 +318,7 @@ Declared in `cairn/record/model.py`. The run carries `record_version`, `run_id`,
 `engine_run_status_name`, `engine_contradicted`, `owner_alive`, `verdict`, `exit_code`,
 `view_url`, `started_at`, `finished_at`, `allowance`, `accounts`, `account_in_use`,
 `trigger`, `lineage`, `steps`, `infrastructure`, `nodes`, `edges`, `waves`, `attention`,
-`integrity`, `git`, `next_action` and `provenance`.
+`integrity`, `git`, `next_action`, `resume` and `provenance`.
 
 `integrity` is every piece of this run's own evidence the record refused, and is empty on a
 run whose evidence is whole.
@@ -329,6 +335,14 @@ credential switch. `account_in_use` is which account Claude Code is logged in to
 record was built: a fact about this machine now rather than about the run, like
 `owner_alive`, and `derived` rather than recorded. Neither carries the email address an
 account signs in with, and nothing Cairn writes does.
+
+`resume` is the one resume a run armed for itself when it stopped at the allowance, read
+from the waiter's own file at the moment the record is built — so it changes while nothing
+in the run does, like the holds a running step announces. It carries the waiter's `state`
+(`waiting`, `starting`, `started`, `refused` or `superseded`), the moment the run recorded
+the window as reopening, that window, the account it was held on, the command the waiter
+runs, the waiter's `pid`, the `reason` a refusal gives, and the run it started. It is absent
+for every run that armed none ([supervision.md](supervision.md)).
 
 `view_url` is where the engine's own view serves this run — the same address live and cold,
 which is what makes a finished run readable from the surface that showed it running

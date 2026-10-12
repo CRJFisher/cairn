@@ -12,7 +12,7 @@ Two structures — an enumeration and a separate ranking — drift.
 
 from __future__ import annotations
 
-RECORD_VERSION = 8
+RECORD_VERSION = 9
 
 # --- the run verdict -----------------------------------------------------------------
 #
@@ -73,6 +73,10 @@ OVERLAYS: tuple[str, ...] = (OVERLAY_BLOCKED, OVERLAY_DIVERGENCE, OVERLAY_UNVERI
 # damaged evidence outranks every line below it because those lines were read off it.
 ATTENTION_BLOCKED = "blocked"
 ATTENTION_INTEGRITY = "integrity"
+# A run that stopped at the allowance armed its own resume and the resume will not happen.
+# It sits above the failure that caused it because it is the one item here a person can
+# clear right now to put the queue back in motion ([44 B]).
+ATTENTION_RESUME_REFUSED = "resume_refused"
 ATTENTION_FAILURE = "failure"
 ATTENTION_EXCLUDED = "excluded"
 ATTENTION_HOUSEKEEPING_FAILURE = "housekeeping_failure"
@@ -81,6 +85,7 @@ ATTENTION_FOLLOW_UP = "follow_up"
 ATTENTION_ORDER: tuple[str, ...] = (
     ATTENTION_BLOCKED,
     ATTENTION_INTEGRITY,
+    ATTENTION_RESUME_REFUSED,
     ATTENTION_FAILURE,
     ATTENTION_EXCLUDED,
     ATTENTION_HOUSEKEEPING_FAILURE,
@@ -202,6 +207,25 @@ NEXT_ALLOWANCE_ELSEWHERE = "allowance_elsewhere"
 NEXT_START_SCHEDULER = "start_scheduler"
 NEXT_WAIT = "wait"
 NEXT_NOTHING = "nothing"
+# --- the one resume a held run arms for itself ----------------------------------------
+#
+# What the waiter is doing, in the words the record carries. `starting` is a state of its
+# own rather than a moment inside `waiting`: a run started against the repository supersedes
+# a resume that is still waiting, and must leave alone one that is already launching the
+# recovery it would otherwise supersede ([44 D]).
+RESUME_WAITING = "waiting"
+RESUME_STARTING = "starting"
+RESUME_STARTED = "started"
+RESUME_REFUSED = "refused"
+RESUME_SUPERSEDED = "superseded"
+RESUME_STATES: tuple[str, ...] = (
+    RESUME_WAITING,
+    RESUME_STARTING,
+    RESUME_STARTED,
+    RESUME_REFUSED,
+    RESUME_SUPERSEDED,
+)
+
 NEXT_ACTIONS: tuple[str, ...] = (
     NEXT_DECIDE,
     NEXT_SETTLE_MERGE,
@@ -223,6 +247,7 @@ __all__ = [
     "ATTENTION_HOUSEKEEPING_FAILURE",
     "ATTENTION_INTEGRITY",
     "ATTENTION_ORDER",
+    "ATTENTION_RESUME_REFUSED",
     "ATTRIBUTIONS",
     "ATTRIBUTION_CAIRN",
     "ATTRIBUTION_PARENT_RUN",
@@ -278,6 +303,12 @@ __all__ = [
     "PROVENANCE_DERIVED",
     "PROVENANCE_RECORDED",
     "RECORD_VERSION",
+    "RESUME_REFUSED",
+    "RESUME_STARTED",
+    "RESUME_STARTING",
+    "RESUME_STATES",
+    "RESUME_SUPERSEDED",
+    "RESUME_WAITING",
     "STEP_OUTCOMES",
     "VERDICT_ALL_NO_OP",
     "VERDICT_BLOCKED",

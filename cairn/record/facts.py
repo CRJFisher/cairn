@@ -19,6 +19,7 @@ from cairn.record.model import (
     AllowanceHold,
     AllowanceWindow,
     Headroom,
+    PendingResume,
     RunRecord,
     Where,
 )
@@ -95,6 +96,29 @@ def _hold(hold: AllowanceHold) -> str:
         f"{held_on} from {hold['started'] or 'an unrecorded time'} "
         f"until {hold['until'] or 'an unrecorded time'}: {hold['why'] or 'no reason recorded'}"
     )
+
+
+def _resume(resume: PendingResume | None) -> list[tuple[str, str]]:
+    """The resume a held run armed for itself, as the facts a rendering may state.
+
+    Always these five keys, present or not, because a run-level key that appeared only for
+    the runs that have one would leave every other run's projection a different shape.
+    """
+    if resume is None:
+        return [
+            ("run.resume", ABSENT),
+            ("run.resume_at", ABSENT),
+            ("run.resume_window", ABSENT),
+            ("run.resume_reason", ABSENT),
+            ("run.resume_run", ABSENT),
+        ]
+    return [
+        ("run.resume", _value(resume["state"])),
+        ("run.resume_at", _value(resume["at"])),
+        ("run.resume_window", _value(resume["window"])),
+        ("run.resume_reason", _value(resume["reason"])),
+        ("run.resume_run", _value(resume["started_run"])),
+    ]
 
 
 def _where(where: Where | None) -> str:
@@ -187,6 +211,7 @@ def canonical_facts(record: RunRecord) -> list[tuple[str, str]]:
         ("run.allowance", _windows(record["allowance"])),
         ("run.accounts", _accounts(record["accounts"])),
         ("run.account_in_use", _account(record["account_in_use"])),
+        *_resume(record["resume"]),
         ("git.repository", _value(record["git"]["repository"])),
         ("git.parent_branch", _value(record["git"]["parent_branch"])),
         ("git.commits", _list(record["git"]["commits"])),

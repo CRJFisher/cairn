@@ -29,6 +29,7 @@ from cairn.gitio import (
 from cairn.headroom import endpoint_enabled
 from cairn.plan.schema import SchemaError
 from cairn.plan.validate import validate_for_publication
+from cairn.resume import notify_command
 from cairn.topology import TopologyError, derive
 from cairn.workflow.build import build, graph_digest
 from cairn.workflow.gate import EngineUnavailable, gate
@@ -117,6 +118,7 @@ def _author(args: argparse.Namespace) -> int:
         runs_root=str(runs_root(repository)),
         schedule=args.schedule,
         usage_endpoint=endpoint_enabled(),
+        notify_command=notify_command(),
     )
 
     target = Path(args.out) if args.out else workflow_path(repository, graph["plan"]["slug"])

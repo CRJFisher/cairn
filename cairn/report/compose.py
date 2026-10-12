@@ -271,6 +271,46 @@ def _verdict(record: RunRecord) -> list[Block]:
     return blocks
 
 
+def _resume(record: RunRecord) -> list[Block]:
+    """The resume a held run armed for itself, said beside what to do now.
+
+    It belongs here rather than above the fold because it is the answer to the same question
+    the next action answers: a reader told to re-run once the window reopens needs to know
+    that something is already waiting to do exactly that ([44 A]).
+    """
+    resume = record["resume"]
+    if resume is None:
+        return []
+    blocks: list[Block] = [
+        Statement(
+            "statement",
+            (
+                Chrome("This run armed one resume for itself. It is"),
+                Fact(("run.resume",)),
+                Chrome(", on"),
+                Fact(("run.resume_window",)),
+                Chrome(", which the run recorded as reopening"),
+                Fact(("run.resume_at",)),
+                Chrome("."),
+            ),
+        )
+    ]
+    if resume["reason"] is not None:
+        blocks.append(
+            Statement(
+                "statement", (Fact(("run.resume_reason",)), Chrome("."))
+            )
+        )
+    if resume["started_run"] is not None:
+        blocks.append(
+            Statement(
+                "statement",
+                (Chrome("The run it started is"), Fact(("run.resume_run",)), Chrome(".")),
+            )
+        )
+    return blocks
+
+
 def _next_action(record: RunRecord) -> list[Block]:
     """What to do now, from the record's own derivation rather than from prose."""
     action = record["next_action"]
@@ -348,6 +388,7 @@ def _next_action(record: RunRecord) -> list[Block]:
                     )
                 )
         blocks.extend(_assertion_output(subject, "its assertion"))
+    blocks.extend(_resume(record))
     if action["command"] is not None:
         blocks.append(Verbatim("verbatim", None, Fact(("run.next_command",))))
     # The action's own frozen word, beside the sentence that phrases it. Automation reads

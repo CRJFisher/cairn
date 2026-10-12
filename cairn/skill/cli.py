@@ -5,8 +5,11 @@ these run outside any run: they resolve no runtime identity and leave no step re
 are an implementation surface for the skill, not a user interface — a person asks for what
 they want and never learns one of these lines.
 
-`run` has one verb, `start`: a request to run is the go-ahead, so it gates the definition,
-begins the run and hands back the run's id and where it can be watched. `explain` has four
+`run` has two verbs. `start` is the request to run: it is the go-ahead, so it gates the
+definition, begins the run and hands back the run's id and where it can be watched.
+`resume-at` is the waiting half of the same act — the body a held run's release detaches to
+start its own recovery when the allowance reopens, and the way a person calls that off
+([cairn/resume.py]). `explain` has four
 verbs, one per question it answers, and none of them starts, locks or writes anything.
 `view` has two, `status` and `start`, and they are about the address a run is watched at
 rather than about any run: a run is neither started, waited on nor changed by either
@@ -35,6 +38,8 @@ from cairn.layout import RECORD_FILE, check_run_id
 from cairn.locks import refuse_dirty_repository, refuse_unresolved_merge
 from cairn.marker import mint_occasion
 from cairn.record.store import build_run_record
+from cairn.record.vocabulary import RESUME_REFUSED, RESUME_STARTED
+from cairn.resume import Waiter, cancel, supersede
 from cairn.skill.explain import explainable, meaning, why_excluded, would_do
 from cairn.skill.resolve import (
     OccasionDecision,
@@ -299,12 +304,56 @@ def _cmd_start(args: argparse.Namespace) -> int:
     # The one line that claims the run started, printed only where the engine's own records
     # hold it: registration is the fact `started` names ([29 E]).
     print(f"started  {where.run_id} — the engine has taken the run on")
+    # A resume exists to start a run nobody is there to start, and this is a run somebody
+    # started. Said after registration rather than before it, so a start that the engine
+    # declined leaves the waiting resume waiting ([44 D]).
+    for superseded in supersede(runs_root(repository), started_by=where.run_id):
+        print(f"resume   the resume pending for {superseded} stands down")
     if args.wait:
         print(
             f"engine   exited {started.exit_code}; the verdict is the record's, not this "
             "status"
         )
     return EXIT_OK
+
+
+def _cmd_resume_at(args: argparse.Namespace) -> int:
+    """Wait out the window this run was held on and start its recovery, or call that off.
+
+    This is the body the release detaches ([cairn/resume.py]), and it is the one command in
+    Cairn that is expected to run for hours: it sleeps to the moment the run recorded,
+    measures the allowance, and starts nothing until a measurement admits. A refusal is an
+    outcome rather than a fault of this command — it is recorded on the run either way — and
+    it leaves on a nonzero status so a person who ran this by hand is told.
+    """
+    repository = _resolved(args).repository
+    root = runs_root(repository)
+    run_id = str(args.run)
+    try:
+        check_run_id(run_id)
+    except ValueError as malformed:
+        print(f"refused  {run_id!r} is not a run id: {malformed}", file=sys.stderr)
+        return EXIT_REFUSED
+    if args.cancel:
+        print(f"resume   {cancel(root, run_id)}")
+        return EXIT_OK
+    pending = Waiter(run_id, repository=repository, runs_root=root).run()
+    if pending is None:
+        print(
+            f"resume   run {run_id} did not stop at the allowance with a moment to wait "
+            "for, so there is nothing to resume"
+        )
+        return EXIT_OK
+    print(f"resume   {pending['state']} — {pending['reason'] or 'as recorded on the run'}")
+    if pending["at"] is not None:
+        print(f"window   {pending['window'] or 'the allowance'}, reopening {pending['at']}")
+    if pending["started_run"] is not None:
+        # Never `started` where the start was refused: an affirmative claim about a run that
+        # did not begin is a line automation and an incident log keep forever ([29 E]).
+        label = "started" if pending["state"] == RESUME_STARTED else "tried"
+        print(f"{label:<8} {pending['started_run']}")
+    print(f"read     python3 -m cairn report --run {run_id} --repository {repository}")
+    return EXIT_REFUSED if pending["state"] == RESUME_REFUSED else EXIT_OK
 
 
 def _cmd_explain_repository(args: argparse.Namespace) -> int:
@@ -467,6 +516,14 @@ def _run_parser() -> argparse.ArgumentParser:
     # ([19 B]). `--wait` is for a caller that wants the engine's exit status in line and has
     # no timeout of its own.
     child.add_argument("--wait", action="store_true")
+
+    # The waiting half of a start, and never a second way to begin a run: it runs the
+    # recovery command the named run's own record carries, and composes none of its own
+    # ([cairn/resume.py]).
+    child = verbs.add_parser("resume-at")
+    child.add_argument("--run", required=True)
+    _repository_arguments(child)
+    child.add_argument("--cancel", action="store_true")
     return parser
 
 
@@ -509,8 +566,9 @@ def _view_parser() -> argparse.ArgumentParser:
 
 def run_main(argv: list[str]) -> int:
     args = _run_parser().parse_args(argv)
+    handlers = {"start": _cmd_start, "resume-at": _cmd_resume_at}
     try:
-        return _cmd_start(args)
+        return handlers[str(args.verb)](args)
     except CairnError as refused:
         print(f"refused  {refused}", file=sys.stderr)
         return EXIT_REFUSED

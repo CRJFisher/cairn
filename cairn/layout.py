@@ -31,6 +31,10 @@ RUNS_ROOT_ENV = "CAIRN_RUNS_DIR"
 # a workflow is generated and carried into its `env:` block the same way, because a step's
 # environment is the engine's curated one and not the shell the owner set it in.
 HEADROOM_ENDPOINT_ENV = "CAIRN_HEADROOM_USAGE_ENDPOINT"
+# The command the owner is told the two facts through — the run stopping, and the run
+# resuming ([resume.py]). It travels the same way and for the same reason: the release is
+# where a held run says it stopped, and the engine hands it a curated environment.
+NOTIFY_COMMAND_ENV = "CAIRN_NOTIFY_COMMAND"
 
 RUNS_DIRECTORY = "runs"
 REPORTS_DIRECTORY = "reports"
@@ -60,6 +64,13 @@ HEADROOM_DIRECTORY = ".headroom"
 # Where a step announces that it is holding at the allowance, while it holds. A step's report
 # is written only when it ends, so a held run would otherwise read as stalled.
 HOLDS_DIRECTORY = "holds"
+# The one resume a run armed for itself when it stopped at the allowance, and what became of
+# it ([cairn/resume.py]). Beside the record rather than under the reports: it is written
+# after every step has ended, by a process that is not a step.
+RESUME_FILE = "resume.json"
+# Everything that waiter says, kept per run the way the engine's own start log is: a
+# detached process has nowhere else to say why it refused.
+RESUME_LOG_FILE = "resume.log"
 
 # A run id reaches Cairn from `dagu start --run-id`, where a caller chooses it, and it is
 # used here as a path segment. Anything that is not one plain segment is refused rather
@@ -231,6 +242,14 @@ def holds_directory(runs_root: Path, run_id: str) -> Path:
     return run_directory(runs_root, run_id) / HOLDS_DIRECTORY
 
 
+def resume_path(runs_root: Path, run_id: str) -> Path:
+    return run_directory(runs_root, run_id) / RESUME_FILE
+
+
+def resume_log_path(runs_root: Path, run_id: str) -> Path:
+    return run_directory(runs_root, run_id) / RESUME_LOG_FILE
+
+
 __all__ = [
     "ASSERTIONS_DIRECTORY",
     "ENGINE_HOST_ENV",
@@ -241,9 +260,12 @@ __all__ = [
     "HOLDS_DIRECTORY",
     "MARKER_DIRECTORY",
     "MARKER_SUFFIX",
+    "NOTIFY_COMMAND_ENV",
     "OCCASION_FILE",
     "RECORD_FILE",
     "REPORTS_DIRECTORY",
+    "RESUME_FILE",
+    "RESUME_LOG_FILE",
     "RUNS_DIRECTORY",
     "RUNS_ROOT_ENV",
     "RUN_ID",
@@ -261,6 +283,8 @@ __all__ = [
     "occasion_path",
     "record_path",
     "reports_directory",
+    "resume_log_path",
+    "resume_path",
     "run_directory",
     "view_base",
     "view_health_url",

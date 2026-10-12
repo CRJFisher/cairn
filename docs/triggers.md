@@ -104,6 +104,7 @@ door.
 | Path                   | What must be running | Can vary parameters                               | Carries the retry hazard |
 | ---------------------- | -------------------- | ------------------------------------------------- | ------------------------ |
 | Skill-started run      | nothing              | the occasion and the branch, never the repository | no                       |
+| A held run's resume    | nothing              | **nothing** — it runs the record's own command    | no                       |
 | Manual trigger from UI | `dagu server`        | one editable field per param                      | no                       |
 | Cron schedule          | `dagu scheduler`     | **nothing at all**                                | **yes**                  |
 | External webhook       | `dagu scheduler`     | **nothing** — the body arrives beside them        | **yes**                  |
@@ -112,6 +113,13 @@ So a schedule or an external trigger is a deliberate, stated escalation from the
 default, never a side effect of wanting a recurring plan. Wanting the _view_ is not that
 escalation, and `cairn view start` is where that distinction is enforced: it runs `dagu
 server` and nothing else, so no path from "show me the graph" reaches the retry scanner.
+
+**A held run's own resume is not that escalation either.** A run that stops at the
+subscription's allowance arms one detached process, waiting on one moment, for one run; it
+measures the window and then runs the recovery command that run's own record carries
+([supervision.md](supervision.md)). Nothing is enqueued, so nothing has to drain a queue,
+and the one surface that reaches it — `cairn run resume-at` — starts no scheduler and
+varies no parameter. `cairn schedule` is untouched by it.
 
 ## What a caller may vary, and what is refused
 

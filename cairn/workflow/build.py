@@ -18,7 +18,7 @@ import json
 from typing import Any, cast
 
 from cairn.emitters import emit_node
-from cairn.layout import HEADROOM_ENDPOINT_ENV, RUNS_ROOT_ENV
+from cairn.layout import HEADROOM_ENDPOINT_ENV, NOTIFY_COMMAND_ENV, RUNS_ROOT_ENV
 from cairn.plan.schema import RETRY_INTERVAL, Graph, Step
 from cairn.topology import WORKTREES_SUFFIX, Topology
 from cairn.workflow.schema import (
@@ -112,6 +112,7 @@ def envelope(
     handler: EngineStep | None = None,
     schedule: str | None = None,
     usage_endpoint: bool = False,
+    notify_command: str | None = None,
 ) -> Workflow:
     """The file around a set of steps, with every machine-level default written out.
 
@@ -125,7 +126,9 @@ def envelope(
     wanting a recurring plan.
 
     `usage_endpoint` carries the owner's opt-in to the subscription's usage endpoint into the
-    steps, which the engine would otherwise never hand them ([headroom.py]).
+    steps, which the engine would otherwise never hand them ([headroom.py]). `notify_command`
+    travels for the same reason: the release is where a held run says it stopped, and the
+    command the owner is told through would not otherwise reach it ([resume.py]).
     """
     # Placed straight after `type` so a person opening the file reads what it is and when it
     # runs before anything else. The expression is the engine's to judge: measured, `dagu
@@ -163,6 +166,7 @@ def envelope(
             {PYTHONPATH_ENV: python_path},
             {RUNS_ROOT_ENV: runs_root},
             *([{HEADROOM_ENDPOINT_ENV: "1"}] if usage_endpoint else []),
+            *([{NOTIFY_COMMAND_ENV: notify_command}] if notify_command else []),
         ],
         # The release is a lifecycle handler rather than a node: the engine never dispatches
         # a step whose dependency failed, so a failed run would otherwise hold its
@@ -182,6 +186,7 @@ def build(
     runs_root: str,
     schedule: str | None = None,
     usage_endpoint: bool = False,
+    notify_command: str | None = None,
 ) -> Workflow:
     """Assemble the whole file: graph → topology → bodies → a validated definition."""
     steps: dict[str, Step] = {step["id"]: step for step in graph["steps"]}
@@ -212,6 +217,7 @@ def build(
         handler=release,
         schedule=schedule,
         usage_endpoint=usage_endpoint,
+        notify_command=notify_command,
     )
     document["labels"] = _stamp_labels(graph, document)
     return document

@@ -24,6 +24,7 @@ from cairn.record.vocabulary import (
     ATTENTION_HOUSEKEEPING_FAILURE,
     ATTENTION_INTEGRITY,
     ATTENTION_ORDER,
+    ATTENTION_RESUME_REFUSED,
     ATTRIBUTION_CAIRN,
     ATTRIBUTION_PARENT_RUN,
     ATTRIBUTION_RETRY_SCANNER,
@@ -170,6 +171,7 @@ SENTENCE_BY_ACTION: dict[str, str] = {
 LABEL_BY_ATTENTION: dict[str, str] = {
     ATTENTION_BLOCKED: "Blocked on a decision",
     ATTENTION_INTEGRITY: "Evidence this report could not read",
+    ATTENTION_RESUME_REFUSED: "The resume this run armed will not happen",
     ATTENTION_FAILURE: "Failed",
     ATTENTION_EXCLUDED: "Excluded",
     ATTENTION_HOUSEKEEPING_FAILURE: "Housekeeping failed",
