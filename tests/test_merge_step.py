@@ -31,7 +31,9 @@ from cairn.merge import (
     MERGE_TASK,
     MERGEABLE,
     NOTHING_TO_MERGE,
+    UNACCOUNTED,
     UNAVAILABLE,
+    Candidate,
     MergeFacts,
     Prediction,
     changed_paths,
@@ -45,6 +47,7 @@ from cairn.merge import (
     predict,
     run_merge,
     scan_markers,
+    survey,
     unowned_conflicts,
     verify_landed,
 )
@@ -55,7 +58,7 @@ from cairn.plan.schema import (
     SUPPORT_TIMEOUT,
     normalise,
 )
-from cairn.topology import derive, merge_provider
+from cairn.topology import branch_name, derive, merge_provider, step_of_branch
 from cairn.verify import EXCLUSION_CAUSES, mark_name
 from cairn.workflow.build import envelope
 from tests.engine import require_engine
@@ -76,6 +79,15 @@ REPOSITORY = Path("/repo")
 PARENT = "main"
 
 OID = "0" * 40
+# Every branch here is the one the topology builds, so the survey reads it as a run would.
+PLAN = "fan-out"
+A = branch_name(PLAN, "a")
+B = branch_name(PLAN, "b")
+C = branch_name(PLAN, "c")
+Z = branch_name(PLAN, "z")
+THEME = branch_name(PLAN, "theme")
+KEYMAP_READER = branch_name(PLAN, "keymap_reader")
+THEME_READER = branch_name(PLAN, "theme_reader")
 NODE_STATUS = re.compile(r"^[├└│─ ]+([a-z_0-9]+)(?: \([^)]*\))? \[(\w+)\]", re.MULTILINE)
 
 
@@ -112,22 +124,22 @@ def prediction(left: str, right: str, *paths: str) -> Prediction:
 
 class TheMergePrompt(unittest.TestCase):
     def test_the_prompt_names_the_branch_it_lands_and_the_branch_it_lands_on(self) -> None:
-        text = merge_prompt("step/theme", "main", ["a.txt"])
-        self.assertIn("step/theme", text)
+        text = merge_prompt(THEME, "main", ["a.txt"])
+        self.assertIn(THEME, text)
         self.assertIn("main", text)
         self.assertIn("a.txt", text)
 
     def test_the_prompt_asks_for_both_sides_intent_rather_than_a_winner(self) -> None:
-        text = merge_prompt("step/a", "main", ["a.txt"])
+        text = merge_prompt(A, "main", ["a.txt"])
         self.assertIn("both sides", text)
         self.assertIn("Never resolve a conflict by taking one side wholesale", text)
 
     def test_the_prompt_asks_for_every_marker_stripped(self) -> None:
-        self.assertIn("Leave no conflict marker anywhere", merge_prompt("step/a", "main", []))
+        self.assertIn("Leave no conflict marker anywhere", merge_prompt(A, "main", []))
 
     def test_the_prompt_forbids_the_abort_that_would_not_converge(self) -> None:
         """An abort leaves the branch unmerged, so the next run stops in the same place."""
-        text = merge_prompt("step/a", "main", [])
+        text = merge_prompt(A, "main", [])
         self.assertIn("git merge --abort", text)
         self.assertIn("the next run stops in the same place", text)
 
@@ -155,7 +167,7 @@ class TheMergePrompt(unittest.TestCase):
 
     def test_the_prediction_is_never_handed_to_the_agent(self) -> None:
         """It would invite trusting the prediction over the tree, which the proof catches."""
-        text = merge_prompt("step/a", "main", ["a.txt"])
+        text = merge_prompt(A, "main", ["a.txt"])
         for word in ("merge-tree", "predict", "predicted"):
             self.assertNotIn(word, text)
 
@@ -170,8 +182,8 @@ class TheChainTheTopologyEmits(unittest.TestCase):
         graph = fixture("fan-out")
         body = emitted(topology("fan-out"), "merge_w2_1", graph)["run"]
         self.assertIn("merge land --slot 1", body)
-        self.assertIn("--branch step/fan-out/keymap_reader", body)
-        self.assertIn("--branch step/fan-out/theme_reader", body)
+        self.assertIn(f"--branch {KEYMAP_READER}", body)
+        self.assertIn(f"--branch {THEME_READER}", body)
         # The branch it lands into is a parameter, so it reaches the slot through the
         # environment rather than through a body that would name one repository.
         self.assertNotIn("--into", body)
@@ -291,35 +303,35 @@ class ThePredictionHasThreeAnswers(unittest.TestCase):
 class ThePredictionOrdersTheChain(unittest.TestCase):
     def test_the_heaviest_overlap_lands_last(self) -> None:
         order = landing_order(
-            ["step/a", "step/b", "step/c"],
+            [A, B, C],
             [
-                prediction("step/a", "step/b", "f.txt", "g.txt"),
-                prediction("step/a", "step/c"),
-                prediction("step/b", "step/c"),
+                prediction(A, B, "f.txt", "g.txt"),
+                prediction(A, C),
+                prediction(B, C),
             ],
         )
-        self.assertEqual(order[-1], "step/b")
-        self.assertEqual(order[0], "step/c")
+        self.assertEqual(order[-1], B)
+        self.assertEqual(order[0], C)
 
     def test_a_conflict_git_named_no_file_for_still_outweighs_a_clean_pair(self) -> None:
         """An empty conflicted-file list is not a clean merge, so it cannot sort as one."""
-        nameless = Prediction("step/a", "step/b", CONFLICTED, (), "")
-        order = landing_order(["step/a", "step/c"], [nameless, prediction("step/a", "step/c")])
-        self.assertEqual(order, ["step/c", "step/a"])
+        nameless = Prediction(A, B, CONFLICTED, (), "")
+        order = landing_order([A, C], [nameless, prediction(A, C)])
+        self.assertEqual(order, [C, A])
 
     def test_an_unadvised_wave_still_lands_in_a_settled_order(self) -> None:
         """Two runs of one plan must be comparable, so no order is ever arbitrary."""
-        self.assertEqual(landing_order(["step/b", "step/a"], []), ["step/a", "step/b"])
+        self.assertEqual(landing_order([B, A], []), [A, B])
 
     def test_a_predicted_conflict_no_step_of_the_wave_changes_is_a_plan_defect(self) -> None:
         unowned = unowned_conflicts(
-            [prediction("step/a", "step/b", "f.txt", "vendor/lib.js")], ["f.txt"]
+            [prediction(A, B, "f.txt", "vendor/lib.js")], ["f.txt"]
         )
         self.assertEqual(unowned, ["vendor/lib.js"])
 
     def test_an_unavailable_prediction_names_nothing_as_unowned(self) -> None:
         """Advice git could not give never refuses a merge."""
-        absent = Prediction("step/a", "step/b", UNAVAILABLE, (), "boom")
+        absent = Prediction(A, B, UNAVAILABLE, (), "boom")
         self.assertEqual(unowned_conflicts([absent], []), [])
 
 
@@ -331,7 +343,7 @@ class ThePredictionOrdersTheChain(unittest.TestCase):
 def facts(**overrides: Any) -> MergeFacts:
     base: dict[str, Any] = {
         "into": "main",
-        "landed": "step/a",
+        "landed": A,
         "before": "aaa",
         "after": "bbb",
         "ancestor": True,
@@ -432,24 +444,33 @@ class TheMarkerScanReadsMarkersAndNotProse(unittest.TestCase):
 
 class AnExcludedBranchIsNamed(unittest.TestCase):
     def test_a_branch_with_work_is_available_to_land(self) -> None:
-        candidate = classify_candidate("step/a", "a", True, True, None, "")
+        candidate = classify_candidate(A, "a", True, True, None, "", True)
         self.assertEqual(candidate.disposition, MERGEABLE)
 
     def test_a_branch_that_was_never_created_never_ran(self) -> None:
-        candidate = classify_candidate("step/a", "a", False, False, None, "")
+        candidate = classify_candidate(A, "a", False, False, None, "", False)
         self.assertEqual(candidate.disposition, EXCLUDED)
         self.assertEqual(candidate.cause, "not_reached")
 
     def test_a_branch_whose_gate_closed_carries_the_gates_own_cause(self) -> None:
-        candidate = classify_candidate("step/a", "a", True, False, "verify_failed", "it failed")
+        candidate = classify_candidate(A, "a", True, False, "verify_failed", "it failed", True)
         self.assertEqual(candidate.disposition, EXCLUDED)
         self.assertEqual(candidate.cause, "verify_failed")
 
     def test_a_branch_already_contained_in_the_parent_is_not_an_exclusion(self) -> None:
         """Work that landed on an earlier run is a no-op, not a step that contributed nothing."""
-        candidate = classify_candidate("step/a", "a", True, False, None, "")
+        candidate = classify_candidate(A, "a", True, False, None, "", True)
         self.assertEqual(candidate.disposition, NOTHING_TO_MERGE)
         self.assertIsNone(candidate.cause)
+
+    def test_a_branch_with_work_and_no_gate_report_is_unaccounted_rather_than_unreached(
+        self,
+    ) -> None:
+        """Work on the branch says the step ran, so a missing report cannot mean it did not."""
+        candidate = classify_candidate(A, "a", True, True, "not_reached", "", False)
+        self.assertEqual(candidate.disposition, UNACCOUNTED)
+        self.assertEqual(candidate.cause, "gate_indeterminate")
+        self.assertIn(A, candidate.summary)
 
     def test_the_merge_mints_no_exclusion_cause_of_its_own(self) -> None:
         for cause in ("not_reached", "gate_indeterminate", "verify_failed"):
@@ -500,7 +521,9 @@ class RepositoryCase(unittest.TestCase):
         self.write(filename, body)
         self.commit(f"work on {name}")
         git(self.repository, ("checkout", "--quiet", "main"))
-        self.verified(name.split("/", 1)[-1])
+        step = step_of_branch(name)
+        assert step is not None, name
+        self.verified(step)
 
     def verified(self, step: str) -> None:
         """The report `mark_<step>` leaves when the gate opened and recorded the work."""
@@ -567,11 +590,11 @@ class TheCallersModelReachesTheResolvingSession(RepositoryCase):
     """
 
     def test_the_model_arrives_in_the_provider_call(self) -> None:
-        self.branch("step/a", "shared.txt", "one\nfrom-a\nthree\n")
-        self.branch("step/b", "shared.txt", "one\nfrom-b\nthree\n")
-        self.land(["step/a", "step/b"], slot=1, run_agent=self.recording_agent)
+        self.branch(A, "shared.txt", "one\nfrom-a\nthree\n")
+        self.branch(B, "shared.txt", "one\nfrom-b\nthree\n")
+        self.land([A, B], slot=1, run_agent=self.recording_agent)
         self.land(
-            ["step/a", "step/b"],
+            [A, B],
             slot=2,
             model="claude-haiku-4-5-20251001",
             run_agent=self.recording_agent,
@@ -581,10 +604,10 @@ class TheCallersModelReachesTheResolvingSession(RepositoryCase):
     def test_a_resolution_named_no_model_is_refused_before_a_session_opens(self) -> None:
         """There is no model of the engine's to fall back to: the plan names it, the
         definition carries it, and a blank one is a record that could not say who resolved."""
-        self.branch("step/a", "shared.txt", "one\nfrom-a\nthree\n")
-        self.branch("step/b", "shared.txt", "one\nfrom-b\nthree\n")
+        self.branch(A, "shared.txt", "one\nfrom-a\nthree\n")
+        self.branch(B, "shared.txt", "one\nfrom-b\nthree\n")
         with self.assertRaises(CairnError) as raised:
-            self.land(["step/a", "step/b"], slot=1, model="  ", run_agent=self.recording_agent)
+            self.land([A, B], slot=1, model="  ", run_agent=self.recording_agent)
         self.assertEqual(raised.exception.cause, "invalid_arguments")
         self.assertEqual(self.calls, [])
 
@@ -592,34 +615,34 @@ class TheCallersModelReachesTheResolvingSession(RepositoryCase):
 class ARealConflictLandsAndIsProven(RepositoryCase):
     def setUp(self) -> None:
         super().setUp()
-        self.branch("step/a", "shared.txt", "one\nfrom-a\nthree\n")
-        self.branch("step/b", "shared.txt", "one\nfrom-b\nthree\n")
+        self.branch(A, "shared.txt", "one\nfrom-a\nthree\n")
+        self.branch(B, "shared.txt", "one\nfrom-b\nthree\n")
 
     def test_two_steps_editing_one_region_land_and_are_proven(self) -> None:
-        first = self.land(["step/a", "step/b"])
+        first = self.land([A, B])
         self.assertEqual(first.exit_code, EXIT_OK, first.summary)
-        second = self.land(["step/a", "step/b"], slot=2, run_agent=self.resolving_agent)
+        second = self.land([A, B], slot=2, run_agent=self.resolving_agent)
         self.assertEqual(second.exit_code, EXIT_OK, second.summary)
-        self.assertTrue(is_ancestor(self.repository, "step/a", "main"))
-        self.assertTrue(is_ancestor(self.repository, "step/b", "main"))
+        self.assertTrue(is_ancestor(self.repository, A, "main"))
+        self.assertTrue(is_ancestor(self.repository, B, "main"))
         self.assertIsNone(unresolved_merge(self.repository))
 
     def test_the_landed_file_carries_what_both_sides_intended(self) -> None:
-        self.land(["step/a", "step/b"])
-        self.land(["step/a", "step/b"], slot=2, run_agent=self.resolving_agent)
+        self.land([A, B])
+        self.land([A, B], slot=2, run_agent=self.resolving_agent)
         body = (self.repository / "shared.txt").read_text(encoding="utf-8")
         self.assertIn("from-a", body)
         self.assertIn("from-b", body)
 
     def test_a_clean_first_landing_never_reaches_an_agent(self) -> None:
         """The deterministic layer bounds the agent to exactly the conflicted case."""
-        result = self.land(["step/a", "step/b"])
+        result = self.land([A, B])
         self.assertEqual(result.detail["resolved_by"], BY_COMMAND)
         self.assertEqual(self.calls, [])
 
     def test_the_conflicted_landing_is_the_one_that_pays_for_a_session(self) -> None:
-        self.land(["step/a", "step/b"])
-        result = self.land(["step/a", "step/b"], slot=2, run_agent=self.resolving_agent)
+        self.land([A, B])
+        result = self.land([A, B], slot=2, run_agent=self.resolving_agent)
         self.assertEqual(result.detail["resolved_by"], BY_AGENT)
         self.assertEqual(len(self.calls), 1)
         self.assertIn("shared.txt", self.calls[0])
@@ -628,18 +651,18 @@ class ARealConflictLandsAndIsProven(RepositoryCase):
 class TheHaltPathConverges(RepositoryCase):
     def setUp(self) -> None:
         super().setUp()
-        self.branch("step/a", "shared.txt", "one\nfrom-a\nthree\n")
-        self.branch("step/b", "shared.txt", "one\nfrom-b\nthree\n")
-        self.land(["step/a", "step/b"])
+        self.branch(A, "shared.txt", "one\nfrom-a\nthree\n")
+        self.branch(B, "shared.txt", "one\nfrom-b\nthree\n")
+        self.land([A, B])
 
     def test_an_unresolvable_conflict_is_left_exactly_as_git_left_it(self) -> None:
-        result = self.land(["step/a", "step/b"], slot=2)
+        result = self.land([A, B], slot=2)
         self.assertNotEqual(result.exit_code, EXIT_OK)
         self.assertIsNotNone(unresolved_merge(self.repository))
         self.assertIn("<<<<<<< ", (self.repository / "shared.txt").read_text(encoding="utf-8"))
 
     def test_the_halt_names_what_a_person_has_to_settle(self) -> None:
-        result = self.land(["step/a", "step/b"], slot=2)
+        result = self.land([A, B], slot=2)
         self.assertIn("shared.txt", result.detail["conflicted"])
         self.assertTrue(any("re-run" in line for line in result.follow_up_work))
 
@@ -659,7 +682,7 @@ class TheHaltPathConverges(RepositoryCase):
             )
 
         result = self.land(
-            ["step/a", "step/b"], slot=2, run_agent=timed_out
+            [A, B], slot=2, run_agent=timed_out
         )
         self.assertEqual(
             result.detail["resolution"],
@@ -671,41 +694,41 @@ class TheHaltPathConverges(RepositoryCase):
         )
 
     def test_a_second_attempt_over_the_preserved_merge_refuses_before_opening_a_session(self) -> None:
-        self.land(["step/a", "step/b"], slot=2)
+        self.land([A, B], slot=2)
         self.calls.clear()
         with self.assertRaises(CairnError) as raised:
-            self.land(["step/a", "step/b"], slot=2)
+            self.land([A, B], slot=2)
         self.assertEqual(raised.exception.cause, "merge_in_progress")
         self.assertEqual(self.calls, [])
 
     def test_a_human_who_resolves_the_conflict_converges_on_the_next_run(self) -> None:
-        self.land(["step/a", "step/b"], slot=2)
+        self.land([A, B], slot=2)
         self.write("shared.txt", "one\nfrom-a\nfrom-b\nthree\n")
         git(self.repository, ("add", "--all"))
         git(self.repository, ("commit", "--quiet", "--no-edit"))
         landed = self.subjects()
-        result = self.land(["step/a", "step/b"], slot=2)
+        result = self.land([A, B], slot=2)
         self.assertEqual(result.status, "noop")
         self.assertEqual(self.subjects(), landed, "the re-run landed something twice")
 
     def test_a_human_who_discards_the_branchs_side_converges_on_the_next_run(self) -> None:
         """The branch still lands; that it contributed nothing is the honest record."""
-        self.land(["step/a", "step/b"], slot=2)
+        self.land([A, B], slot=2)
         git(self.repository, ("checkout", "--ours", "--", "shared.txt"))
         git(self.repository, ("add", "--all"))
         git(self.repository, ("commit", "--quiet", "--no-edit"))
-        result = self.land(["step/a", "step/b"], slot=2)
+        result = self.land([A, B], slot=2)
         self.assertEqual(result.status, "noop")
         self.assertNotIn("from-b", (self.repository / "shared.txt").read_text(encoding="utf-8"))
 
     def test_every_slot_before_the_halt_no_ops_rather_than_landing_again(self) -> None:
-        self.land(["step/a", "step/b"], slot=2)
+        self.land([A, B], slot=2)
         self.write("shared.txt", "one\nfrom-a\nfrom-b\nthree\n")
         git(self.repository, ("add", "--all"))
         git(self.repository, ("commit", "--quiet", "--no-edit"))
         settled = self.subjects()
-        first = self.land(["step/a", "step/b"])
-        second = self.land(["step/a", "step/b"], slot=2)
+        first = self.land([A, B])
+        second = self.land([A, B], slot=2)
         self.assertEqual([first.status, second.status], ["noop", "noop"])
         self.assertEqual(self.subjects(), settled)
 
@@ -713,9 +736,9 @@ class TheHaltPathConverges(RepositoryCase):
 class ALyingMergeReddens(RepositoryCase):
     def setUp(self) -> None:
         super().setUp()
-        self.branch("step/a", "shared.txt", "one\nfrom-a\nthree\n")
-        self.branch("step/b", "shared.txt", "one\nfrom-b\nthree\n")
-        self.land(["step/a", "step/b"])
+        self.branch(A, "shared.txt", "one\nfrom-a\nthree\n")
+        self.branch(B, "shared.txt", "one\nfrom-b\nthree\n")
+        self.land([A, B])
 
     def idle_agent(self, *args: Any, **kwargs: Any) -> CommandResult:
         """Reports done and merges nothing."""
@@ -728,12 +751,12 @@ class ALyingMergeReddens(RepositoryCase):
         return CommandResult(EXIT_OK, "done", "merged it", [], False, None, {})
 
     def test_an_agent_that_reports_done_without_merging_fails_the_proof(self) -> None:
-        result = self.land(["step/a", "step/b"], slot=2, run_agent=self.idle_agent)
+        result = self.land([A, B], slot=2, run_agent=self.idle_agent)
         self.assertNotEqual(result.exit_code, EXIT_OK)
         self.assertEqual(result.cause, "merge_conflict")
 
     def test_an_agent_that_commits_leftover_markers_fails_the_proof(self) -> None:
-        result = self.land(["step/a", "step/b"], slot=2, run_agent=self.marker_agent)
+        result = self.land([A, B], slot=2, run_agent=self.marker_agent)
         self.assertNotEqual(result.exit_code, EXIT_OK)
         self.assertEqual(result.cause, "conflict_markers_committed")
         self.assertIn("shared.txt", result.summary)
@@ -750,70 +773,163 @@ class ALyingMergeReddens(RepositoryCase):
 
 class TheExclusionsReachTheRecord(RepositoryCase):
     def test_a_branch_whose_gate_closed_is_named_rather_than_silently_no_ops(self) -> None:
-        self.branch("step/a", "a.txt", "a\n")
-        git(self.repository, ("branch", "step/b", "main"))
+        self.branch(A, "a.txt", "a\n")
+        git(self.repository, ("branch", B, "main"))
         self.gate_report("b", "verify_failed")
-        result = self.land(["step/a", "step/b"])
+        result = self.land([A, B])
         excluded = result.detail["excluded"]
-        self.assertEqual([e["branch"] for e in excluded], ["step/b"])
+        self.assertEqual([e["branch"] for e in excluded], [B])
         self.assertEqual(excluded[0]["cause"], "verify_failed")
-        self.assertTrue(any("step/b is excluded" in line for line in result.follow_up_work))
+        self.assertTrue(any(f"{B} is excluded" in line for line in result.follow_up_work))
 
     def test_a_branch_that_was_never_created_is_not_reached(self) -> None:
-        self.branch("step/a", "a.txt", "a\n")
-        result = self.land(["step/a", "step/b"])
+        self.branch(A, "a.txt", "a\n")
+        result = self.land([A, B])
         self.assertEqual(result.detail["excluded"][0]["cause"], "not_reached")
 
     def test_a_branch_an_earlier_slot_landed_is_not_reported_as_an_exclusion(self) -> None:
         """It contributed its work; saying otherwise puts a fabricated cause in the record."""
-        self.branch("step/a", "a.txt", "a\n")
-        self.branch("step/b", "b.txt", "b\n")
-        self.land(["step/a", "step/b"])
-        second = self.land(["step/a", "step/b"], slot=2)
+        self.branch(A, "a.txt", "a\n")
+        self.branch(B, "b.txt", "b\n")
+        self.land([A, B])
+        second = self.land([A, B], slot=2)
         self.assertEqual(second.detail["excluded"], [])
         self.assertEqual(second.follow_up_work, [])
 
     def test_a_closed_gate_excludes_a_branch_even_when_its_step_committed(self) -> None:
         """A session can commit in its own worktree; the gate decides, not the commit count."""
-        self.branch("step/a", "a.txt", "a\n")
+        self.branch(A, "a.txt", "a\n")
         self.gate_report("a", "verify_failed")
-        result = self.land(["step/a"])
+        result = self.land([A])
         self.assertEqual(result.status, "noop")
         self.assertEqual(result.detail["excluded"][0]["cause"], "verify_failed")
-        self.assertFalse(is_ancestor(self.repository, "step/a", "main"))
+        self.assertFalse(is_ancestor(self.repository, A, "main"))
 
-    def test_a_branch_with_work_and_no_gate_report_of_this_run_does_not_land(self) -> None:
-        """Nothing durable shows the step verified, so landing it lands unverified work."""
-        git(self.repository, ("checkout", "--quiet", "-b", "step/a", "main"))
-        self.write("a.txt", "a\n")
-        self.commit("work on step/a")
+    def unjudged(self, branch: str, filename: str) -> None:
+        """A step's branch with work and no gate report: `branch` would write one."""
+        git(self.repository, ("checkout", "--quiet", "-b", branch, "main"))
+        self.write(filename, "work\n")
+        self.commit(f"work on {branch}")
         git(self.repository, ("checkout", "--quiet", "main"))
-        result = self.land(["step/a"])
+
+    def assert_halts_on_unjudged_work(self) -> None:
+        before = resolve_ref(self.repository, "main")
+        with self.assertRaises(CairnError) as raised:
+            self.land([A, B])
+        self.assertEqual(raised.exception.cause, "merge_unjudged_work")
+        self.assertIn(A, str(raised.exception))
+        unaccounted = raised.exception.detail["unaccounted"]
+        self.assertEqual([c["branch"] for c in unaccounted], [A])
+        self.assertEqual(unaccounted[0]["cause"], "gate_indeterminate")
+        self.assertEqual(resolve_ref(self.repository, "main"), before)
+        self.assertFalse(is_ancestor(self.repository, B, "main"))
+
+    def test_a_branch_with_work_and_no_gate_report_of_this_run_halts_the_slot(self) -> None:
+        """Nothing judged the work, so the slot lands nothing rather than land around it."""
+        self.branch(B, "b.txt", "b\n")
+        self.unjudged(A, "a.txt")
+        self.assert_halts_on_unjudged_work()
+
+    def test_a_gate_report_another_run_left_does_not_judge_this_runs_work(self) -> None:
+        self.branch(B, "b.txt", "b\n")
+        self.unjudged(A, "a.txt")
+        (self.reports / f"{mark_name('a')}.json").write_text(
+            json.dumps(
+                {"step_id": mark_name("a"), "run_id": "run-0", "status": "done",
+                 "cause": None, "summary": "recorded", "needs_user_decision": False}
+            ),
+            encoding="utf-8",
+        )
+        self.assert_halts_on_unjudged_work()
+
+    def test_a_gate_report_nothing_can_read_does_not_judge_the_work(self) -> None:
+        """It may have recorded the work as verified, so leaving it behind is a guess too."""
+        self.branch(B, "b.txt", "b\n")
+        self.unjudged(A, "a.txt")
+        (self.reports / f"{mark_name('a')}.json").write_text("{not json", encoding="utf-8")
+        self.assert_halts_on_unjudged_work()
+
+    def test_a_gate_that_recorded_not_reached_over_work_excludes_without_halting(self) -> None:
+        """The gate ran and judged it; only a missing judgement halts."""
+        self.branch(A, "a.txt", "a\n")
+        self.gate_report("a", "not_reached", "the step left no report")
+        result = self.land([A])
         self.assertEqual(result.status, "noop")
         self.assertEqual(result.detail["excluded"][0]["cause"], "not_reached")
 
+    def test_a_foreign_candidate_is_refused_before_anything_lands(self) -> None:
+        self.branch(A, "a.txt", "a\n")
+        before = resolve_ref(self.repository, "main")
+        with self.assertRaises(CairnError) as raised:
+            self.land([A, "step/a"])
+        self.assertEqual(raised.exception.cause, "merge_foreign_branch")
+        self.assertEqual(raised.exception.detail["branch"], "step/a")
+        self.assertEqual(resolve_ref(self.repository, "main"), before)
+
     def test_a_wave_with_nothing_left_reports_a_no_op_and_moves_no_ref(self) -> None:
-        git(self.repository, ("branch", "step/a", "main"))
+        git(self.repository, ("branch", A, "main"))
         self.gate_report("a", "verify_failed")
         before = resolve_ref(self.repository, "main")
-        result = self.land(["step/a"])
+        result = self.land([A])
         self.assertEqual(result.status, "noop")
         self.assertEqual(resolve_ref(self.repository, "main"), before)
 
     def test_every_cause_the_gate_can_record_travels_into_the_merges_report(self) -> None:
         """The branch carries commits, so the gate's answer is what decides its fate."""
-        self.branch("step/z", "z.txt", "z\n")
+        self.branch(Z, "z.txt", "z\n")
         for cause in EXCLUSION_CAUSES:
             with self.subTest(cause=cause):
                 self.gate_report("z", cause)
-                result = self.land(["step/z"])
+                result = self.land([Z])
                 self.assertEqual(result.detail["excluded"][0]["cause"], cause)
+
+
+class AFanOutWaveThatVerifiedLandsWhole(RepositoryCase):
+    def test_every_verified_branch_of_the_topology_lands_and_is_recorded_as_landed(
+        self,
+    ) -> None:
+        """The live failure: every branch was read as unreached and the wave landed nothing."""
+        self.branch(KEYMAP_READER, "keymap.txt", "keymap\n")
+        self.branch(THEME_READER, "theme.txt", "theme\n")
+        wave = [KEYMAP_READER, THEME_READER]
+        landed = [self.land(wave, slot=slot).detail["landed"] for slot in (1, 2)]
+        self.assertEqual(sorted(landed), sorted(wave))
+        for branch in wave:
+            self.assertTrue(is_ancestor(self.repository, branch, "main"), branch)
+        self.assertEqual(self.land(wave, slot=3).status, "noop")
+
+
+class TheSurveyReadsTheBranchTheTopologyBuilds(RepositoryCase):
+    def survey(self, *candidates: str) -> list[Candidate]:
+        return survey(self.repository, list(candidates), "main", self.reports, "run-1")
+
+    def test_a_verified_branch_is_landable(self) -> None:
+        self.branch(A, "a.txt", "a\n")
+        (candidate,) = self.survey(A)
+        self.assertEqual(candidate.disposition, MERGEABLE)
+        self.assertEqual(candidate.step, "a")
+
+    def test_an_unverified_branch_carries_its_gates_cause(self) -> None:
+        self.branch(A, "a.txt", "a\n")
+        self.gate_report("a", "verify_failed", "the assertion failed")
+        (candidate,) = self.survey(A)
+        self.assertEqual(candidate.disposition, EXCLUDED)
+        self.assertEqual(candidate.cause, "verify_failed")
+        self.assertEqual(candidate.summary, "the assertion failed")
+
+    def test_a_ref_outside_the_branch_grammar_is_refused_by_name(self) -> None:
+        """A bare `step/<step>` names no plan, so no gate report can be found for it."""
+        for ref in ("step/a", "main", "step/fan-out/a/extra"):
+            with self.subTest(ref=ref), self.assertRaises(CairnError) as raised:
+                self.survey(A, ref)
+            self.assertEqual(raised.exception.cause, "merge_foreign_branch")
+            self.assertIn(ref, str(raised.exception))
 
 
 class TheProofRunsInAProcessOfItsOwn(RepositoryCase):
     def test_the_proof_confirms_what_the_slot_landed(self) -> None:
-        self.branch("step/a", "a.txt", "a\n")
-        landed = self.land(["step/a"])
+        self.branch(A, "a.txt", "a\n")
+        landed = self.land([A])
         self.context.report_path.write_text(
             json.dumps({"step_id": "merge_w1_1", "run_id": "run-1", "status": "done",
                         "summary": "landed", "needs_user_decision": False,
@@ -822,22 +938,22 @@ class TheProofRunsInAProcessOfItsOwn(RepositoryCase):
         )
         proof = verify_landed(
             self.repository, merge="merge_w1_1", into="main",
-            candidates=["step/a"], context=self.context,
+            candidates=[A], context=self.context,
         )
         self.assertEqual(proof.exit_code, EXIT_OK)
 
     def test_the_proof_reddens_a_slot_that_claimed_a_branch_it_never_landed(self) -> None:
-        self.branch("step/a", "a.txt", "a\n")
+        self.branch(A, "a.txt", "a\n")
         self.context.report_path.write_text(
             json.dumps({"step_id": "merge_w1_1", "run_id": "run-1", "status": "done",
                         "summary": "landed", "needs_user_decision": False,
-                        "detail": {"landed": "step/a",
+                        "detail": {"landed": A,
                                    "before": resolve_ref(self.repository, "main")}}),
             encoding="utf-8",
         )
         proof = verify_landed(
             self.repository, merge="merge_w1_1", into="main",
-            candidates=["step/a"], context=self.context,
+            candidates=[A], context=self.context,
         )
         self.assertNotEqual(proof.exit_code, EXIT_OK)
         self.assertEqual(proof.cause, "merge_not_landed")
@@ -851,40 +967,40 @@ class ThePredictionNeverGatesTheProof(RepositoryCase):
         What they conflict with is the parent, which moved for a reason neither tip can
         see — so a prediction between the tips says clean and the merge says otherwise.
         """
-        self.branch("step/a", "a.txt", "a\n")
-        self.branch("step/b", "shared.txt", "one\nfrom-b\nthree\n")
+        self.branch(A, "a.txt", "a\n")
+        self.branch(B, "shared.txt", "one\nfrom-b\nthree\n")
         self.write("shared.txt", "one\nfrom-main\nthree\n")
         self.commit("main moved under both branches")
 
-        self.assertEqual(predict(self.repository, "step/a", "step/b").outcome, CLEAN)
-        self.land(["step/a", "step/b"])
-        result = self.land(["step/a", "step/b"], slot=2)
+        self.assertEqual(predict(self.repository, A, B).outcome, CLEAN)
+        self.land([A, B])
+        result = self.land([A, B], slot=2)
         self.assertNotEqual(result.exit_code, EXIT_OK, "the merge trusted the prediction")
         self.assertEqual(result.cause, "reported_failure")
         self.assertIsNotNone(unresolved_merge(self.repository))
 
     def test_a_stale_prediction_between_two_tips_never_gates_the_second_landing(self) -> None:
-        self.branch("step/a", "shared.txt", "one\nfrom-a\nthree\n")
-        self.branch("step/b", "shared.txt", "one\nfrom-b\nthree\n")
-        self.land(["step/a", "step/b"])
-        self.assertEqual(predict(self.repository, "step/a", "step/b").outcome, CONFLICTED)
-        result = self.land(["step/a", "step/b"], slot=2)
+        self.branch(A, "shared.txt", "one\nfrom-a\nthree\n")
+        self.branch(B, "shared.txt", "one\nfrom-b\nthree\n")
+        self.land([A, B])
+        self.assertEqual(predict(self.repository, A, B).outcome, CONFLICTED)
+        result = self.land([A, B], slot=2)
         self.assertNotEqual(result.exit_code, EXIT_OK)
 
     def test_a_predicted_conflict_that_resolves_lands_anyway(self) -> None:
-        self.branch("step/a", "shared.txt", "one\nfrom-a\nthree\n")
-        self.branch("step/b", "shared.txt", "one\nfrom-b\nthree\n")
-        self.assertEqual(predict(self.repository, "step/a", "step/b").outcome, CONFLICTED)
-        self.land(["step/a", "step/b"])
-        result = self.land(["step/a", "step/b"], slot=2, run_agent=self.resolving_agent)
+        self.branch(A, "shared.txt", "one\nfrom-a\nthree\n")
+        self.branch(B, "shared.txt", "one\nfrom-b\nthree\n")
+        self.assertEqual(predict(self.repository, A, B).outcome, CONFLICTED)
+        self.land([A, B])
+        result = self.land([A, B], slot=2, run_agent=self.resolving_agent)
         self.assertEqual(result.exit_code, EXIT_OK)
 
     def test_a_prediction_touches_no_ref_and_no_working_tree(self) -> None:
-        self.branch("step/a", "shared.txt", "one\nfrom-a\nthree\n")
-        self.branch("step/b", "shared.txt", "one\nfrom-b\nthree\n")
+        self.branch(A, "shared.txt", "one\nfrom-a\nthree\n")
+        self.branch(B, "shared.txt", "one\nfrom-b\nthree\n")
         before = git(self.repository, ("show-ref",), check=False).stdout
         status = git(self.repository, ("status", "--porcelain")).stdout
-        predict(self.repository, "step/a", "step/b")
+        predict(self.repository, A, B)
         self.assertEqual(git(self.repository, ("show-ref",), check=False).stdout, before)
         self.assertEqual(git(self.repository, ("status", "--porcelain")).stdout, status)
 
@@ -894,8 +1010,8 @@ class TheScanIsScopedToWhatTheMergeChanged(RepositoryCase):
         """The stated false-positive risk: committed content that discusses conflicts."""
         self.write("guide.md", "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> them\n")
         self.commit("a guide about conflicts")
-        self.branch("step/a", "a.txt", "a\n")
-        result = self.land(["step/a"])
+        self.branch(A, "a.txt", "a\n")
+        result = self.land([A])
         self.assertEqual(result.exit_code, EXIT_OK, result.summary)
 
     def test_a_commit_the_scan_cannot_read_is_indeterminate_and_not_clean(self) -> None:
@@ -926,9 +1042,9 @@ class TheScanIsScopedToWhatTheMergeChanged(RepositoryCase):
         )
 
     def test_the_same_content_reddens_once_the_merge_itself_changed_that_file(self) -> None:
-        self.branch("step/a", "guide.md", "<<<<<<< HEAD\nours\n=======\nt\n>>>>>>> them\n")
+        self.branch(A, "guide.md", "<<<<<<< HEAD\nours\n=======\nt\n>>>>>>> them\n")
         head = resolve_ref(self.repository, "main") or ""
-        git(self.repository, ("merge", "--no-ff", "--no-edit", "-m", "m", "step/a"))
+        git(self.repository, ("merge", "--no-ff", "--no-edit", "-m", "m", A))
         after = resolve_ref(self.repository, "main") or ""
         self.assertEqual(committed_markers(self.repository, after, ["guide.md"]), ("guide.md",))
         self.assertNotEqual(head, after)
@@ -936,27 +1052,27 @@ class TheScanIsScopedToWhatTheMergeChanged(RepositoryCase):
 
 class TheOrderingBoundIsNeverViolated(RepositoryCase):
     def test_a_slot_lands_one_branch_at_a_time(self) -> None:
-        self.branch("step/a", "a.txt", "a\n")
-        self.branch("step/b", "b.txt", "b\n")
-        first = self.land(["step/a", "step/b"])
-        self.assertEqual(first.detail["landed"], "step/a")
-        self.assertFalse(is_ancestor(self.repository, "step/b", "main"))
-        second = self.land(["step/a", "step/b"], slot=2)
-        self.assertEqual(second.detail["landed"], "step/b")
+        self.branch(A, "a.txt", "a\n")
+        self.branch(B, "b.txt", "b\n")
+        first = self.land([A, B])
+        self.assertEqual(first.detail["landed"], A)
+        self.assertFalse(is_ancestor(self.repository, B, "main"))
+        second = self.land([A, B], slot=2)
+        self.assertEqual(second.detail["landed"], B)
 
     def test_the_slot_lands_the_order_the_prediction_advised_and_not_the_alphabet(self) -> None:
         """Two branches conflict and a third does not, so the alphabet is the wrong answer."""
-        self.branch("step/a", "shared.txt", "one\nfrom-a\nthree\n")
-        self.branch("step/b", "shared.txt", "one\nfrom-b\nthree\n")
-        self.branch("step/c", "c.txt", "c\n")
-        result = self.land(["step/a", "step/b", "step/c"])
-        self.assertEqual(result.detail["order"][0], "step/c", result.detail["order"])
-        self.assertEqual(result.detail["landed"], "step/c")
+        self.branch(A, "shared.txt", "one\nfrom-a\nthree\n")
+        self.branch(B, "shared.txt", "one\nfrom-b\nthree\n")
+        self.branch(C, "c.txt", "c\n")
+        result = self.land([A, B, C])
+        self.assertEqual(result.detail["order"][0], C, result.detail["order"])
+        self.assertEqual(result.detail["landed"], C)
 
     def test_a_branch_already_landed_is_not_landed_again(self) -> None:
-        self.branch("step/a", "a.txt", "a\n")
-        self.land(["step/a"])
-        result = self.land(["step/a"], slot=2)
+        self.branch(A, "a.txt", "a\n")
+        self.land([A])
+        result = self.land([A], slot=2)
         self.assertEqual(result.status, "noop")
 
     def test_across_waves_the_emitted_chain_never_reorders(self) -> None:
@@ -971,51 +1087,51 @@ class TheOrderingBoundIsNeverViolated(RepositoryCase):
 
 class TheMergeRefusesWhatItCannotLandHonestly(RepositoryCase):
     def test_a_repository_on_another_branch_is_refused(self) -> None:
-        self.branch("step/a", "a.txt", "a\n")
-        git(self.repository, ("checkout", "--quiet", "step/a"))
+        self.branch(A, "a.txt", "a\n")
+        git(self.repository, ("checkout", "--quiet", A))
         with self.assertRaises(CairnError) as raised:
-            self.land(["step/a"])
+            self.land([A])
         self.assertEqual(raised.exception.cause, "merge_wrong_branch")
 
     def test_a_conflict_the_wave_does_claim_is_a_merge_problem_and_not_a_plan_defect(
         self,
     ) -> None:
         """Both branches change the file they conflict in, so the resolution is the answer."""
-        self.branch("step/a", "shared.txt", "one\nfrom-a\nthree\n")
-        self.branch("step/b", "shared.txt", "one\nfrom-b\nthree\n")
-        result = self.land(["step/a", "step/b"])
+        self.branch(A, "shared.txt", "one\nfrom-a\nthree\n")
+        self.branch(B, "shared.txt", "one\nfrom-b\nthree\n")
+        result = self.land([A, B])
         self.assertEqual(result.exit_code, EXIT_OK)
 
     def test_a_conflict_in_a_file_the_branch_did_change_goes_to_a_resolution(self) -> None:
         """The parent moved under the branch, but in a file the step itself claims."""
-        self.branch("step/a", "a.txt", "a\n")
+        self.branch(A, "a.txt", "a\n")
         self.write("shared.txt", "one\nfrom-main\nthree\n")
         self.commit("a change on the parent")
-        git(self.repository, ("checkout", "--quiet", "step/a"))
+        git(self.repository, ("checkout", "--quiet", A))
         self.write("shared.txt", "one\nfrom-the-step\nthree\n")
         self.commit("the same file, on the branch")
         git(self.repository, ("checkout", "--quiet", "main"))
-        result = self.land(["step/a"])
+        result = self.land([A])
         self.assertEqual(result.cause, "reported_failure", "it was refused, not resolved")
         self.assertEqual(len(self.calls), 1, "the resolution was handed to a session")
 
     def test_a_branch_that_renames_a_file_claims_both_of_its_names(self) -> None:
         """git reports only a rename's destination, and the source would look unowned."""
-        git(self.repository, ("checkout", "--quiet", "-b", "step/a", "main"))
+        git(self.repository, ("checkout", "--quiet", "-b", A, "main"))
         git(self.repository, ("mv", "shared.txt", "moved.txt"))
         self.commit("rename on the branch")
         git(self.repository, ("checkout", "--quiet", "main"))
-        owned = owned_paths(self.repository, ["step/a"], "main")
+        owned = owned_paths(self.repository, [A], "main")
         self.assertEqual(owned, ["moved.txt", "shared.txt"])
 
     def test_the_environment_that_would_send_the_commits_elsewhere_refuses_first(self) -> None:
         """One ref read against a session that would land its work in another repository."""
-        self.branch("step/a", "a.txt", "a\n")
+        self.branch(A, "a.txt", "a\n")
         with (
             patch.dict(os.environ, {"GIT_DIR": str(self.root / "elsewhere")}),
             self.assertRaises(CairnError) as raised,
         ):
-            self.land(["step/a"])
+            self.land([A])
         self.assertEqual(raised.exception.cause, "merge_environment_redirected")
         self.assertEqual(self.calls, [])
 
@@ -1107,8 +1223,8 @@ class TheEngineStopsAChainThatHalts(RepositoryCase):
             body["working_dir"] = str(self.repository)
             body["run"] = (
                 str(body["run"])
-                .replace("step/fan-out/keymap_reader", "step/a")
-                .replace("step/fan-out/theme_reader", "step/b")
+                .replace(KEYMAP_READER, A)
+                .replace(THEME_READER, B)
                 .replace("--provider claude", f"--provider {provider}")
             )
             body.pop("depends", None)
@@ -1119,8 +1235,8 @@ class TheEngineStopsAChainThatHalts(RepositoryCase):
 
     def test_a_slot_that_cannot_resolve_reddens_the_run_rather_than_skipping_it(self) -> None:
         """A run whose only failures are skips reports Succeeded, so a halt must land failed."""
-        self.branch("step/a", "shared.txt", "one\nfrom-a\nthree\n")
-        self.branch("step/b", "shared.txt", "one\nfrom-b\nthree\n")
+        self.branch(A, "shared.txt", "one\nfrom-a\nthree\n")
+        self.branch(B, "shared.txt", "one\nfrom-b\nthree\n")
         completed = self.run_dag(self.chain(provider="nothing-resolves-this"))
         statuses = dict(NODE_STATUS.findall(completed.stdout))
 
@@ -1133,29 +1249,29 @@ class TheEngineStopsAChainThatHalts(RepositoryCase):
 
     def test_a_halted_chain_lands_what_it_proved_and_nothing_after_it(self) -> None:
         """Nothing writes the parent branch over a conflicted index."""
-        self.branch("step/a", "shared.txt", "one\nfrom-a\nthree\n")
-        self.branch("step/b", "shared.txt", "one\nfrom-b\nthree\n")
+        self.branch(A, "shared.txt", "one\nfrom-a\nthree\n")
+        self.branch(B, "shared.txt", "one\nfrom-b\nthree\n")
         before = git(self.repository, ("rev-parse", "main")).stdout
         self.run_dag(self.chain(provider="nothing-resolves-this"))
         self.assertNotEqual(
             git(self.repository, ("rev-parse", "main")).stdout, before, "no slot landed"
         )
-        self.assertTrue(is_ancestor(self.repository, "step/a", "main"))
+        self.assertTrue(is_ancestor(self.repository, A, "main"))
         self.assertFalse(
-            is_ancestor(self.repository, "step/b", "main"),
+            is_ancestor(self.repository, B, "main"),
             "the halted branch landed anyway",
         )
 
     def test_a_clean_chain_lands_every_branch_and_leaves_the_run_green(self) -> None:
-        self.branch("step/a", "a.txt", "a\n")
-        self.branch("step/b", "b.txt", "b\n")
+        self.branch(A, "a.txt", "a\n")
+        self.branch(B, "b.txt", "b\n")
         completed = self.run_dag(self.chain())
         statuses = dict(NODE_STATUS.findall(completed.stdout))
 
         self.assertEqual(completed.returncode, 0, completed.stdout)
         self.assertEqual(statuses.get("verify_merge_w2_2"), "succeeded")
-        self.assertTrue(is_ancestor(self.repository, "step/a", "main"))
-        self.assertTrue(is_ancestor(self.repository, "step/b", "main"))
+        self.assertTrue(is_ancestor(self.repository, A, "main"))
+        self.assertTrue(is_ancestor(self.repository, B, "main"))
 
 
 if __name__ == "__main__":

@@ -109,10 +109,12 @@ carried work is — so after the first merge nothing can tell an excluded step f
 one ([merge-step.md](merge-step.md)). The join stands before any landing and depends on every
 commit in its wave, so it is the one node that sees the whole wave intact.
 
-It carries no `continue_on` in either spelling, and it never refuses. An excluded branch
-reaches it already, because that branch's commit stops the skip cascade in a fan-out. What
-must not be absorbed is a genuine failure, which has to stop the slots rather than let them
-land over a wave nobody could survey.
+It carries no `continue_on` in either spelling, and it refuses only a fault in the emitted
+workflow, never what a gate decided. An excluded branch reaches it already, because that
+branch's commit stops the skip cascade in a fan-out. What must not be absorbed is a genuine
+failure, which has to stop the slots rather than let them land over a wave nobody could
+survey. A candidate that is not a `step/<plan>/<step>` branch is one: the join refuses it
+with `merge_foreign_branch`, because no step's gate can speak for it.
 
 ## What the preflight refuses
 

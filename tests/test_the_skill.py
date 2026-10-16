@@ -93,6 +93,7 @@ from cairn.skill.vocabulary import (
     VERB_RECOUNTING,
     WRITES_NOTHING,
 )
+from cairn.topology import branch_name
 from cairn.verify import EXCLUSION_CAUSES
 from cairn.view import (
     CLAIM_CLAIMED,
@@ -1369,7 +1370,7 @@ class ExplainAnswersItsThreeQuestions(unittest.TestCase):
                         "overlays": [],
                         "cause": None,
                         "divergence": None,
-                        "branch": "step/alpha",
+                        "branch": branch_name("demo", "alpha"),
                     }
                 ],
             },
@@ -1390,7 +1391,7 @@ class ExplainAnswersItsThreeQuestions(unittest.TestCase):
                         "overlays": ["divergence"],
                         "cause": "verify_failed",
                         "divergence": {"reported": "done", "asserted": False},
-                        "branch": "step/alpha",
+                        "branch": branch_name("demo", "alpha"),
                     }
                 ],
             },

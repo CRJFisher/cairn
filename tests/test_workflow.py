@@ -34,7 +34,7 @@ from cairn.plan.home import SHARED_GRAPH, graph_path, plan_document_path
 from cairn.plan.ids import derive_plan_slug
 from cairn.plan.schema import ENGINE_NAME_MAX_BYTES, normalise
 from cairn.plan.validate import validate
-from cairn.topology import ROLES, parse_node_name, worktrees_root_for
+from cairn.topology import ROLES, branch_name, parse_node_name, worktrees_root_for
 from cairn.wave import run_join
 from cairn.workflow.build import (
     disabled_retry,
@@ -1456,8 +1456,13 @@ class TheEnvelopeIsTheOnlyStatementOfTheFormat(unittest.TestCase):
 
 
 
+ALPHA = branch_name("demo", "alpha")
+BETA = branch_name("demo", "beta")
+SETTLED = branch_name("demo", "settled")
+
+
 class TheWavesCensus(unittest.TestCase):
-    """The join's body: it answers, and it never refuses.
+    """The join's body: it answers, and refuses only a ref no step owns.
 
     A refusal here would abort the merge slots behind it and strand the branches that did
     verify — the same failure `continue_on: {failure: true}` prevents one node earlier.
@@ -1483,7 +1488,7 @@ class TheWavesCensus(unittest.TestCase):
 
     def branch_with_work(self, name: str) -> None:
         self.run_git("checkout", "--quiet", "-b", name)
-        (self.repository / f"{name.split('/')[-1]}.txt").write_text("x\n", encoding="utf-8")
+        (self.repository / f"{name.rsplit('/', 1)[-1]}.txt").write_text("x\n", encoding="utf-8")
         self.run_git("add", "--all")
         self.run_git("commit", "--quiet", "-m", name)
         self.run_git("checkout", "--quiet", "main")
@@ -1516,32 +1521,56 @@ class TheWavesCensus(unittest.TestCase):
         return run_join(1, list(branches), "main", self.context())
 
     def test_the_census_names_which_branches_carry_work_to_land(self) -> None:
-        self.branch_with_work("step/alpha")
+        self.branch_with_work(ALPHA)
         self.record_gate("alpha", None)
-        result = self.join("step/alpha")
+        result = self.join(ALPHA)
         self.assertEqual(result.exit_code, 0)
-        self.assertEqual(result.detail["arrived"], ["step/alpha"])
+        self.assertEqual(result.detail["arrived"], [ALPHA])
         self.assertEqual(result.detail["excluded"], {})
 
     def test_an_excluded_branch_is_named_with_the_cause_the_gate_recorded(self) -> None:
-        self.branch_with_work("step/alpha")
+        self.branch_with_work(ALPHA)
         self.record_gate("alpha", "verify_failed")
-        result = self.join("step/alpha")
+        result = self.join(ALPHA)
         self.assertEqual(result.exit_code, 0)
         self.assertEqual(
-            result.detail["excluded"]["step/alpha"]["cause"], "verify_failed"
+            result.detail["excluded"][ALPHA]["cause"], "verify_failed"
         )
 
     def test_a_branch_already_in_the_parent_is_not_reported_as_an_exclusion(self) -> None:
         """It carries no cause, and inventing one would put a lie in an unrepeatable census."""
-        self.run_git("branch", "step/settled")
-        result = self.join("step/settled")
+        self.run_git("branch", SETTLED)
+        result = self.join(SETTLED)
         self.assertEqual(result.detail["excluded"], {})
-        self.assertEqual(result.detail["settled"], ["step/settled"])
+        self.assertEqual(result.detail["settled"], [SETTLED])
+
+    def test_a_branch_with_work_and_no_gate_report_is_in_the_census(self) -> None:
+        """Its merge slot halts on it, and the census still names it under that cause."""
+        self.branch_with_work(ALPHA)
+        result = self.join(ALPHA)
+        self.assertEqual(result.detail["arrived"], [])
+        self.assertEqual(result.detail["excluded"][ALPHA]["cause"], "gate_indeterminate")
+
+    def test_a_census_over_one_judged_and_one_unjudged_branch_names_both(self) -> None:
+        """The join records the halt's subject and still answers; the slot is what halts."""
+        self.branch_with_work(ALPHA)
+        self.record_gate("alpha", None)
+        self.branch_with_work(BETA)
+        result = self.join(ALPHA, BETA)
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(result.detail["arrived"], [ALPHA])
+        self.assertEqual(result.detail["excluded"][BETA]["cause"], "gate_indeterminate")
+
+    def test_a_ref_no_step_owns_is_refused(self) -> None:
+        bare = "step/alpha"
+        with self.assertRaises(CairnError) as raised:
+            self.join(bare)
+        self.assertEqual(raised.exception.cause, "merge_foreign_branch")
+        self.assertEqual(raised.exception.detail["branch"], bare)
 
     def test_a_wave_whose_every_branch_was_excluded_still_answers(self) -> None:
         """It reports a no-op rather than refusing, so the slots and the prune still run."""
-        result = self.join("step/alpha", "step/beta")
+        result = self.join(ALPHA, BETA)
         self.assertEqual(result.exit_code, 0)
         self.assertEqual(result.status, "noop")
         self.assertEqual(result.detail["arrived"], [])

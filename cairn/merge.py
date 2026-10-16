@@ -39,6 +39,7 @@ from cairn.gitio import (
 from cairn.headroom import Instruments, session_within_allowance
 from cairn.locks import git_write_mutex, refuse_unresolved_merge, unresolved_merge
 from cairn.providers import run_provider
+from cairn.topology import step_of_branch
 from cairn.verify import EXCLUSION_CAUSES, GATE_INDETERMINATE, NOT_REACHED, mark_name
 
 # What a prediction can say. `unavailable` is a third answer and never a verdict: git
@@ -51,6 +52,9 @@ UNAVAILABLE = "unavailable"
 MERGEABLE = "mergeable"
 NOTHING_TO_MERGE = "nothing_to_merge"
 EXCLUDED = "excluded"
+# Work on a branch whose step the gate has no account of. It is never a step that did not
+# run, because the work is evidence that it did, so the slot halts rather than land around it.
+UNACCOUNTED = "unaccounted"
 
 # What settled a slot, recorded so the run record can tell a merge a session settled from
 # one a command settled.
@@ -274,6 +278,7 @@ def classify_candidate(
     has_work: bool,
     gate_cause: str | None,
     gate_summary: str,
+    judged: bool,
 ) -> Candidate:
     """What a slot may do with this branch, and why, before anything is merged.
 
@@ -286,6 +291,10 @@ def classify_candidate(
     It is an exclusion only where the gate actually declined; otherwise it is already
     contained in the parent, which is what an earlier slot or an earlier run leaves behind
     and is not something to report against the step.
+
+    A branch that carries work where the gate left no readable report of this run is
+    neither: the work says the step ran and nothing readable says it was judged, so it is
+    unaccounted for rather than unreached.
     """
     if not exists:
         return Candidate(
@@ -296,6 +305,14 @@ def classify_candidate(
             return Candidate(branch, step, EXCLUDED, gate_cause, gate_summary)
         return Candidate(
             branch, step, NOTHING_TO_MERGE, None, f"{branch} is already contained in the parent"
+        )
+    if not judged:
+        return Candidate(
+            branch,
+            step,
+            UNACCOUNTED,
+            GATE_INDETERMINATE,
+            f"{branch} carries work, but {gate_summary}",
         )
     if gate_cause is not None:
         return Candidate(branch, step, EXCLUDED, gate_cause, gate_summary)
@@ -446,29 +463,45 @@ def survey(
     reports: Path,
     run_id: str,
 ) -> list[Candidate]:
-    """Each candidate branch's disposition, and for an excluded one the gate's own cause."""
+    """Each candidate branch's disposition, and for an excluded one the gate's own cause.
+
+    The step is read back through the branch grammar's own inverse. A candidate outside that
+    grammar names no step, so no gate report can speak for it, and it is refused as the
+    fault in the emitted workflow that it is.
+    """
     surveyed: list[Candidate] = []
     for branch in candidates:
-        step = branch.split("/", 1)[-1]
+        step = step_of_branch(branch)
+        if step is None:
+            raise CairnError(
+                "merge_foreign_branch",
+                f"{branch} is not a step branch of the form step/<plan>/<step>, so no "
+                "step's gate can say whether it may land",
+                detail={"branch": branch, "candidates": list(candidates)},
+            )
         exists = branch_exists(repository, branch)
         carries_work = exists and has_work(repository, branch, into)
-        cause, summary = (
+        cause, summary, judged = (
             _gate_cause(reports, step, run_id, f"{branch} contributed no verified work")
             if exists
-            else (None, "")
+            else (None, "", True)
         )
         surveyed.append(
-            classify_candidate(branch, step, exists, carries_work, cause, summary)
+            classify_candidate(branch, step, exists, carries_work, cause, summary, judged)
         )
     return surveyed
 
 
-def _gate_cause(reports: Path, step: str, run_id: str, fallback: str) -> tuple[str | None, str]:
+def _gate_cause(
+    reports: Path, step: str, run_id: str, fallback: str
+) -> tuple[str | None, str, bool]:
     """Why the gate declined to record this step, quoted from its own report.
 
-    None means it did not decline — the step's work is recorded and its branch may land.
-    The merge never mints an exclusion cause: the gate froze that vocabulary, and a second
-    spelling for the same fact would put two words in the run record for one event.
+    A cause of None means it did not decline — the step's work is recorded and its branch
+    may land. The flag says whether a readable report of this run said so at all: where
+    none did, only the branch can say what the silence means. The merge never mints an
+    exclusion cause: the gate froze that vocabulary, and a second spelling for the same fact
+    would put two words in the run record for one event.
     """
     try:
         report = read_step_report(reports, mark_name(step), run_id)
@@ -477,17 +510,17 @@ def _gate_cause(reports: Path, step: str, run_id: str, fallback: str) -> tuple[s
         # the second into the first would claim a step never ran when it may have done all
         # of its work and left an account nothing can parse.
         if exc.cause == "missing_report":
-            return NOT_REACHED, f"{step} left no gate report of this run"
-        return GATE_INDETERMINATE, f"{step} left a gate report that cannot be read"
+            return NOT_REACHED, f"{step} left no gate report of this run", False
+        return GATE_INDETERMINATE, f"{step} left a gate report that cannot be read", False
     cause = report.get("cause")
     if cause is None and report.get("status") != "failed":
         # The marker step ran, which only a gate that opened allows. Its own report is the
         # evidence that this step's work is recorded, so there is nothing to exclude.
-        return None, f"{step} is recorded as verified"
+        return None, f"{step} is recorded as verified", True
     if not isinstance(cause, str) or cause not in EXCLUSION_CAUSES:
-        return GATE_INDETERMINATE, f"{step} left a gate report naming no known cause"
+        return GATE_INDETERMINATE, f"{step} left a gate report naming no known cause", True
     summary = report.get("summary")
-    return cause, summary if isinstance(summary, str) and summary else fallback
+    return cause, summary if isinstance(summary, str) and summary else fallback, True
 
 
 def _refuse_redirected_environment() -> None:
@@ -585,6 +618,15 @@ def run_merge(
         "candidates": list(candidates),
         "excluded": [c._asdict() for c in excluded],
     }
+    unaccounted = [c for c in surveyed if c.disposition == UNACCOUNTED]
+    if unaccounted:
+        # Before anything lands. Landing the rest around it would report a wave merged
+        # while committed work sits on a branch nobody can say was verified or refused.
+        raise CairnError(
+            "merge_unjudged_work",
+            "; ".join(c.summary for c in unaccounted),
+            detail={**detail, "unaccounted": [c._asdict() for c in unaccounted]},
+        )
 
     if not pending:
         return CommandResult(

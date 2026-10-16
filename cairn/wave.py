@@ -17,18 +17,19 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from cairn.core import EXIT_OK, CommandResult, RuntimeContext
-from cairn.merge import EXCLUDED, MERGEABLE, NOTHING_TO_MERGE, survey
+from cairn.merge import EXCLUDED, MERGEABLE, NOTHING_TO_MERGE, UNACCOUNTED, survey
 
 
 def run_join(
     wave: int, branches: Sequence[str], into: str, context: RuntimeContext
 ) -> CommandResult:
-    """Record what this wave produced, and never refuse.
+    """Record what this wave produced, refusing only a fault in the emitted workflow.
 
     A wave whose every branch was excluded still reaches its merge slots, which each report
     a no-op, and still reaches its prune. Refusing here would abort the slots behind it and
     strand the branches that did verify — the same failure `continue_on: {failure: true}`
-    exists to prevent one node earlier.
+    exists to prevent one node earlier. A branch outside the step-branch grammar is refused,
+    because that is a fault in the emitted workflow rather than in any step.
     """
     candidates = survey(
         context.working_directory,
@@ -41,11 +42,12 @@ def run_join(
     # Only a branch the gate declined is an exclusion. A branch already contained in the
     # parent carries no cause — it landed on an earlier run, or its step had nothing to
     # commit — and recording it here would put an invented cause in the one census that
-    # cannot be taken again ([merge-step.md]).
+    # cannot be taken again ([merge-step.md]). A branch whose work the gate has no account
+    # of is in it under the cause its merge slot halts on, so that census still names it.
     excluded = {
         c.branch: {"cause": c.cause, "summary": c.summary}
         for c in candidates
-        if c.disposition == EXCLUDED
+        if c.disposition in (EXCLUDED, UNACCOUNTED)
     }
     settled = [c.branch for c in candidates if c.disposition == NOTHING_TO_MERGE]
     summary = (

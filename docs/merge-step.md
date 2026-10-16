@@ -106,13 +106,18 @@ upstream, the prune is downstream, and the run lock excludes other runs.
 1. Halt if a merge is already in progress, if anything in the environment would redirect
    git, or if the repository is not on the parent branch.
 2. Survey every candidate: does the branch exist, and does it hold a commit the parent does
-   not. A branch with nothing to land is asked _why_ — see below.
-3. If nothing is left to land, report a no-op naming every exclusion.
-4. Predict, then refuse a predicted conflict in a file no branch of the wave changes. This
+   not. The step is read back out of the branch name through the topology's own inverse
+   (`step_of_branch`); a candidate that is not a `step/<plan>/<step>` branch is a fault in
+   the emitted workflow, refused as `merge_foreign_branch`. A branch with nothing to land is
+   asked _why_ — see below.
+3. Halt with `merge_unjudged_work`, naming the branch, if any branch carries work that no
+   readable gate report of this run judged. Nothing lands.
+4. If nothing is left to land, report a no-op naming every exclusion.
+5. Predict, then refuse a predicted conflict in a file no branch of the wave changes. This
    happens **before any agent session opens**.
-5. Land the lightest branch: `git merge --no-ff`, under the write mutex.
-6. On a conflict only, hand the named files to the agent.
-7. Prove what landed, whatever the agent said.
+6. Land the lightest branch: `git merge --no-ff`, under the write mutex.
+7. On a conflict only, hand the named files to the agent.
+8. Prove what landed, whatever the agent said.
 
 ## What a slot may land, and why it may not
 
@@ -126,13 +131,22 @@ Ancestry cannot tell such a branch apart from an excluded one — **a branch who
 committed is already an ancestor of the parent** — so the gate's report is what separates
 "the gate declined" from "an earlier slot, or an earlier run, already landed this".
 
-| What is true of the branch                  | Disposition        | Cause                                                 |
-| ------------------------------------------- | ------------------ | ----------------------------------------------------- |
-| holds new commits, and the gate recorded it | `mergeable`        | —                                                     |
-| holds new commits, and the gate did not     | `excluded`         | the gate's own value, quoted                          |
-| the branch does not exist                   | `excluded`         | the gate's value for a step nothing durable shows ran |
-| nothing to land, and the gate declined      | `excluded`         | the gate's own value, quoted                          |
-| nothing to land, and no decline recorded    | `nothing_to_merge` | —                                                     |
+| What is true of the branch                     | Disposition                    | Cause                                                 |
+| ---------------------------------------------- | ------------------------------ | ----------------------------------------------------- |
+| holds new commits, and the gate recorded it    | `mergeable`                    | —                                                     |
+| holds new commits, and the gate did not        | `excluded`                     | the gate's own value, quoted                          |
+| holds new commits, and no gate report reads    | `unaccounted` — the slot halts | the gate's value for what nothing established         |
+| the branch does not exist                      | `excluded`                     | the gate's value for a step nothing durable shows ran |
+| nothing to land, and the gate declined         | `excluded`                     | the gate's own value, quoted                          |
+| nothing to land, and no decline recorded       | `nothing_to_merge`             | —                                                     |
+
+**Work the gate never judged halts the slot.** Every gate that runs leaves a report under its
+marker's name, whichever way it decides. A branch carrying work with no readable report of this
+run means the step ran and nothing that can be read judged it — a gate that never ran, a report
+filed under another name, or one too damaged to parse, which may well have recorded the work as
+verified — so it is never read as `not_reached` and never left behind. The slot halts with
+`merge_unjudged_work` before landing anything, and the join's census records the branch under
+the gate's value for what nothing established ([verify-gate.md](verify-gate.md)).
 
 **The merge mints no exclusion cause of its own.** That vocabulary is frozen in
 [verify-gate.md](verify-gate.md), which is the one place its values are named, and a second

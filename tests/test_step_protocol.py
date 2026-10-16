@@ -48,7 +48,7 @@ from cairn.protocol import (
     compose_prompt,
 )
 from cairn.providers import PROVIDER_RUNNERS, hook_settings, run_claude
-from cairn.topology import node_name
+from cairn.topology import branch_name, node_name
 from tests.engine import require_engine
 from tests.ownership import own_repository
 
@@ -1286,7 +1286,7 @@ class TheThreeStates(unittest.TestCase):
         subprocess.run((*git, "add", "-A"), check=True)
         subprocess.run((*git, "commit", "-qm", "seed"), check=True)
 
-        subprocess.run((*git, "checkout", "-q", "-b", "step/a"), check=True)
+        subprocess.run((*git, "checkout", "-q", "-b", branch_name("demo", "a")), check=True)
         (self.root / "work.txt").write_text("the work")
         marked = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, marked)
@@ -1314,7 +1314,7 @@ class TheThreeStates(unittest.TestCase):
             "an unmerged step must be re-attempted from the trunk",
         )
 
-        subprocess.run((*git, "merge", "-q", "--no-edit", "step/a"), check=True)
+        subprocess.run((*git, "merge", "-q", "--no-edit", branch_name("demo", "a")), check=True)
         self.assertEqual(
             run_cli(gate, env, self.root)[0], 1, "a merged step must no-op on the trunk"
         )

@@ -1,6 +1,6 @@
 # 52 — A wave's merge lands nothing, because it reads the step name out of the branch wrongly
 
-**Status: proposed.** Found live, on a fan-out plan's first wave. Every fan-out run is affected,
+**Status: built.** Found live, on a fan-out plan's first wave. Every fan-out run is affected,
 not only the one it was found on.
 
 **North star ([principle 1](../../PRINCIPLES.md), [principle 2](../../PRINCIPLES.md)).** A
@@ -55,12 +55,30 @@ a ref outside the grammar is refused.
 
 - A fan-out wave whose branches all verified lands every one of them in the parent, and the
   record lists each as landed.
-- A branch that carries work and whose mark report cannot be found halts the slot with
-  `gate_indeterminate`, naming the branch; it is never recorded as `not_reached`.
-- A candidate ref that `step_of_branch` does not parse is refused with a cause naming it.
+- A branch that carries work and whose mark report cannot be found, or cannot be read, halts
+  the slot with `merge_unjudged_work`, naming the branch; the census records it as
+  `gate_indeterminate`, never as `not_reached`.
+- A candidate ref that `step_of_branch` does not parse is refused with `merge_foreign_branch`,
+  naming it.
 - No test in `tests/` builds a step branch by hand.
+
+## As built
+
+- **The halt has a cause of its own.** The slot halts with the CLI cause `merge_unjudged_work`
+  rather than the exclusion value `gate_indeterminate`, because the two vocabularies are kept
+  distinct ([cli-contract.md](../../docs/cli-contract.md)). The branch's survey entry and the
+  join's census carry `gate_indeterminate`.
+- **An unreadable mark report halts too.** It may have recorded the work as verified, so
+  leaving the branch behind would be the same silent loss as a missing one. A report the gate
+  wrote naming `not_reached` or `gate_indeterminate` is a judgement, and stays an exclusion.
+- **The join refuses a foreign ref.** It shares the survey, and a ref no step owns is a fault
+  in the emitted workflow; it still never refuses over what a gate decided.
+- The remaining literal `step/<id>` refs in `tests/` are deliberate: foreign refs under test
+  (`test_supervision.py`, the survey and join refusals), the grammar's expected outputs
+  (`test_topology.py`), and record fixtures that never touch git.
 
 ## Touches
 
-`cairn/merge.py` (`survey`), `tests/test_merge_step.py`, `docs/merge-step.md` if the new
-refusal joins its cause vocabulary.
+`cairn/merge.py` (`survey`, `classify_candidate`, `run_merge`), `cairn/wave.py`,
+`tests/test_merge_step.py`, `tests/test_workflow.py`, `docs/merge-step.md`,
+`docs/workflow.md`, `docs/cli-contract.md`, `docs/verify-gate.md`.

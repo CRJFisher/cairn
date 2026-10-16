@@ -77,9 +77,11 @@ Doc 27 adds `branch_unowned`, raised where a branch cannot be proved to belong t
 plan's step and parent, and `excluded_path_changed`, raised where a step altered a path its
 commit is not allowed to stage.
 Doc 10 adds `merge_conflict`, `merge_not_landed`, `conflict_markers_committed`,
-`merge_indeterminate`, `merge_unowned_conflict`, `merge_wrong_branch`, and
-`merge_environment_redirected`. Doc 13 adds `engine_paths_unreadable`, which `lock
-acquire` raises when the engine cannot say where it keeps its run history.
+`merge_indeterminate`, `merge_unowned_conflict`, `merge_wrong_branch`,
+`merge_environment_redirected`, `merge_foreign_branch`, raised where a merge candidate is not
+a `step/<plan>/<step>` branch, and `merge_unjudged_work`, raised where a candidate carries
+work no readable gate report of the run judged. Doc 13 adds `engine_paths_unreadable`, which
+`lock acquire` raises when the engine cannot say where it keeps its run history.
 `base_catchup_enabled` is **not** in that vocabulary: it is raised only by `cairn schedule`,
 which leaves no report, so like the four below it is an exit diagnosis rather than a
 cause.

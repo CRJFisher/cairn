@@ -57,6 +57,7 @@ from cairn.report.spine import (
     SINKS,
 )
 from cairn.report.width import display_width, pad
+from cairn.topology import branch_name
 from cairn.view import VIEW_ABSENT, VIEW_FOREIGN, VIEW_SERVING
 from tests.test_run_record import (
     PACKAGE_ROOT,
@@ -474,9 +475,11 @@ class AnExclusionIsUnmissable(unittest.TestCase):
             "detail": {
                 "wave": 1,
                 "into": "main",
-                "arrived": ["step/alpha"],
+                "arrived": [branch_name("demo", "alpha")],
                 "excluded": {
-                    "step/beta": {"cause": "gate_indeterminate", "summary": "unreadable"}
+                    branch_name("demo", "beta"): {
+                        "cause": "gate_indeterminate", "summary": "unreadable"
+                    }
                 },
                 "settled": [],
             },
@@ -486,7 +489,7 @@ class AnExclusionIsUnmissable(unittest.TestCase):
             opening = loose(self._first_section(record, sink))
             with self.subTest(sink=sink):
                 self.assertIn("not a clean success", opening)
-                self.assertIn("step/beta", opening)
+                self.assertIn(branch_name("demo", "beta"), opening)
 
     def test_a_run_whose_process_could_not_be_checked_is_never_called_dead(self) -> None:
         """The reader may not inspect processes ([23 A]): the run reads as running, the

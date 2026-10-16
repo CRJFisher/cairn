@@ -250,7 +250,7 @@ never reached from one killed before it could write.
 | `provider_protocol`      | the step left no readable account of itself          | the gate                    |
 | `user_decision_required` | the step is blocked on a human decision              | the gate                    |
 | `not_reached`            | the step left no report of this run, so it never ran | the gate                    |
-| `gate_indeterminate`     | the gate could not establish what happened           | the gate                    |
+| `gate_indeterminate`     | the gate could not establish what happened           | the gate, or the census     |
 | `timed_out`              | the step was stopped before it reported              | the gate, or the run record |
 | `retry_exhausted`        | the step hit its retry bound                         | the run record              |
 | `orchestrator_died`      | the run's own process was killed under the step      | the run record              |
