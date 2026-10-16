@@ -442,13 +442,19 @@ runs turns on the same absent report the kill caused, so nothing asserted over w
 left ([verify-gate.md](verify-gate.md)). A session its own wrapper stopped does leave a
 report, and carries the same two numbers in it.
 
-`left_uncommitted` names the paths the step's commit left alone because they were already
-dirty when its session started — somebody else's in-flight work in the same checkout, proved
-unchanged by the step — and together they raise one `follow_up` item naming them, so a
+`left_uncommitted` names the paths a chain step's commit left alone because they were
+already dirty when its session started — somebody else's in-flight work in the same checkout,
+proved unchanged by the step — and together they raise one `follow_up` item naming them, so a
 commit can be read as scoped without diffing it against the step's transcript
 ([cli-contract.md](cli-contract.md)). A step that changed such a path instead commits
 nothing and fails `excluded_path_changed`, naming the overlap
-([supervision.md](supervision.md)).
+([supervision.md](supervision.md)). A step in its own worktree never has such paths: everything
+dirty there is the step's, so its commit takes all of it or fails `work_left_uncommitted`
+([topology.md](topology.md)). Work a halted attempt left in that worktree reaches the record
+through the step's `setup` node: its report's `detail` names the paths as `carried` and the
+run that left them as `carried_from_run` where that run's uncommitted marker says so, and its
+one follow-up line saying the step's commit takes them joins the step's `follow_up_work`,
+which gathers the setup's, the work's and the commit's follow-ups in that order.
 
 `assertion_stdout` and `assertion_stderr` are the end of what a failed assertion printed on
 each channel, read from the logs the engine kept for that node, so the report can quote why a

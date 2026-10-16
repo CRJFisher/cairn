@@ -2197,6 +2197,18 @@ class AStagedDeletionIsCommittedWithTheStepsOtherWork(RepositoryCase):
         self.assertEqual(committed_paths_of_head(self.repository), ["README.md", "other.txt"])
         self.assertEqual(tree_state(self.repository), ())
 
+    def test_a_file_staged_and_then_deleted_does_not_fail_the_commit(self) -> None:
+        # Dirty as `AD`: staging removes it from the index, and naming it in the commit's
+        # pathspec would fail every attempt over this tree.
+        (self.repository / "gone.txt").write_text("staged\n", encoding="utf-8")
+        git(self.repository, ("add", "gone.txt"))
+        (self.repository / "gone.txt").unlink()
+        (self.repository / "other.txt").write_text("the step's\n", encoding="utf-8")
+        result = commit_as_step(self.root, self.repository, "cairn(a): work")
+        self.assertEqual(result.status, "done")
+        self.assertEqual(committed_paths_of_head(self.repository), ["other.txt"])
+        self.assertEqual(tree_state(self.repository), ())
+
     def test_an_unstaged_deletion_is_committed_too(self) -> None:
         (self.repository / "README.md").unlink()
         result = commit_as_step(self.root, self.repository, "cairn(a): delete")
@@ -2307,6 +2319,197 @@ class AMarkerNeverOutrunsTheCommittedTree(RepositoryCase):
         )
         self.assertEqual(result.status, "done")
         self.assertEqual(committed_paths_of_head(self.repository), ["own.txt"])
+        self.assertEqual(result.detail["left_uncommitted"], ["theirs.txt"])
+
+
+class AStepsOwnWorktreeCommitsWhatAHaltedAttemptLeft(RepositoryCase):
+    """[53]: a recovery reused worktrees holding a halted attempt's uncommitted work. The
+    per-attempt baseline classed that work as somebody else's, so one step was refused for
+    touching it and the other committed its marker alone beside it."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.worktree = self.step_worktree("alpha")
+
+    def halt_with_work(self) -> None:
+        """What an attempt that halted after its work and before its commit leaves."""
+        (self.worktree / "carried.txt").write_text("the halted attempt's\n", encoding="utf-8")
+        write_marker(self.worktree, "alpha", "run-halted", "once", "once", "halted")
+
+    def recover(self, touch: bool) -> CommandResult:
+        """The recovering attempt: snapshot, a session that may finish the work, the
+        marker, and the commit."""
+        before = snapshot_of(self.worktree, *(dirty_snapshot(self.worktree) or {}))
+        self.assertIn("carried.txt", before)
+        if touch:
+            (self.worktree / "carried.txt").write_text("finished\n", encoding="utf-8")
+        write_marker(self.worktree, "alpha", "run-1", "once", "once", "recovered")
+        return commit_as_step(
+            self.root, self.worktree, "cairn(alpha): work", step_id="alpha",
+            dirty_before=before,
+        )
+
+    def test_setup_names_the_work_a_reused_worktree_carries_and_the_run_that_left_it(
+        self,
+    ) -> None:
+        self.halt_with_work()
+        result = setup_worktree(
+            self.repository, self.worktree, "main", plan="demo", step="alpha"
+        )
+        self.assertEqual(result.detail["state"], HEALTHY)
+        self.assertEqual(result.detail["carried"], [".steps/alpha.done", "carried.txt"])
+        self.assertEqual(result.detail["carried_from_run"], "run-halted")
+        self.assertTrue(any("2 uncommitted path(s) from run run-halted" in line
+                            for line in result.follow_up_work))
+
+    def test_work_carried_beside_a_committed_marker_names_no_run(self) -> None:
+        # A committed marker names the run whose work is in history, not the attempt that
+        # left this work behind.
+        write_marker(self.worktree, "alpha", "run-landed", "once", "once", "landed")
+        git(self.worktree, ("add", "--all"))
+        git(self.worktree, ("commit", "--quiet", "-m", "an earlier run's marker"))
+        (self.worktree / "carried.txt").write_text("the halted attempt's\n", encoding="utf-8")
+        result = setup_worktree(
+            self.repository, self.worktree, "main", plan="demo", step="alpha"
+        )
+        self.assertEqual(result.detail["carried"], ["carried.txt"])
+        self.assertIsNone(result.detail["carried_from_run"])
+        self.assertTrue(any("from an earlier attempt" in line for line in result.follow_up_work))
+
+    def test_a_clean_reused_worktree_carries_nothing(self) -> None:
+        result = setup_worktree(
+            self.repository, self.worktree, "main", plan="demo", step="alpha"
+        )
+        self.assertEqual(result.detail["carried"], [])
+        self.assertIsNone(result.detail["carried_from_run"])
+        self.assertEqual(result.follow_up_work, [])
+
+    def test_a_step_that_touched_the_carried_work_commits_it(self) -> None:
+        self.halt_with_work()
+        result = self.recover(touch=True)
+        self.assertEqual(result.status, "done")
+        self.assertEqual(
+            committed_paths_of_head(self.worktree), [".steps/alpha.done", "carried.txt"]
+        )
+        self.assertEqual(result.detail["left_uncommitted"], [])
+        self.assertEqual(tree_state(self.worktree), ())
+
+    def test_a_step_that_touched_nothing_commits_the_carried_work_with_its_marker(
+        self,
+    ) -> None:
+        self.halt_with_work()
+        result = self.recover(touch=False)
+        self.assertEqual(result.status, "done")
+        self.assertEqual(
+            committed_paths_of_head(self.worktree), [".steps/alpha.done", "carried.txt"]
+        )
+        self.assertEqual(tree_state(self.worktree), ())
+
+    def test_a_step_its_gate_skipped_still_commits_the_carried_work(self) -> None:
+        # A fresh marker left by the halted attempt skips the work node, so its report
+        # carries no snapshot; the worktree's work is still the step's.
+        self.halt_with_work()
+        result = commit_as_step(
+            self.root, self.worktree, "cairn(alpha): no-op", step_id="alpha",
+            dirty_before=None,
+        )
+        self.assertEqual(result.status, "done")
+        self.assertEqual(
+            committed_paths_of_head(self.worktree), [".steps/alpha.done", "carried.txt"]
+        )
+
+    def test_a_path_the_commit_cannot_carry_refuses_and_withdraws_the_marker(self) -> None:
+        inner = make_repository(self.root, "inner")
+        git(
+            self.worktree,
+            ("-c", "protocol.file.allow=always", "submodule", "add", "--quiet", str(inner), "sub"),
+        )
+        git(self.worktree, ("commit", "--quiet", "-m", "add submodule"))
+        head = git(self.worktree, ("rev-parse", "HEAD")).stdout
+        (self.worktree / "sub" / "scratch.txt").write_text("x\n", encoding="utf-8")
+        (self.worktree / "own.txt").write_text("the step's\n", encoding="utf-8")
+        marker = write_marker(self.worktree, "alpha", "run-1", "once", "once", "done")
+        with self.assertRaises(CairnError) as caught:
+            commit_as_step(
+                self.root, self.worktree, "cairn(alpha): work", step_id="alpha"
+            )
+        self.assertEqual(caught.exception.cause, "work_left_uncommitted")
+        self.assertEqual(caught.exception.detail["uncommitted_paths"], ["sub"])
+        self.assertEqual(git(self.worktree, ("rev-parse", "HEAD")).stdout, head)
+        self.assertFalse(marker.exists())
+        # Unstaged again, so the attempt that redoes the step finds the tree as it was left.
+        self.assertEqual(
+            git(self.worktree, ("diff", "--cached", "--name-only")).stdout, ""
+        )
+        self.assertTrue((self.worktree / "own.txt").exists())
+        self.assertTrue((self.worktree / "sub" / "scratch.txt").exists())
+
+    def test_a_persons_own_linked_worktree_keeps_the_per_attempt_baseline(self) -> None:
+        # A chain step run from a person's linked checkout proves none of the ownership
+        # facts, so their in-flight work is left alone and named.
+        checkout = self.root / "mine"
+        git(self.repository, ("worktree", "add", "--quiet", "-b", "feature", str(checkout)))
+        (checkout / "theirs.txt").write_text("someone else's\n", encoding="utf-8")
+        before = snapshot_of(checkout, "theirs.txt")
+        (checkout / "own.txt").write_text("the step's\n", encoding="utf-8")
+        result = commit_as_step(self.root, checkout, "cairn(a): work", dirty_before=before)
+        self.assertEqual(committed_paths_of_head(checkout), ["own.txt"])
+        self.assertEqual(result.detail["left_uncommitted"], ["theirs.txt"])
+        self.assertIn("theirs.txt", tree_state(checkout) or ())
+
+    def keeps_the_per_attempt_baseline(self, worktree: Path) -> None:
+        """A commit in `worktree` as step alpha stages its own path and leaves theirs named."""
+        (worktree / "theirs.txt").write_text("someone else's\n", encoding="utf-8")
+        before = snapshot_of(worktree, "theirs.txt")
+        (worktree / "own.txt").write_text("the step's\n", encoding="utf-8")
+        result = commit_as_step(
+            self.root, worktree, "cairn(alpha): work", step_id="alpha", dirty_before=before
+        )
+        self.assertEqual(committed_paths_of_head(worktree), ["own.txt"])
+        self.assertEqual(result.detail["left_uncommitted"], ["theirs.txt"])
+
+    def test_the_steps_branch_away_from_its_derived_path_keeps_the_per_attempt_baseline(
+        self,
+    ) -> None:
+        git(self.repository, ("worktree", "remove", str(self.worktree)))
+        elsewhere = self.root / "elsewhere"
+        git(self.repository, ("worktree", "add", "--quiet", str(elsewhere), self.step_branch("alpha")))
+        self.keeps_the_per_attempt_baseline(elsewhere)
+
+    def test_a_worktree_reached_through_a_symlinked_repository_is_still_the_steps(
+        self,
+    ) -> None:
+        # The engine names the worktree under the link's spelling, which the resolved
+        # repository no longer carries.
+        link = self.root / "linked"
+        link.symlink_to(self.repository)
+        linked_root = worktrees_root_for(link, "demo")
+        linked_root.parent.mkdir(parents=True, exist_ok=True)
+        git(self.repository, ("worktree", "remove", str(self.worktree)))
+        worktree = linked_root / "alpha"
+        setup_worktree(link, worktree, "main", plan="demo", step="alpha")
+        (worktree / "carried.txt").write_text("the halted attempt's\n", encoding="utf-8")
+        before = snapshot_of(worktree, "carried.txt")
+        result = commit_as_step(
+            self.root, worktree, "cairn(alpha): work", step_id="alpha", dirty_before=before
+        )
+        self.assertEqual(committed_paths_of_head(worktree), ["carried.txt"])
+        self.assertEqual(result.detail["left_uncommitted"], [])
+
+    def test_a_worktree_with_no_owner_record_keeps_the_per_attempt_baseline(self) -> None:
+        git(self.repository, ("update-ref", "-d", owner_ref("demo", "alpha")))
+        self.keeps_the_per_attempt_baseline(self.worktree)
+
+    def test_a_worktree_of_another_step_keeps_the_per_attempt_baseline(self) -> None:
+        # The branch must be this step's: a commit naming another step proves nothing.
+        (self.worktree / "theirs.txt").write_text("not beta's\n", encoding="utf-8")
+        before = snapshot_of(self.worktree, "theirs.txt")
+        (self.worktree / "own.txt").write_text("beta's\n", encoding="utf-8")
+        result = commit_as_step(
+            self.root, self.worktree, "cairn(beta): work", step_id="beta",
+            dirty_before=before,
+        )
+        self.assertEqual(committed_paths_of_head(self.worktree), ["own.txt"])
         self.assertEqual(result.detail["left_uncommitted"], ["theirs.txt"])
 
 

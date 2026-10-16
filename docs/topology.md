@@ -218,6 +218,24 @@ what is inside was ever committed. The rename is refused unless the path sits in
 the path with symlinks resolved, so that `/repo-backup` is not mistaken for something under
 `/repo` and a worktrees root symlinked onto another volume still converges.
 
+**A reused worktree's uncommitted work is the step's.** Nobody but this plan's step writes
+in its worktree, which the branch-owner record proves, so work a halted attempt left there
+belongs to the step that resumes it. `worktree setup` reports those paths as `carried`
+whenever it keeps a worktree — reused or fast-forwarded — and
+as `carried_from_run` the run that left them where that run's uncommitted marker names it,
+with one follow-up line saying the step's commit takes them. The step's commit then
+baselines at the branch tip rather than at its session's start: it stages every dirty path
+in the worktree, the carried ones included, whether or not the resuming session touched
+them. A worktree counts as the step's own only when all three facts hold — it sits at the
+path derived for its plan and this step, it is on `step/<plan>/<step>`, and the owner record
+names that branch — so a chain step run from a person's own linked checkout keeps the
+per-attempt baseline that protects their work ([cli-contract.md](cli-contract.md)).
+
+**No step-owned worktree ends a commit with its marker beside uncommitted work.** A path the
+commit cannot carry there — dirty submodule content, for one — is work the assertion passed
+over that `HEAD` would not hold, so the commit refuses as `work_left_uncommitted`, names the
+paths, unstages what it staged and withdraws the marker so the next run redoes the step.
+
 `cairn worktree prune` runs `git worktree remove` inside the write mutex. Uncommitted work
 in a worktree is a killed agent's output, so a dirty worktree is kept and reported as
 follow-up work rather than discarded — unless `--force` is passed explicitly, which nothing

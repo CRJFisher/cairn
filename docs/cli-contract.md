@@ -75,7 +75,8 @@ Doc 06 adds `invalid_marker`, `invalid_occasion`, `invalid_reads`, `invalid_scop
 `base_config_unreadable`, `worktree_dirty`, `worktree_foreign`, and `worktree_unusable`.
 Doc 27 adds `branch_unowned`, raised where a branch cannot be proved to belong to this
 plan's step and parent, and `excluded_path_changed`, raised where a step altered a path its
-commit is not allowed to stage.
+commit is not allowed to stage. Doc 53 adds `work_left_uncommitted`, raised where a commit in
+a step's own worktree would leave a dirty path beside the step's marker.
 Doc 10 adds `merge_conflict`, `merge_not_landed`, `conflict_markers_committed`,
 `merge_indeterminate`, `merge_unowned_conflict`, `merge_wrong_branch`,
 `merge_environment_redirected`, `merge_foreign_branch`, raised where a merge candidate is not
@@ -250,8 +251,8 @@ branch twice ([topology.md](topology.md)) — and `commit`, taking `--message` a
 stages what the step's own session dirtied and the step's marker by path, never the working
 tree at large, and distinguishes nothing-to-commit from a staging failure by reading the
 index. Every work step records in its report's `detail`, as `dirty_before`, what was already
-dirty when its session started: a mapping of path to the content it then held. The commit
-stages the paths dirty now and not then, leaves the rest alone, and names them as
+dirty when its session started: a mapping of path to the content it then held. Outside a
+step's own worktree, the commit stages the paths dirty now and not then, leaves the rest alone, and names them as
 `left_uncommitted` and in its follow-up work. An excluded path whose content moved is an
 `excluded_path_changed` refusal that commits nothing — the step cannot claim the path as its
 own work nor prove it left it alone, and a marker over it would stand for work absent from
@@ -259,7 +260,15 @@ own work nor prove it left it alone, and a marker over it would stand for work a
 alone; one whose snapshot is absent because git would not answer is a `git_failed` refusal,
 and one that will not parse or whose snapshot is any shape but path to digest is an
 `invalid_report` refusal, because a commit that cannot be scoped is the loss this scoping
-exists to prevent. A present snapshot is never read as a missing one. Every
+exists to prevent. A present snapshot is never read as a missing one. In a step's own
+worktree — the path derived for its plan and step, on its `step/<plan>/<step>` branch, which
+the owner record names — the commit reads no snapshot: the branch tip is its baseline, every
+dirty path is staged, and a path still dirty after staging is a `work_left_uncommitted`
+refusal that commits nothing and withdraws the marker ([topology.md](topology.md)).
+`worktree setup` reports, as `carried`, the uncommitted paths a worktree it reused or
+fast-forwarded already held — an empty list for a clean or newly created one — with one
+follow-up line when there are any, and as `carried_from_run` the run that left them where
+that run's uncommitted marker says so. Every
 refusal withdraws the step's fresh marker from the working tree, restoring whatever `HEAD`
 already held. Each holds the git write mutex inside itself.
 

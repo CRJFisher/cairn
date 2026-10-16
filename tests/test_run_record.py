@@ -906,6 +906,23 @@ class AStepTheEngineKilledIsTimedOut(unittest.TestCase):
             "left 1 path(s) uncommitted: eslint.config.js", step["follow_up_work"]
         )
 
+    def test_work_a_reused_worktree_carried_is_named_in_its_steps_record(self) -> None:
+        """[53]: the setup that reused a halted attempt's worktree says the step's commit
+        takes that work, and the step's record is where a person reads it."""
+        state, reports = halted_chain(("alpha",), fails_at="alpha")
+        line = (
+            "the worktree carries 1 uncommitted path(s) from run run-0; "
+            "this step's commit takes them as its own work"
+        )
+        reports["setup_alpha"] = {
+            "step_id": "setup_alpha", "run_id": "run-halt", "status": "noop",
+            "summary": "reused", "needs_user_decision": False,
+            "follow_up_work": [line],
+            "detail": {"carried": ["carried.txt"], "carried_from_run": "run-0"},
+        }
+        step = extract(state, reports, run_id="run-halt")["steps"][0]
+        self.assertIn(line, step["follow_up_work"])
+
     def test_a_waves_steps_are_ordered_by_id_and_never_by_the_node_that_named_them(
         self,
     ) -> None:

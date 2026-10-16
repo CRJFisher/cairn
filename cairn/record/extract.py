@@ -1429,6 +1429,7 @@ def _step_record(
     assertion = nodes.get(f"verify_{step_id}")
     has_assertion = assertion is not None
 
+    setup_report = reports.get(f"setup_{step_id}")
     work_report = reports.get(f"{WORK_ROLE}_{step_id}")
     mark_report = reports.get(f"{MARK_ROLE}_{step_id}")
     commit_report = reports.get(f"{COMMIT_ROLE}_{step_id}")
@@ -1541,10 +1542,15 @@ def _step_record(
         outcome=outcome,
         overlays=overlays,
         verified=outcome == OUTCOME_VERIFIED,
-        # The commit's follow-up is the step's too: a path it left uncommitted because
-        # somebody else had it dirty is work the step found and did not do ([21]).
+        # The setup's and the commit's follow-ups are the step's too: work a halted attempt
+        # left in the step's worktree, which its commit takes ([53]), and a path the commit
+        # left uncommitted because somebody else had it dirty ([21]).
         follow_up_work=normalise_all(
-            [*_follow_ups(work_report), *_follow_ups(commit_report)]
+            [
+                *_follow_ups(setup_report),
+                *_follow_ups(work_report),
+                *_follow_ups(commit_report),
+            ]
         ),
         left_uncommitted=normalise_all(commit_detail.get("left_uncommitted")),
         nodes=sorted(_nodes_of_step(nodes, step_id)),

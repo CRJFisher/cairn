@@ -1,6 +1,6 @@
 # 53 — A reused worktree carries a halted run's work, and the commit disowns it
 
-**Status: proposed.** Found live, recovering a fan-out run whose first attempt halted before
+**Status: built.** Found live, recovering a fan-out run whose first attempt halted before
 any step committed.
 
 **North star ([principle 2](../../PRINCIPLES.md)).** A marker is published only over state the

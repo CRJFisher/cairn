@@ -115,7 +115,8 @@ def _with_dirty_before(
     alone, which is why the snapshot carries content and not just paths ([21]). The key is
     written either way: `null` where git would not say, so the commit can refuse rather than
     stage the marker over work it cannot scope — a step whose snapshot failed is not a step
-    that dirtied nothing.
+    that dirtied nothing. A commit in the step's own worktree does not read it: everything
+    dirty there is the step's, so the branch tip is its baseline ([53]).
     """
     return result._replace(detail={**result.detail, DIRTY_BEFORE: before})
 

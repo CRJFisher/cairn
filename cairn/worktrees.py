@@ -49,16 +49,18 @@ from cairn.gitio import (
     read_blob,
     resolve_ref,
     same_repository,
+    tree_entries,
     tree_state,
     update_ref,
     working_tree_root,
     worktree_entries,
 )
 from cairn.locks import git_write_mutex, refuse_unresolved_merge, unresolved_merge
-from cairn.marker import marker_path
+from cairn.marker import marker_path, read_marker
 from cairn.topology import (
     BRANCH_PREFIX,
     WORKTREES_SUFFIX,
+    TopologyError,
     branch_name,
     branch_namespace,
     node_name,
@@ -513,17 +515,53 @@ def setup_worktree(
             facts = inspect(repository, worktree, branch, base)
             state = classify(facts)
         outcome = _converge(repository, worktree, branch, base, facts, state)
+        carried = list(facts.dirty_paths) if state in (HEALTHY, MERGED_BEHIND) else []
+        carried_from = _carried_from_run(worktree, step, carried)
     return outcome._replace(
-        follow_up_work=[*outcome.follow_up_work, *_legacy_follow_up(legacy)],
+        follow_up_work=[
+            *outcome.follow_up_work,
+            *_carried_follow_up(carried, carried_from),
+            *_legacy_follow_up(legacy),
+        ],
         detail={
             **outcome.detail,
             "state": state,
             "worktree": str(worktree),
             "branch": branch,
             "base": base,
+            "carried": carried,
+            "carried_from_run": carried_from,
             "legacy_branch": None if legacy is None else legacy._asdict(),
         },
     )
+
+
+def _carried_from_run(worktree: Path, step: str, carried: list[str]) -> str | None:
+    """The earlier attempt the carried work came from, where its own marker still says so.
+
+    Only an uncommitted marker names that attempt: a committed one names the run whose work
+    is already in history, not the run that left this work behind.
+    """
+    if marker_path(worktree, step).relative_to(worktree).as_posix() not in carried:
+        return None
+    try:
+        recorded = read_marker(worktree, step)
+    except CairnError:
+        return None
+    return None if recorded is None else recorded["run_id"]
+
+
+def _carried_follow_up(carried: list[str], carried_from: str | None) -> list[str]:
+    """One line for a reused worktree that already held work, and none for a clean one."""
+    if not carried:
+        return []
+    source = f"run {carried_from}" if carried_from else "an earlier attempt"
+    return [
+        (
+            f"the worktree carries {len(carried)} uncommitted path(s) from {source}; "
+            "this step's commit takes them as its own work"
+        )
+    ]
 
 
 def _legacy_follow_up(legacy: LegacyVerdict | None) -> list[str]:
@@ -986,6 +1024,27 @@ def _addable_paths(working_directory: Path, root: Path, paths: list[str]) -> lis
     return [path for path in paths if path in indexed or (root / path).exists() or (root / path).is_symlink()]
 
 
+def _recordable_paths(working_directory: Path, paths: list[str]) -> list[str]:
+    """The staged paths a commit can name: those the index or `HEAD` still holds.
+
+    A file a halted attempt staged and then deleted is dirty as `AD`, and staging it takes
+    it out of the index altogether. Named in the commit's pathspec, it fails the whole
+    commit, and every later attempt over the same tree fails the same way — but it has
+    nothing to record, because neither side of the commit holds it.
+    """
+    if not paths:
+        return []
+    indexed = git(
+        working_directory, ("--literal-pathspecs", "ls-files", "-z", "--", *paths)
+    ).stdout.split("\0")
+    committed = git(
+        working_directory,
+        ("--literal-pathspecs", "ls-tree", "-r", "-z", "--name-only", "HEAD", "--", *paths),
+    ).stdout.split("\0")
+    held = set(indexed) | set(committed)
+    return [path for path in paths if path in held]
+
+
 def commit_step(
     working_directory: Path, message: str, *, step_id: str, context: RuntimeContext
 ) -> CommandResult:
@@ -1007,10 +1066,17 @@ def commit_step(
     passed over. Every excluded path is therefore proved unchanged against the content the
     baseline recorded, and a step that altered one commits nothing at all ([21 B]).
 
+    **A step's own worktree holds no foreign work.** Nobody but this plan's step writes
+    there, which the branch-owner record proves, so everything dirty in it is the step's —
+    including work an earlier, halted attempt left uncommitted and this attempt's snapshot
+    would class as somebody else's. There the baseline is the branch tip: every dirty path
+    is staged, and a path the commit still cannot carry is a refusal rather than a
+    `left_uncommitted` entry, because beside a marker it would be asserted work missing
+    from `HEAD` ([53]).
+
     A no-op when there is nothing staged and a failure when staging itself fails: the two
     must never be confused, because one is a step that had nothing to say and the other is
-    a step whose output was lost. A worktree run starts clean, so nothing here changes what
-    it commits.
+    a step whose output was lost.
     """
     root = working_tree_root(working_directory)
     marker = marker_path(root, step_id).relative_to(root).as_posix()
@@ -1071,7 +1137,10 @@ def _commit_scoped(
     marker: str,
 ) -> CommandResult:
     refuse_unresolved_merge(working_directory)
-    before = _dirty_before(context, step_id)
+    owned = _step_owned_worktree(working_directory, root, step_id)
+    # In the step's own worktree the branch tip is the baseline, which an empty snapshot
+    # states exactly: nothing was anybody else's when the step started.
+    before = {} if owned else _dirty_before(context, step_id)
     with git_write_mutex(working_directory):
         now = tree_state(working_directory)
         if now is None:
@@ -1111,6 +1180,9 @@ def _commit_scoped(
         addable = _addable_paths(working_directory, root, staged_paths)
         if addable:
             git(working_directory, ("--literal-pathspecs", "add", "--all", "--", *addable))
+        if owned:
+            _refuse_work_left_behind(working_directory, step_id, staged_paths)
+        staged_paths = _recordable_paths(working_directory, staged_paths)
         # The question is what the commit would record, so it is asked of the index, and of
         # the step's own paths within it. A working tree can hold residue `add` cannot stage
         # — dirty submodule content, for one — and reading the tree instead turns a step
@@ -1149,6 +1221,83 @@ def _commit_scoped(
         None,
         {**detail, "commit": head, "diffstat": changed},
     )
+
+
+def _step_owned_worktree(working_directory: Path, root: Path, step_id: str) -> bool:
+    """Whether this tree is the worktree Cairn made for this step, proved rather than assumed.
+
+    Three facts, each one a person's own checkout cannot hold by accident: the tree is a
+    linked worktree at the path derived for a plan and this step, it is on that pair's
+    branch, and the branch-owner record names that branch for that pair. A person who runs
+    a chain step from their own linked checkout meets none of them, so their in-flight work
+    keeps the per-attempt baseline that protects it.
+
+    The path is checked by its derived shape, `<repository>.cairn-worktrees/<plan>/<step>`,
+    against both the spelling the engine gave and the resolved one, rather than recomputed
+    from the repository: a repository reached through a symlink derives its worktrees root
+    from the link's name, which its resolved path no longer carries.
+    """
+    try:
+        repository = main_working_tree(root)
+    except CairnError:
+        return False
+    if root == repository:
+        return False
+    on = checked_out_branch(root)
+    if on is None or not on.startswith(BRANCH_PREFIX):
+        return False
+    plan, _, step = on[len(BRANCH_PREFIX):].rpartition("/")
+    if step != step_id:
+        return False
+    try:
+        if branch_name(plan, step_id) != on:
+            return False
+    except TopologyError:
+        return False
+    if not any(
+        candidate.name == step_id
+        and candidate.parent.name == plan
+        and candidate.parent.parent.name.endswith(WORKTREES_SUFFIX)
+        for candidate in (Path(os.path.abspath(working_directory)), root)
+    ):
+        return False
+    owner = read_branch_owner(repository, plan, step_id)
+    return owner is not None and owner["branch"] == on
+
+
+def _refuse_work_left_behind(
+    working_directory: Path, step_id: str, staged_paths: list[str]
+) -> None:
+    """Refuse a step-owned worktree's commit that would leave a dirty path beside the marker.
+
+    Everything in this tree is the step's, so a path `add` could not take — dirty submodule
+    content, for one — is work the assertion passed over and `HEAD` would not hold. Asked
+    after staging, of the gap between the index and the tree, because that is exactly what
+    the commit would leave out. A refusal unstages what this commit staged, so the tree is
+    left as the step left it for the attempt that redoes it.
+    """
+    entries = tree_entries(working_directory)
+    if entries is None:
+        raise CairnError(
+            "git_failed",
+            f"git would not say what is dirty in {working_directory} after staging, so "
+            "whether this commit carries all of the step's work cannot be established",
+            detail={"working_directory": str(working_directory)},
+        )
+    behind = sorted(path for status, path in entries if status[1] != " ")
+    if behind:
+        git(
+            working_directory,
+            ("--literal-pathspecs", "reset", "--quiet", "--", *staged_paths),
+            check=False,
+        )
+        raise CairnError(
+            "work_left_uncommitted",
+            f"step {step_id!r} would commit with {len(behind)} path(s) of its own worktree "
+            f"still uncommitted: {', '.join(behind)}. Nothing was committed, and this "
+            "step's marker was withdrawn so the next run redoes it; settle those paths first",
+            detail={"step": step_id, "uncommitted_paths": behind},
+        )
 
 
 def _follow_up(left: list[str]) -> list[str]:
