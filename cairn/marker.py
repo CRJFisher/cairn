@@ -26,7 +26,7 @@ from cairn.core import (
     read_step_report,
     write_json,
 )
-from cairn.gitio import digest_states
+from cairn.gitio import digest_states, git
 from cairn.layout import MARKER_DIRECTORY, MARKER_SUFFIX, occasion_path
 from cairn.plan.schema import (
     INPUTS_SCOPE,
@@ -328,6 +328,22 @@ def marker_path(root: Path, step_id: str) -> Path:
     if _STEP_ID.match(step_id) is None:
         raise CairnError("invalid_step_id", f"{step_id!r} is not a step id")
     return root / MARKER_DIRECTORY / f"{step_id}{MARKER_SUFFIX}"
+
+
+def marked_at(root: Path, step_id: str) -> str | None:
+    """The commit that last wrote the step's marker, or None where git cannot say.
+
+    A marker read fresh was true when that commit landed. Everything after it is what a
+    re-assertion of the step is now proving, so naming it is what lets a done step that no
+    longer passes point at the commits that moved the tree under it ([54 C]).
+    """
+    try:
+        path = marker_path(root, step_id).relative_to(root).as_posix()
+        found = git(root, ("log", "-1", "--format=%H", "--", path), check=False)
+    except (CairnError, ValueError):
+        return None
+    commit = found.stdout.strip()
+    return commit if found.exit_code == 0 and commit else None
 
 
 def read_marker(root: Path, step_id: str) -> Marker | None:

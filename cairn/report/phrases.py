@@ -38,6 +38,7 @@ from cairn.record.vocabulary import (
     NEXT_AWAIT_ALLOWANCE,
     NEXT_DECIDE,
     NEXT_FIX_ASSERTION,
+    NEXT_FIX_ENVIRONMENT,
     NEXT_NOTHING,
     NEXT_RERUN,
     NEXT_SETTLE_MERGE,
@@ -71,6 +72,9 @@ from cairn.report.spine import (
 )
 from cairn.verify import (
     ASSERTION_INTERRUPTED as CAUSE_ASSERTION_INTERRUPTED,
+)
+from cairn.verify import (
+    ASSERTION_UNRUNNABLE as CAUSE_ASSERTION_UNRUNNABLE,
 )
 from cairn.verify import (
     EXCLUSION_CAUSES,
@@ -154,6 +158,11 @@ SENTENCE_BY_ACTION: dict[str, str] = {
         "verify_timeout too small for it, or something that signalled it. Run as it stands, "
         "the assertion meets the same end."
     ),
+    NEXT_FIX_ENVIRONMENT: (
+        "Make the assertion's command runnable where it runs — a prepare the plan states "
+        "for every worktree, or the tool it calls installed — then run it again as a "
+        "recovery. Over the same environment, the assertion meets the same shell."
+    ),
     NEXT_AWAIT_ALLOWANCE: (
         "Run it again as a recovery once the allowance it was held on reopens: every step "
         "already done no-ops, and the held step starts again over the tree its session left."
@@ -234,6 +243,14 @@ SENTENCE_BY_CAUSE: dict[str, str] = {
         "the step's assertion was ended by a signal before it exited — the engine's kill at "
         "its bound, or something else that signalled it — so it decided nothing about the "
         "work. The assertion's own summary says which"
+    ),
+    CAUSE_ASSERTION_UNRUNNABLE: (
+        "the step's assertion exited 126 or 127, the shell's own words for a command it "
+        "never executed — not found, or found and not executable — so it never judged the "
+        "work. Most often what failed is the environment the assertion ran in, a worktree "
+        "missing what the project installs outside git; it can also be a program the step "
+        "was meant to build. The assertion's summary quotes the last thing it wrote, which "
+        "names the missing command"
     ),
     CAUSE_ORCHESTRATOR_DIED: (
         "the run's own process was killed under the step, so nothing decided its fate at all"

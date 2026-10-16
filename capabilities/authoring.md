@@ -61,6 +61,12 @@ value beside the sentence so the person confirms the translation rather than dis
 Where the request makes a model the condition of going ahead and it cannot be honoured
 exactly, say so and stop — before the document is written, and before anything else here.
 
+**A setup command the documents state is the plan's `prepare`.** "Run `uv sync --frozen`
+first" is `plan.prepare`, quoted verbatim, and every isolated step's worktree runs it before
+the step works there, because a worktree holds only what git tracks
+([../docs/plan-derivation.md](../docs/plan-derivation.md)). The parse report shows it, so the
+person sees whether a worktree will hold what the assertions call.
+
 ## The procedure
 
 1. **Derive the graph.** Follow [../docs/plan-derivation.md](../docs/plan-derivation.md) — two

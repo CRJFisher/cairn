@@ -314,12 +314,23 @@ def merge_provider(default_kind: str) -> str:
     return kind[len(AGENT_FAMILY) :]
 
 
+class Preparation(NamedTuple):
+    """The plan's command for making a fresh worktree ready, and its bound in seconds.
+
+    Only an isolated step has a worktree of its own. A chain step stands in the repository
+    the run was started from, which is as ready as the person who started it left it.
+    """
+
+    command: str
+    timeout: int
+
+
 def _chain_nodes(
     step: Step, wave: int, repository: str, plan_slug: str, after: list[str]
 ) -> list[Node]:
     """A dependent step runs on the parent branch: work, verify, mark, commit."""
     return _step_nodes(
-        step, wave, repository, plan_slug, CHAIN, branch=None, after=after
+        step, wave, repository, plan_slug, CHAIN, branch=None, after=after, prepare=None
     )
 
 
@@ -330,10 +341,11 @@ def _isolated_nodes(
     plan_slug: str,
     branch: Branch,
     after: list[str],
+    prepare: Preparation | None,
 ) -> list[Node]:
     """An independent step gets a worktree: setup, work, verify, mark, commit."""
     return _step_nodes(
-        step, wave, repository, plan_slug, BRANCH, branch=branch, after=after
+        step, wave, repository, plan_slug, BRANCH, branch=branch, after=after, prepare=prepare
     )
 
 
@@ -346,6 +358,7 @@ def _step_nodes(
     *,
     branch: Branch | None,
     after: list[str],
+    prepare: Preparation | None,
 ) -> list[Node]:
     """The nodes one step becomes, in either graph position.
 
@@ -367,12 +380,17 @@ def _step_nodes(
                 "wave": wave,
                 "working_directory": repository,
                 "after": list(after),
-                "max_seconds": _support_seconds(),
+                # The plan's own command runs inside this node, after the git work and under
+                # a bound of its own, so the node's bound is the sum of the two.
+                "max_seconds": _support_seconds()
+                + (0 if prepare is None else prepare.timeout),
                 "detail": {
                     "plan": plan_slug,
                     "branch": branch["name"],
                     "worktree": branch["worktree"],
                     "base": branch["base"],
+                    "prepare": None if prepare is None else prepare.command,
+                    "prepare_timeout": None if prepare is None else prepare.timeout,
                 },
             }
         )
@@ -485,6 +503,11 @@ def derive(
     # a constant of Cairn's: a plan whose sentence pins every session to a model pins the one
     # that settles its conflicts too ([docs/merge-step.md]).
     resolver_model = graph["plan"]["default_model"]
+    prepare = (
+        None
+        if graph["plan"]["prepare"] is None
+        else Preparation(graph["plan"]["prepare"], graph["plan"]["prepare_timeout"])
+    )
 
     waves: list[Wave] = []
     branches: list[Branch] = []
@@ -529,7 +552,7 @@ def derive(
             branches.append(branch)
             nodes.extend(
                 _isolated_nodes(
-                    by_id[step_id], index, repository, plan_slug, branch, frontier
+                    by_id[step_id], index, repository, plan_slug, branch, frontier, prepare
                 )
             )
         merge_order.append([branch["name"] for branch in wave_branches])
@@ -668,6 +691,7 @@ __all__ = [
     "Branch",
     "Naming",
     "Node",
+    "Preparation",
     "Topology",
     "TopologyError",
     "Wave",

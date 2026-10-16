@@ -232,6 +232,7 @@ is derived from the record rather than composed as prose, and is one of:
 | `settle_merge`        | a step or a census exclusion left work unlanded, in a run whose topology has a merge                            | none                                                                                                       |
 | `rerun`               | the run failed, or a merge-less run left work unlanded                                                          | `python3 -m cairn run start --plan <plan> --repository <repository> --trigger recovery --recovering <run>` |
 | `fix_assertion`       | as `rerun`, where a signal ended the assertion of the step the fault is at                                      | the same recovery command, to use once what stopped the assertion has changed                              |
+| `fix_environment`     | as `rerun`, where the assertion of the step the fault is at never executed                                      | the same recovery command, to use once the assertion's command is runnable where it runs                   |
 | `await_allowance`     | as `rerun`, where the step the fault is at was held at the subscription's allowance                             | the same recovery command, to use once the window the step names has reopened                              |
 | `allowance_elsewhere` | as `await_allowance`, where the hold was taken on an account other than the one Claude Code is logged in to now | the same recovery command, to run at once                                                                  |
 | `start_scheduler`     | the run is queued and nothing is draining the queue                                                             | `python3 -m cairn schedule start`                                                                          |
@@ -373,10 +374,10 @@ relative link, which looks like an answer and goes nowhere — and a wildcard bi
 becomes one a browser can actually reach.
 
 Each step carries `step_id`, `title`, `slug`, `outcome`, `overlays`, `cause`, `position`,
-`asked`, `said`, `verified`, `divergence`, `freshness`, `completed_by_run`, `branch`,
-`commit`, `diffstat`, `left_uncommitted`, `turns`, `session_id`, `model`, `transcript`,
-`stderr_log`, `resume_command`, `follow_up_work`, `started_at`, `finished_at`, `exit_code`,
-`assertion_exit`, `assertion_source`, `assertion_backed_by`, `timeout_seconds`,
+`asked`, `said`, `gate_said`, `verified`, `divergence`, `freshness`, `completed_by_run`,
+`branch`, `commit`, `diffstat`, `left_uncommitted`, `turns`, `session_id`, `model`,
+`transcript`, `stderr_log`, `resume_command`, `follow_up_work`, `started_at`, `finished_at`,
+`exit_code`, `assertion_exit`, `assertion_source`, `assertion_backed_by`, `timeout_seconds`,
 `elapsed_seconds`, `assertion_stdout`, `assertion_stderr`, `remedy`, `headroom`,
 `consumption`, `where`, `nodes` and `provenance`.
 
@@ -511,6 +512,16 @@ step. When a later run's gate finds that marker fresh, its no-op report carries 
 and the record surfaces it as the step's `completed_by_run`. Without the link, a recovery
 run renders as a screen of no-ops with no account of who did the work — technically correct
 and useless.
+
+**A done step that no longer holds is excluded, not a no-op.** The marker gate's no-op still
+has its assertion re-run, and the verify gate decides it like any other step. Where that gate
+closes, the step is `excluded` for the gate's own cause — an assertion that no longer passes
+over the current tree is the usual one — and keeps its `freshness` and
+`completed_by_run`, because its work is still an earlier run's. Its `said` is that earlier
+run's words, so `gate_said`, the gate's own sentence wherever it closed, is the account its
+attention line carries: the run that recorded it done and the commits that landed since its
+marker ([verify-gate.md](verify-gate.md)). In a chain the steps behind it are `not_reached`,
+and collapse into one line naming it as the halt.
 
 **A no-op keeps the doer's name.** A recovery run's gate opens over a step that did nothing,
 because the freshness key still matched, and it rewrites the marker. Stamping that run's

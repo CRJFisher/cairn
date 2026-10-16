@@ -144,6 +144,11 @@ SIGNALLED_EXIT = -1
 # signal from anywhere else reads `-1`. An assertion can also exit `124` by itself — through
 # `timeout(1)`, for one — so the number alone does not say which happened ([engine_exit]).
 ENGINE_TIMEOUT_EXIT = 124
+# The shell's own two words for a command it never executed: found but not executable, and
+# not found at all. Read as exits they say the work failed, when what failed is the
+# environment the assertion runs in — a worktree missing what the project installs outside
+# git, most often ([54 B]).
+UNRUNNABLE_EXITS: tuple[int, ...] = (126, 127)
 
 
 def command_digest(command: str) -> str:
@@ -417,6 +422,11 @@ def _remedy_decision(
             "a signal ended the assertion before it exited, which no change to the work "
             "can fix"
         )
+    if exit_code in UNRUNNABLE_EXITS:
+        return REMEDY_DECLINE_IT, (
+            f"the assertion exited {exit_code}, so its command never executed, which no "
+            "change to the work can fix"
+        )
     try:
         work = read_step_report(directory, f"{WORK_PREFIX}{step_id}", context.run_id)
     except CairnError as exc:
@@ -594,8 +604,15 @@ def record_executed(
     # `_publish` can wait up to `PUBLICATION_WAIT_SECONDS` on another writer's lock — a
     # stretch a cancel must still be able to interrupt, not the brief write this guards.
     # An assertion a signal ended decided nothing, so it is no proof to share: filed,
-    # its failure would dominate and close every later gate quoting the command.
-    if exit_code != SIGNALLED_EXIT and isinstance(tree, str) and isinstance(command, str):
+    # its failure would dominate and close every later gate quoting the command. One whose
+    # command never executed decided nothing either, and what it met is the environment it
+    # stood in, which a worktree beside it with the same tree need not share.
+    if (
+        exit_code != SIGNALLED_EXIT
+        and exit_code not in UNRUNNABLE_EXITS
+        and isinstance(tree, str)
+        and isinstance(command, str)
+    ):
         _publish(context, step_id, command, tree, exit_code)
 
 
@@ -671,6 +688,7 @@ __all__ = [
     "SIGNALLED_EXIT",
     "SOURCE_KEY",
     "TREE_KEY",
+    "UNRUNNABLE_EXITS",
     "RemedyBrief",
     "assertion_report",
     "command_digest",

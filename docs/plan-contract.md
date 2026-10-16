@@ -147,6 +147,8 @@ answer recorded it, and it is held to that answer rather than to the documents: 
     "default_kind": "agent.claude",
     "default_model": "sonnet",
     "model_evidence": null,
+    "prepare": "uv sync --frozen",
+    "prepare_timeout": 600,
     "id_collisions": []
   },
   "steps": [ … ],
@@ -177,6 +179,20 @@ the provider is invoked with, so the words stay beside the value and the parse r
 the two together. A plan that states no model takes Cairn's own default — the provider's
 stable alias for its mid-tier model — and quotes nothing; a plan that states one and quotes
 nothing is `unquoted_model`.
+
+`prepare` is the command that makes a step's worktree ready to work and assert in. A
+worktree holds only what git tracks, so whatever the project installs or generates outside
+git — a virtual environment, `node_modules`, a generated client — is absent there, and an
+assertion written for the primary checkout meets a shell that cannot find its runner.
+`cairn worktree setup` runs `prepare` under `/bin/sh` in the worktree every time it creates
+or reuses one, before the step's work node ([topology.md](topology.md)), bounded by
+`prepare_timeout` seconds (600 unless the plan states one). A `prepare` that exits nonzero
+or outlives its bound fails setup as `worktree_prepare_failed`, carrying the command's
+output, and so does one that changes a path git does not ignore: a step's own worktree
+commits every path left dirty in it, so `prepare` may write only what git ignores. `null`
+means a worktree is used as git leaves it. A chain step has no worktree of its own — it
+stands in the repository the run was started from — so `prepare` never runs for one. A
+blank `prepare` is `plan_prepare`.
 
 `reason` on an omission is one of `deferred`, `gated`, `already_done`, `out_of_scope`. An
 omission's evidence is a quotation, checked like an edge's.
@@ -298,6 +314,7 @@ traceback — because a caller cannot tell a crash from a rejection.
 | `model`                 | an agent step naming no model                                                                                                                                    |
 | `plan_model`            | a plan naming no model for its sessions and its merge resolver to open on                                                                                        |
 | `unquoted_model`        | a plan stating a model and quoting no sentence of its documents for it                                                                                           |
+| `plan_prepare`          | a blank `prepare`, which names no command to make a worktree ready                                                                                               |
 | `scope_inputs`          | `scope: inputs` with nothing in `reads`                                                                                                                          |
 | `omitted_and_included`  | one name appearing as both a step and an omission                                                                                                                |
 | `unknown_question_step` | a question naming a step, or an edge end, that is not in the graph                                                                                               |
@@ -383,7 +400,8 @@ python3 -m cairn plan report <graph.json> [--source-root <dir>] [--out <path>]
 
 What Cairn understood, for a human to confirm before anything is generated: each step's
 kind, scope, verify command, assertion timeout and model; the model every session of the
-plan opens on, the merge resolver's included, beside the sentence it was read from;
+plan opens on, the merge resolver's included, beside the sentence it was read from; the
+`prepare` every worktree runs and its bound, or that there is none;
 **what each step is asked to do**, in full; every
 dependency marked declared or derived with the words that justify it; the waves the
 dependencies allow; what was left out and why; any id the engine forced a rename on; and

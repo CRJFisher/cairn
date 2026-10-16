@@ -76,7 +76,8 @@ Doc 06 adds `invalid_marker`, `invalid_occasion`, `invalid_reads`, `invalid_scop
 Doc 27 adds `branch_unowned`, raised where a branch cannot be proved to belong to this
 plan's step and parent, and `excluded_path_changed`, raised where a step altered a path its
 commit is not allowed to stage. Doc 53 adds `work_left_uncommitted`, raised where a commit in
-a step's own worktree would leave a dirty path beside the step's marker.
+a step's own worktree would leave a dirty path beside the step's marker. Doc 54 adds
+`worktree_prepare_failed`, raised where the plan's `prepare` failed in a step's worktree.
 Doc 10 adds `merge_conflict`, `merge_not_landed`, `conflict_markers_committed`,
 `merge_indeterminate`, `merge_unowned_conflict`, `merge_wrong_branch`,
 `merge_environment_redirected`, `merge_foreign_branch`, raised where a merge candidate is not
@@ -268,7 +269,11 @@ refusal that commits nothing and withdraws the marker ([topology.md](topology.md
 `worktree setup` reports, as `carried`, the uncommitted paths a worktree it reused or
 fast-forwarded already held — an empty list for a clean or newly created one — with one
 follow-up line when there are any, and as `carried_from_run` the run that left them where
-that run's uncommitted marker says so. Every
+that run's uncommitted marker says so. Given `--prepare` and `--prepare-timeout`, the plan's
+`prepare` and its bound, `worktree setup` then runs that command in the worktree and
+reports it as `prepared`; a `prepare` that exits nonzero, outlives its bound or changes a
+path git does not ignore is a `worktree_prepare_failed` refusal carrying its output
+([topology.md](topology.md)). Every
 refusal withdraws the step's fresh marker from the working tree, restoring whatever `HEAD`
 already held. Each holds the git write mutex inside itself.
 

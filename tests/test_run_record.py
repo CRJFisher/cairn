@@ -88,6 +88,7 @@ from cairn.record.vocabulary import (
     NEXT_ACTIONS,
     NEXT_AWAIT_ALLOWANCE,
     NEXT_FIX_ASSERTION,
+    NEXT_FIX_ENVIRONMENT,
     NEXT_RERUN,
     NEXT_SETTLE_MERGE,
     NEXT_WAIT,
@@ -128,6 +129,7 @@ from cairn.text import (
 )
 from cairn.verify import (
     ASSERTION_INTERRUPTED,
+    ASSERTION_UNRUNNABLE,
     EXCLUSION_CAUSES,
     NOT_REACHED,
     ORCHESTRATOR_DIED,
@@ -1241,6 +1243,80 @@ class TheHeadlineNamesTheFault(unittest.TestCase):
         self.assertEqual(record["next_action"]["action"], NEXT_FIX_ASSERTION)
         self.assertEqual(record["next_action"]["subject"], "b")
         self.assertIsNotNone(record["next_action"]["command"])
+
+    def test_a_halt_at_an_assertion_that_never_executed_says_to_fix_the_environment(
+        self,
+    ) -> None:
+        """[54 B]: a test runner missing from a fresh worktree was offered "run it again",
+        which meets the same shell."""
+        state, reports = halted_chain(("a", "b", "c"), fails_at="b")
+        reports["mark_b"] = {
+            **reports["mark_b"],
+            "cause": ASSERTION_UNRUNNABLE,
+            "detail": {"position": "chain", "verify_exit": 127, "reported": "noop"},
+        }
+        record = extract(state, reports, run_id="run-halt")
+        self.assertEqual(record["next_action"]["action"], NEXT_FIX_ENVIRONMENT)
+        self.assertEqual(record["next_action"]["subject"], "b")
+        self.assertIsNotNone(record["next_action"]["command"])
+
+    def test_a_done_step_that_no_longer_holds_stops_its_dependents_behind_it(self) -> None:
+        """[54 C]: the cascade is right, and the record names the done step as the halt."""
+        state, reports = halted_chain(("a", "b", "c", "d"), fails_at="b")
+        reports["work_b"] = {
+            **reports["work_b"],
+            "status": "noop",
+            "summary": "wrote the parser",
+            "detail": {
+                "scope": "once", "key": "once", "recorded_scope": "once",
+                "recorded_key": "once", "recorded_run": "run-0",
+            },
+        }
+        for node in state["nodes"]:
+            if node["step"]["name"] == "work_b":
+                node["status"] = 5
+        reports["mark_b"] = {
+            **reports["mark_b"],
+            "summary": "the step was already recorded done by run run-0, and its assertion "
+            "no longer passes over the current tree (it exited 1)",
+            "detail": {"position": "chain", "verify_exit": 1, "reported": "noop"},
+        }
+        record = extract(state, reports, run_id="run-halt")
+        by_id = {step["step_id"]: step for step in record["steps"]}
+        self.assertEqual(by_id["b"]["outcome"], OUTCOME_EXCLUDED)
+        self.assertEqual(by_id["b"]["cause"], "verify_failed")
+        self.assertEqual(by_id["b"]["completed_by_run"], "run-0")
+        self.assertIsNotNone(by_id["b"]["freshness"])
+        self.assertEqual(by_id["c"]["outcome"], OUTCOME_NOT_REACHED)
+        self.assertEqual(by_id["d"]["outcome"], OUTCOME_NOT_REACHED)
+        self.assertEqual(record["next_action"]["subject"], "b")
+        lines = [item["summary"] for item in record["attention"]]
+        self.assertIn("never reached behind b, with 1 more: d", lines)
+        # The step's own words are the earlier run's; the gate's say what happened now.
+        self.assertIn(reports["mark_b"]["summary"], lines)
+        self.assertNotIn("wrote the parser", lines)
+        self.assertNotIn(OVERLAY_DIVERGENCE, by_id["b"]["overlays"])
+        rendered = render(document(record, VIEW_SERVING), as_mapping(record)).text
+        self.assertIn("b was recorded done and no longer holds", rendered)
+        self.assertIn("run-0", rendered)
+
+    def test_a_done_step_whose_re_assertion_holds_is_still_a_no_op(self) -> None:
+        state, reports = halted_chain(("a", "b"), fails_at="b")
+        reports["work_b"] = {
+            **reports["work_b"],
+            "status": "noop",
+            "detail": {"recorded_scope": "once", "recorded_key": "once"},
+        }
+        del reports["mark_b"]
+        for node in state["nodes"]:
+            if node["step"]["name"] == "work_b":
+                node["status"] = 5
+            if node["step"]["name"] in ("verify_b", "mark_b", "commit_b"):
+                node["status"] = 4
+        record = extract(state, reports, run_id="run-halt")
+        by_id = {step["step_id"]: step for step in record["steps"]}
+        self.assertEqual(by_id["b"]["outcome"], OUTCOME_NO_OP)
+        self.assertIsNone(by_id["b"]["gate_said"])
 
     def test_a_remedied_step_carries_its_remedy_and_the_second_assertions_exit(
         self,

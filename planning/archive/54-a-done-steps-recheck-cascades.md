@@ -1,6 +1,6 @@
 # 54 — A done step's re-assertion that cannot run halts every step after it
 
-**Status: proposed.** Found live, on a recovery run of a chain plan.
+**Status: built.** Found live, on a recovery run of a chain plan.
 
 **North star ([principle 2](../../PRINCIPLES.md), [principle 3](../../PRINCIPLES.md)).** A
 recovery re-proves what is done and does what is not. Today a done step whose assertion cannot

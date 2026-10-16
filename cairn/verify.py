@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import sys
 import time
 import traceback
-from typing import Any, TypedDict, cast
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any, NamedTuple, TypedDict, cast
 
 from cairn.assertions import (
     DECISION_NOTHING_TO_ASSERT,
@@ -21,6 +24,7 @@ from cairn.assertions import (
     DECISION_SHARED,
     DECISION_SKIPPED_UPSTREAM,
     SIGNALLED_EXIT,
+    UNRUNNABLE_EXITS,
     assertion_report,
     decision_of,
     engine_exit,
@@ -42,6 +46,8 @@ from cairn.core import (
     survive_termination,
     write_report,
 )
+from cairn.gitio import git
+from cairn.layout import MARKED_AT
 from cairn.plan.schema import (
     ENGINE_NAME_MAX_BYTES,
     MARK_PREFIX,
@@ -50,6 +56,7 @@ from cairn.plan.schema import (
     VERIFY_PREFIX,
     WORK_PREFIX,
 )
+from cairn.text import flatten, last_line
 
 # Why a step contributed no verified work. Frozen: every exclusion the run record names
 # comes from here, and a message string never stands in for one. `retry_exhausted` and
@@ -80,6 +87,10 @@ PROVIDER_FAILED = "provider_failed"
 # credential refused — and the provider did not answer again within the time the step may
 # wait for it. The work is not wrong and was not judged ([headroom.py]).
 PROVIDER_UNREACHABLE = "provider_unreachable"
+# The assertion's command never executed: the shell found nothing to run, or could not run
+# what it found. It never judged the work, so it is never `verify_failed`; what it met is
+# most often the environment the assertion stands in ([54 B]).
+ASSERTION_UNRUNNABLE = "assertion_unrunnable"
 EXCLUSION_CAUSES: tuple[str, ...] = (
     VERIFY_FAILED,
     REPORTED_FAILURE,
@@ -94,6 +105,7 @@ EXCLUSION_CAUSES: tuple[str, ...] = (
     QUOTA_HELD,
     PROVIDER_FAILED,
     PROVIDER_UNREACHABLE,
+    ASSERTION_UNRUNNABLE,
 )
 
 # How a failure routes onward. The engine spells a chain halt and a branch exclusion both
@@ -106,6 +118,11 @@ POSITIONS: tuple[str, ...] = (CHAIN, BRANCH)
 # The engine's bound on every name it loads, stated once in [plan/schema.py]. The corpus
 # already carries a 67-character step id, which is why the handle below exists at all.
 _DIGEST_LENGTH = 16
+
+# How many of the commits since a done step's marker its summary lists; the rest are counted.
+LAPSE_SHOWN = 5
+# How much of the end of an assertion's standard error the gate reads for its last line.
+_STDERR_TAIL_BYTES = 8192
 
 GATE_VERB = "gate"
 # Exit 0 runs `mark_<id>` and the step's work is recorded; nonzero skips it and the step
@@ -179,13 +196,27 @@ class Divergence(TypedDict):
     `reported` is the step's own word for itself, or `REPORTED_NOTHING` where it gave none.
     The second is still a divergence worth recording: the assertion found the end state
     holding, and nothing said so — which is the difference between work that is merely
-    unrecorded and work that was never done. It is also the only channel that fact has. The
-    gate's own summary never reaches the record, and neither does the assertion's exit
-    status; a mark report contributes exactly its cause, its position and this.
+    unrecorded and work that was never done. It is also the only channel that fact has: the
+    record reads a mark report's cause, its position and this, and quotes the gate's own
+    summary only for a step the marker gate skipped, whose own words are an earlier run's.
     """
 
     reported: str
     asserted: bool
+
+
+class Lapse(NamedTuple):
+    """What has landed since a done step's marker, where its re-assertion no longer passes.
+
+    A recovery re-asserts every step it no-ops, so a step recorded done can fail over a
+    tree that moved on after it. The commits are the evidence a person reads first: the
+    marker was true when it was written, and one of these is the likeliest to have undone it.
+    """
+
+    # Newest first, each as `<short hash> <subject>`, at most `LAPSE_SHOWN` of them.
+    commits: tuple[str, ...]
+    total: int
+
 
 
 class Verdict(TypedDict):
@@ -288,7 +319,13 @@ def recheck_exit_reference(step_id: str) -> str:
     return f"${{{recheck_handle(step_id)}.exit_code}}"
 
 
-def judge(verify_exit: int | None, report: dict[str, Any] | None) -> Verdict:
+def judge(
+    verify_exit: int | None,
+    report: dict[str, Any] | None,
+    *,
+    said: str | None = None,
+    lapse: Lapse | None = None,
+) -> Verdict:
     """Decide whether this step's work may be recorded as verified.
 
     Verify owns the green light and self-report owns the veto, so the two are read
@@ -296,6 +333,10 @@ def judge(verify_exit: int | None, report: dict[str, Any] | None) -> Verdict:
     assertion decided anything — the plan declared the step has no checkable effect, or the
     allowance stopped the step before it did any work for one to run over — and there the
     step's own report is the only routing signal there is.
+
+    `said` is the last line the assertion wrote to standard error, and `lapse` what landed
+    since a done step's marker. Neither moves the verdict; each only lets its summary name
+    the fact a person acts on.
     """
     if report is None:
         # A cascade-skipped step evaluates no precondition and runs no body, while its
@@ -400,6 +441,33 @@ def judge(verify_exit: int | None, report: dict[str, Any] | None) -> Verdict:
                 "nothing about the work"
             ),
         )
+    if verify_exit in UNRUNNABLE_EXITS:
+        never = "was not found" if verify_exit == 127 else "could not be executed"
+        return Verdict(
+            record=False,
+            cause=ASSERTION_UNRUNNABLE,
+            divergence=None,
+            summary=(
+                f"the assertion exited {verify_exit}: the command it runs {never} where it "
+                "ran, so it could not judge the work"
+                + (f" — {said}" if said else "")
+            ),
+        )
+    if asserted is False and reported == "noop":
+        # The step did nothing this run because its marker said it was done, and its
+        # assertion no longer passes over the tree as it stands. The cascade behind it is
+        # right — nothing may build on a state nobody can prove — but "the step failed" is
+        # not what happened, and a person needs to know the tree moved under it ([54 C]).
+        # No divergence: `noop` is the marker gate's word, not an account this run's session
+        # gave, so there is nothing of the step's own to weigh the assertion against.
+        return Verdict(
+            record=False,
+            cause=VERIFY_FAILED,
+            divergence=None,
+            summary=_no_longer_holds(
+                verify_exit, _detail(report).get("recorded_run"), lapse
+            ),
+        )
     if asserted is False:
         return Verdict(
             record=False,
@@ -410,6 +478,82 @@ def judge(verify_exit: int | None, report: dict[str, Any] | None) -> Verdict:
             ),
         )
     return Verdict(record=True, cause=None, divergence=None, summary=report["summary"])
+
+
+def _no_longer_holds(
+    verify_exit: int | None, recorded_run: object, lapse: Lapse | None
+) -> str:
+    """The summary of a step recorded done whose assertion no longer passes."""
+    named = isinstance(recorded_run, str) and recorded_run
+    by = f" by run {flatten(recorded_run)}" if named else ""
+    head = (
+        f"the step was already recorded done{by}, and its assertion no longer passes over "
+        f"the current tree (it exited {verify_exit})"
+    )
+    if lapse is None:
+        return head
+    if lapse.total == 0:
+        return f"{head}; nothing has been committed since its marker"
+    more = lapse.total - len(lapse.commits)
+    listed = "; ".join(lapse.commits) + (f"; and {more} more" if more > 0 else "")
+    return f"{head}; {lapse.total} commit(s) since its marker: {listed}"
+
+
+def assertion_said(
+    step_id: str, rechecked: bool, environment: Mapping[str, str]
+) -> str | None:
+    """The last line the assertion wrote to standard error, from the engine's own log.
+
+    Measured against Dagu 2.18.2: a precondition is given its step's own log paths, and
+    every node of one attempt logs into one directory as `<name>.<moment>.<run>.err`. So the
+    assertion's log is a sibling of this gate's, named for the node that ran it. Anything
+    short of finding it leaves the summary without a quote rather than failing the gate.
+    """
+    own = environment.get("DAG_RUN_STEP_STDERR_FILE")
+    if not own:
+        return None
+    name = recheck_name(step_id) if rechecked else verify_name(step_id)
+    try:
+        logs = sorted(
+            Path(own).parent.glob(f"{name}.*.err"), key=lambda path: path.stat().st_mtime
+        )
+        if not logs:
+            return None
+        with logs[-1].open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            handle.seek(max(0, handle.tell() - _STDERR_TAIL_BYTES))
+            text = handle.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    return last_line(text)
+
+
+
+def _lapse(context: RuntimeContext, report: dict[str, Any]) -> Lapse | None:
+    """What has been committed since the step's marker, or None where that is unknowable.
+
+    The marker gate names the commit that last wrote the marker when it finds the marker
+    fresh, so the range is read from what that gate saw rather than derived again here.
+    """
+    marked = _detail(report).get(MARKED_AT)
+    if not isinstance(marked, str) or not marked:
+        return None
+    root = context.working_directory
+    since = f"{marked}..HEAD"
+    try:
+        counted = git(root, ("rev-list", "--count", since), check=False)
+        shown = git(
+            root,
+            ("log", f"--max-count={LAPSE_SHOWN}", "--format=%h %s", since),
+            check=False,
+        )
+        if counted.exit_code != 0 or shown.exit_code != 0:
+            return None
+        total = int(counted.stdout.strip())
+    except (CairnError, ValueError):
+        return None
+    commits = tuple(flatten(line) for line in shown.stdout.splitlines() if line.strip())
+    return Lapse(commits=commits, total=total)
 
 
 def _read_verify_exit(raw: str) -> int:
@@ -532,7 +676,17 @@ def run_verify_gate(
         cause = "not_reached" if fault.cause == "missing_report" else "gate_indeterminate"
         verdict = Verdict(record=False, cause=cause, divergence=None, summary=str(fault))
     else:
-        verdict = judge(verify_exit, cast(dict[str, Any], report))
+        work = cast(dict[str, Any], report)
+        verdict = judge(
+            verify_exit,
+            work,
+            said=assertion_said(step_id, first_exit is not None, os.environ)
+            if verify_exit in UNRUNNABLE_EXITS
+            else None,
+            lapse=_lapse(context, work)
+            if work["status"] == "noop" and verify_exit not in (None, 0)
+            else None,
+        )
     detail: dict[str, Any] = {
         "position": position,
         "verify_exit": verify_exit,
@@ -624,6 +778,7 @@ def gate_main(arguments: list[str]) -> int:
 
 __all__ = [
     "ASSERTION_INTERRUPTED",
+    "ASSERTION_UNRUNNABLE",
     "BRANCH",
     "CHAIN",
     "EXCLUSION_CAUSES",
@@ -639,7 +794,9 @@ __all__ = [
     "REPORTED_REFUSED",
     "REPORTED_UNREADABLE",
     "Divergence",
+    "Lapse",
     "Verdict",
+    "assertion_said",
     "divergence_line",
     "exit_status_reference",
     "gate_main",

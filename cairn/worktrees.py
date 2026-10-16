@@ -27,6 +27,9 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
+import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, NamedTuple, TypedDict, cast
@@ -57,9 +60,11 @@ from cairn.gitio import (
 )
 from cairn.locks import git_write_mutex, refuse_unresolved_merge, unresolved_merge
 from cairn.marker import marker_path, read_marker
+from cairn.text import TEXT_LIMIT, last_line, normalise
 from cairn.topology import (
     BRANCH_PREFIX,
     WORKTREES_SUFFIX,
+    Preparation,
     TopologyError,
     branch_name,
     branch_namespace,
@@ -69,6 +74,10 @@ from cairn.topology import (
 )
 
 QUARANTINE_SUFFIX = ".broken"
+
+# The shell a plan's `prepare` runs under: the one a plan's own command steps run under.
+PREPARE_SHELL = "/bin/sh"
+PREPARE_FAILED = "worktree_prepare_failed"
 
 FOREIGN = "foreign"
 LOCKED = "locked"
@@ -478,7 +487,13 @@ def _relation(repository: Path, branch: str, base: str) -> str:
 
 
 def setup_worktree(
-    repository: Path, worktree: Path, base: str, *, plan: str, step: str
+    repository: Path,
+    worktree: Path,
+    base: str,
+    *,
+    plan: str,
+    step: str,
+    prepare: Preparation | None = None,
 ) -> CommandResult:
     """Bring the step's worktree to a state its agent can work in, from any starting point.
 
@@ -486,6 +501,10 @@ def setup_worktree(
     identity the ownership record is written under is the same one the worktree is checked
     out on. A branch carried in alongside them would be a second derivation of one name,
     and the only thing two derivations can do is disagree.
+
+    A worktree holds only what git tracks, so the plan's `prepare` runs in it every time,
+    created or reused, before the step works or asserts there ([54 A]). It runs after the
+    git write mutex is released: an install holds nothing another step's git work needs.
     """
     if Path(os.path.realpath(worktree)) == main_working_tree(repository):
         raise CairnError(
@@ -517,6 +536,7 @@ def setup_worktree(
         outcome = _converge(repository, worktree, branch, base, facts, state)
         carried = list(facts.dirty_paths) if state in (HEALTHY, MERGED_BEHIND) else []
         carried_from = _carried_from_run(worktree, step, carried)
+    prepared = None if prepare is None else _prepare(worktree, prepare)
     return outcome._replace(
         follow_up_work=[
             *outcome.follow_up_work,
@@ -532,8 +552,97 @@ def setup_worktree(
             "carried": carried,
             "carried_from_run": carried_from,
             "legacy_branch": None if legacy is None else legacy._asdict(),
+            "prepared": prepared,
         },
     )
+
+
+def _prepare(worktree: Path, prepare: Preparation) -> dict[str, object]:
+    """Run the plan's `prepare` in the worktree, or fail setup naming what it said.
+
+    Its failure is setup's own cause, carrying the command's output, so a halt here names
+    the missing environment rather than surfacing later as a step whose assertion failed.
+
+    **It may write only what git ignores.** A step's own worktree commits every path left
+    dirty in it ([53]), so anything `prepare` left unignored would land as the step's work
+    and ride every merge. A changed snapshot is therefore a refusal, never a warning.
+    """
+    before = dirty_snapshot(worktree)
+    started = time.monotonic()
+    try:
+        outcome = subprocess.run(
+            [PREPARE_SHELL, "-c", prepare.command],
+            cwd=worktree,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            check=False,
+            timeout=prepare.timeout,
+            # A step launched from inside another git invocation would otherwise be asked
+            # about that repository rather than the worktree it is standing in.
+            env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise CairnError(
+            PREPARE_FAILED,
+            f"the plan's prepare did not finish within {prepare.timeout}s in {worktree}; "
+            "raise prepare_timeout or make the command faster",
+            detail={
+                "command": prepare.command,
+                "timeout_seconds": prepare.timeout,
+                "stderr": _captured(exc.stderr),
+            },
+        ) from exc
+    except OSError as exc:
+        raise CairnError(
+            PREPARE_FAILED,
+            f"the plan's prepare could not be started in {worktree}: {exc.strerror}",
+            detail={"command": prepare.command},
+        ) from exc
+    seconds = round(time.monotonic() - started, 3)
+    # The engine keeps setup's own log, so what the command printed stays readable there in
+    # full while the report carries only its tail.
+    sys.stderr.write(outcome.stdout)
+    sys.stderr.write(outcome.stderr)
+    if outcome.returncode != 0:
+        said = last_line(outcome.stderr) or last_line(outcome.stdout)
+        raise CairnError(
+            PREPARE_FAILED,
+            f"the plan's prepare exited {outcome.returncode} in {worktree}"
+            + (f": {said}" if said else ""),
+            detail={
+                "command": prepare.command,
+                "exit_code": outcome.returncode,
+                "stdout": _captured(outcome.stdout),
+                "stderr": _captured(outcome.stderr),
+            },
+        )
+    after = dirty_snapshot(worktree)
+    changed = (
+        None
+        if before is None or after is None
+        else sorted(
+            path for path in {*before, *after} if before.get(path) != after.get(path)
+        )
+    )
+    if changed is None or changed:
+        raise CairnError(
+            PREPARE_FAILED,
+            f"the plan's prepare changed paths git does not ignore in {worktree}: "
+            f"{', '.join((changed or [])[:10]) or 'git could not say which'}. The step's "
+            "commit would take them as its own work; prepare may write only ignored paths",
+            detail={"command": prepare.command, "changed": (changed or [])[:50]},
+        )
+    return {"command": prepare.command, "seconds": seconds}
+
+
+def _captured(output: str | bytes | None) -> str:
+    """The end of what a command printed, bounded for a report."""
+    if output is None:
+        return ""
+    text = output.decode("utf-8", errors="replace") if isinstance(output, bytes) else output
+    return normalise(text[-TEXT_LIMIT:])
 
 
 def _carried_from_run(worktree: Path, step: str, carried: list[str]) -> str | None:

@@ -118,6 +118,17 @@ def render(raw: Any, result: Result | None = None) -> str:
         lines.append("- no step departs from it.")
     lines.append("")
 
+    lines.append("## Worktrees")
+    lines.append("")
+    prepare = plan["prepare"]
+    lines.append(
+        f"- every worktree is prepared with {_code(prepare)}, bounded at "
+        f"{plan['prepare_timeout']}s, before its step works in it"
+        if prepare
+        else "- no prepare: a worktree holds only what git tracks"
+    )
+    lines.append("")
+
     lines.append("## What each step is asked to do")
     lines.append("")
     for step in steps:

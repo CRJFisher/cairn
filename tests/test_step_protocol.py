@@ -23,7 +23,7 @@ from cairn.__main__ import asks_for_help, main
 from cairn.core import CairnError, CommandResult
 from cairn.emitters import emit_step, marker_gate
 from cairn.hooks import HOLD_IT_OPEN, HOOK_VERB, LET_IT_END, STOP_EVENT, hook_main
-from cairn.layout import occasion_path, reports_directory
+from cairn.layout import MARKED_AT, occasion_path, reports_directory
 from cairn.marker import (
     MARKER_DIRECTORY,
     OCCASION_ENV,
@@ -769,8 +769,32 @@ class TheGate(unittest.TestCase):
                 "recorded_scope": "weekly",
                 "recorded_key": "2019-W15",
                 "recorded_run": "run-1",
+                MARKED_AT: None,
             },
         )
+
+    def test_the_no_op_report_names_the_commit_that_last_wrote_the_marker(self) -> None:
+        """[54 C]: what landed after it is what a failing re-assertion is proving."""
+        for arguments in (
+            ("init", "-b", "main"),
+            ("config", "user.email", "cairn@example.invalid"),
+            ("config", "user.name", "cairn"),
+        ):
+            subprocess.run(("git", *arguments), cwd=self.root, check=True, capture_output=True)
+        write_marker(self.root, "a", "run-1", "once", "once", "already done")
+        subprocess.run(("git", "add", "--all"), cwd=self.root, check=True)
+        subprocess.run(
+            ("git", "commit", "--quiet", "-m", "cairn(a): A"), cwd=self.root, check=True
+        )
+        marked = subprocess.run(
+            ("git", "rev-parse", "HEAD"), cwd=self.root, check=True, capture_output=True,
+            text=True,
+        ).stdout.strip()
+        (self.root / "later.txt").write_text("later\n", encoding="utf-8")
+        subprocess.run(("git", "add", "--all"), cwd=self.root, check=True)
+        subprocess.run(("git", "commit", "--quiet", "-m", "later"), cwd=self.root, check=True)
+        self.assertEqual(self.gate("--step", "a", "--scope", "once")[0], 1)
+        self.assertEqual(report_for(self.root)["detail"][MARKED_AT], marked)
 
     def test_a_stale_key_reopens_the_work(self) -> None:
         write_marker(self.root, "a", "run-1", "run", OCCASION, "done last time")
@@ -809,6 +833,7 @@ class TheGate(unittest.TestCase):
                 "recorded_scope": "run",
                 "recorded_key": OCCASION,
                 "recorded_run": "run-1",
+                MARKED_AT: None,
             },
         )
         fresh_occasion, _ = self.gate(

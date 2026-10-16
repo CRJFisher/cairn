@@ -1,6 +1,7 @@
 """Doc 07's derivation: waves, branches, node names, and the duration arithmetic."""
 
 import json
+import shlex
 import unittest
 from pathlib import Path
 from typing import Any, cast
@@ -11,12 +12,14 @@ from cairn.plan.schema import (
     ENGINE_NAME_MAX_BYTES,
     GRAPH_VERSION,
     HANG_GUARD,
+    SUPPORT_RETRIES,
     SUPPORT_TIMEOUT,
     VERIFY_TIMEOUT,
     WAIT_REPORT_GRACE,
     Graph,
     Step,
     normalise,
+    step_max_seconds,
 )
 from cairn.topology import (
     RESERVED_NAMES,
@@ -298,6 +301,45 @@ class FanOutShape(unittest.TestCase):
             prune["detail"]["branches"],
             ["step/fan-out/keymap_reader", "step/fan-out/theme_reader"],
         )
+
+
+class APlanPreparesItsWorktrees(unittest.TestCase):
+    """[54 A]: the plan's `prepare` reaches every isolated step's setup and nothing else."""
+
+    def prepared(self, plan: dict[str, Any]) -> Topology:
+        raw = json.loads((FIXTURES / "fan-out" / "graph.json").read_text(encoding="utf-8"))
+        raw["plan"].update(plan)
+        return derive(normalise(raw), repository_root=REPOSITORY, parent_branch=PARENT)
+
+    def test_every_setup_carries_the_command_and_a_bound_that_covers_it(self) -> None:
+        command = "uv sync --frozen && echo ${HOME} $(pwd)"
+        fan = self.prepared({"prepare": command, "prepare_timeout": 900})
+        setups = [node for node in fan["nodes"] if node["role"] == "setup"]
+        self.assertEqual(len(setups), 2)
+        support = step_max_seconds(SUPPORT_TIMEOUT, SUPPORT_RETRIES, 1)
+        for node in setups:
+            self.assertEqual(node["max_seconds"], support + 900)
+            emitted = emit_node(node, steps={}, run_timeout_seconds=60)
+            # One literal argument: the engine expands nothing inside single quotes, so
+            # only the subcommand's own shell ever runs the plan's command.
+            words = shlex.split(emitted["run"])
+            at = words.index("--prepare")
+            self.assertEqual(words[at + 1 : at + 4], [command, "--prepare-timeout", "900"])
+            self.assertIn(shlex.quote(command), emitted["run"])
+            self.assertEqual(emitted["timeout_sec"], SUPPORT_TIMEOUT + 900)
+
+    def test_a_plan_with_no_prepare_emits_setup_as_it_was(self) -> None:
+        fan = self.prepared({})
+        for node in fan["nodes"]:
+            if node["role"] == "setup":
+                emitted = emit_node(node, steps={}, run_timeout_seconds=60)
+                self.assertNotIn("--prepare", emitted["run"])
+                self.assertEqual(emitted["timeout_sec"], SUPPORT_TIMEOUT)
+
+    def test_the_prepare_bound_counts_toward_the_run_maximum(self) -> None:
+        plain = self.prepared({})
+        prepared = self.prepared({"prepare": "make deps", "prepare_timeout": 900})
+        self.assertEqual(prepared["max_seconds"] - plain["max_seconds"], 2 * 900)
 
 
 class MultiWaveShape(unittest.TestCase):

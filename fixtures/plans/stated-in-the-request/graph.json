@@ -41,6 +41,8 @@
     "default_kind": "agent.claude",
     "default_model": "claude-sonnet-5-5",
     "model_evidence": "All steps should use sonnet 5.5.",
+    "prepare": null,
+    "prepare_timeout": 600,
     "id_collisions": []
   },
   "steps": [

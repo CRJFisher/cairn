@@ -527,6 +527,19 @@ def _steps(record: RunRecord) -> list[Block]:
                     ),
                 )
             )
+        if step["outcome"] == OUTCOME_EXCLUDED and step["freshness"] is not None:
+            # Recorded done by an earlier run, and its re-assertion no longer passes over
+            # the tree as it stands: what the gate said names what landed since ([54 C]).
+            blocks.append(
+                Fields(
+                    "fields",
+                    f"{step['step_id']} was recorded done and no longer holds",
+                    (
+                        ("done by run", Fact((f"{key}.completed_by",))),
+                        ("what the gate said", Fact((f"{key}.gate_said",))),
+                    ),
+                )
+            )
         if OVERLAY_DIVERGENCE in step["overlays"]:
             blocks.append(
                 Facing(

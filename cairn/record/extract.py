@@ -94,6 +94,7 @@ from cairn.record.vocabulary import (
     NEXT_AWAIT_ALLOWANCE,
     NEXT_DECIDE,
     NEXT_FIX_ASSERTION,
+    NEXT_FIX_ENVIRONMENT,
     NEXT_NOTHING,
     NEXT_RERUN,
     NEXT_SETTLE_MERGE,
@@ -145,6 +146,7 @@ from cairn.topology import (
 from cairn.transcript import read as read_transcript
 from cairn.verify import (
     ASSERTION_INTERRUPTED,
+    ASSERTION_UNRUNNABLE,
     EXCLUSION_CAUSES,
     GATE_INDETERMINATE,
     NOT_REACHED,
@@ -209,6 +211,12 @@ def _reported_text(value: object) -> str | None:
     """
     text = engine.text(value)
     return None if text is None else flatten(text, limit=LINE_LIMIT)
+
+
+def _gate_text(value: object) -> str | None:
+    """The gate's own sentence, bounded wider than a line: it can name several commits."""
+    text = engine.text(value)
+    return None if text is None else flatten(text, limit=TEXT_LIMIT)
 
 
 def _detail(report: dict[str, Any] | None) -> dict[str, Any]:
@@ -819,12 +827,20 @@ def classify_step(
     # requires that `skipped`: a session that ran and said `noop` of itself has not been
     # skipped by anything, and neither has one whose node failed, so the gate judges it
     # below instead.
+    #
+    # **A no-op is still re-asserted**, and the mark gate decides it like any other step. A
+    # gate that closed over it is a step recorded done that no longer holds: excluded for
+    # the gate's own cause, so a chain behind it reads as stopped behind it rather than
+    # behind nothing ([54 C]).
     if (
         reported == "noop"
         and work_status == engine.NODE_STATUS_SKIPPED
         and _freshness(work_report) is not None
     ):
-        return Classification(OUTCOME_NO_OP, overlays, None, integrity)
+        closed = _cause(mark_report)
+        if closed is None:
+            return Classification(OUTCOME_NO_OP, overlays, None, integrity)
+        return Classification(OUTCOME_EXCLUDED, _ordered(overlays), closed, integrity)
 
     if work_status == engine.NODE_STATUS_ABORTED:
         return Classification(OUTCOME_NOT_REACHED, overlays, None, integrity)
@@ -1129,7 +1145,7 @@ def derive_attention(
                 Attention(
                     kind=ATTENTION_EXCLUDED,
                     subject=step["step_id"],
-                    summary=step["said"] or "the step contributed no verified work",
+                    summary=_excluded_summary(step),
                     cause=step["cause"],
                 )
             )
@@ -1186,6 +1202,18 @@ def derive_attention(
                 )
             )
     return items
+
+
+def _excluded_summary(step: StepRecord) -> str:
+    """What an excluded step's attention line says.
+
+    The step's own words, unless it did no work this run: a step the marker gate skipped
+    said nothing of this run, and quoting the summary its marker carries would describe an
+    earlier run's work as the thing excluded. The gate's sentence is the account there.
+    """
+    if step["freshness"] is not None:
+        return step["gate_said"] or "the step was recorded done and no longer holds"
+    return step["said"] or "the step contributed no verified work"
 
 
 def _failure_summary(step: StepRecord) -> str:
@@ -1289,6 +1317,8 @@ def _rerun_or_fix(subject: StepRecord | None, account_in_use: AllowanceAccount |
     the step is waiting on the subscription rather than on anything a person can change."""
     if subject is not None and subject["cause"] == ASSERTION_INTERRUPTED:
         return NEXT_FIX_ASSERTION
+    if subject is not None and subject["cause"] == ASSERTION_UNRUNNABLE:
+        return NEXT_FIX_ENVIRONMENT
     if subject is not None and subject["cause"] == QUOTA_HELD:
         return (
             NEXT_ALLOWANCE_ELSEWHERE
@@ -1491,7 +1521,23 @@ def _step_record(
     )
     exit_code = engine.parse_exit_code(None if work is None else work.get("error"))
     diffstat = _diffstat(commit_detail.get("diffstat"))
-    freshness = _freshness(work_report) if outcome == OUTCOME_NO_OP else None
+    # A step the marker gate skipped, whether its re-assertion then held or not: either way
+    # its work is an earlier run's, and the marker is what says whose ([54 C]).
+    freshness = (
+        _freshness(work_report)
+        if work is not None
+        and _status(work) == engine.NODE_STATUS_SKIPPED
+        and outcome in (OUTCOME_NO_OP, OUTCOME_EXCLUDED)
+        else None
+    )
+    # The gate's own sentence, for a step the marker gate skipped and the verify gate then
+    # closed: the one account of what happened, because the step's own words are an earlier
+    # run's ([54 C]).
+    gate_said = (
+        _gate_text(mark_report.get("summary"))
+        if freshness is not None and mark_report is not None and _cause(mark_report) is not None
+        else None
+    )
 
     fields: dict[str, object] = {
         # What the plan document calls this step, beside the engine id it was sanitised into.
@@ -1506,6 +1552,7 @@ def _step_record(
         # keeps its shape, but it is bounded like every other untrusted value.
         "asked": None if work is None else _asked(work),
         "said": None if said is None else normalise(said, limit=LINE_LIMIT),
+        "gate_said": gate_said,
         "freshness": freshness,
         "completed_by_run": _reported_text(work_detail.get("recorded_run")),
         "branch": _reported_text(commit_detail.get("branch")),

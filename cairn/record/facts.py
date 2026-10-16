@@ -309,6 +309,7 @@ def canonical_facts(record: RunRecord) -> list[tuple[str, str]]:
                 (f"{key}.position", _value(step["position"])),
                 (f"{key}.asked", _value(step["asked"])),
                 (f"{key}.said", _value(step["said"])),
+                (f"{key}.gate_said", _value(step["gate_said"])),
                 # Two accounts of one step, projected apart so neither can be rendered as
                 # the truth by a surface that only carried one of them.
                 (

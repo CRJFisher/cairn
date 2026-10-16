@@ -33,6 +33,7 @@ from cairn.plan.report import render, waves
 from cairn.plan.schema import (
     ENGINE_NAME_MAX_BYTES,
     GRAPH_VERSION,
+    PREPARE_TIMEOUT,
     SchemaError,
     normalise,
 )
@@ -214,6 +215,23 @@ class SourceRecheck(unittest.TestCase):
         graph = load("stated-in-the-request", "graph.json")
         graph["plan"]["default_model"] = "  "
         self.assertIn("plan_model", [f.code for f in validate(graph).errors])
+
+    def test_a_blank_prepare_is_rejected(self) -> None:
+        graph = load("stated-in-the-request", "graph.json")
+        graph["plan"]["prepare"] = "   "
+        self.assertIn("plan_prepare", [f.code for f in validate(graph).errors])
+
+    def test_a_prepare_bound_that_is_not_positive_is_a_schema_error(self) -> None:
+        graph = load("stated-in-the-request", "graph.json")
+        graph["plan"]["prepare"] = "uv sync --frozen"
+        graph["plan"]["prepare_timeout"] = 0
+        self.assertIn("schema", [f.code for f in validate(graph).errors])
+
+    def test_a_plan_states_no_prepare_unless_it_says_so(self) -> None:
+        graph = validate(load("stated-in-the-request", "graph.json")).graph
+        assert graph is not None
+        self.assertIsNone(graph["plan"]["prepare"])
+        self.assertEqual(graph["plan"]["prepare_timeout"], PREPARE_TIMEOUT)
 
     def test_an_edge_quoting_words_no_document_contains_is_rejected(self) -> None:
         graph, root = self._wh()
@@ -561,6 +579,14 @@ class Robustness(unittest.TestCase):
         graph = minimal()
         graph["steps"][0]["verify"] = "echo `date`"
         self.assertIn("`` echo `date` ``", render(graph, None))
+
+    def test_the_report_says_how_a_worktree_is_made_ready(self) -> None:
+        prepared = render(minimal(prepare="uv sync --frozen", prepare_timeout=900), None)
+        self.assertIn("## Worktrees", prepared)
+        self.assertIn(
+            "every worktree is prepared with `uv sync --frozen`, bounded at 900s", prepared
+        )
+        self.assertIn("no prepare: a worktree holds only what git tracks", render(minimal(), None))
 
     def test_a_graph_that_cannot_be_read_exits_differently_from_one_that_fails(self) -> None:
         def run(*graph: str) -> int:

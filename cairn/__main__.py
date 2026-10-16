@@ -47,6 +47,7 @@ from cairn.forecast import pace
 from cairn.gitio import refuse_unusable_repository
 from cairn.headroom import session_within_allowance
 from cairn.hooks import HOOK_VERB, hook_main
+from cairn.layout import MARKED_AT
 from cairn.locks import (
     acquire_run_lock,
     describe_holder,
@@ -59,6 +60,7 @@ from cairn.locks import (
 from cairn.marker import (
     current_key,
     is_fresh,
+    marked_at,
     mint_occasion,
     read_marker,
     resolve_occasion,
@@ -68,7 +70,7 @@ from cairn.merge import run_merge, verify_landed
 from cairn.parameters import parent_branch, refuse_misfiled_records
 from cairn.parameters import repository as declared_repository
 from cairn.plan.cli import main as plan_main
-from cairn.plan.schema import AGENT_MODEL, SCOPES
+from cairn.plan.schema import AGENT_MODEL, PREPARE_TIMEOUT, SCOPES
 from cairn.protocol import compose_remedy_task
 from cairn.record.cli import main as record_main
 from cairn.record.store import build_run_record, write_record
@@ -79,7 +81,7 @@ from cairn.skill.cli import explain_main, run_main, view_main
 from cairn.skill.vocabulary import CAPABILITY_ORDER, TASK_BY_CAPABILITY
 from cairn.supervise import find_run_record
 from cairn.supervise_cli import main as supervise_main
-from cairn.topology import node_name, worktrees_root_for
+from cairn.topology import Preparation, node_name, worktrees_root_for
 from cairn.verify import gate_main as verify_gate_main
 from cairn.wave import run_join
 from cairn.workflow.cli import main as workflow_main
@@ -427,6 +429,9 @@ def _worktree(args: argparse.Namespace, context: RuntimeContext) -> CommandResul
         parent_branch(),
         plan=args.plan,
         step=args.step,
+        prepare=None
+        if args.prepare is None
+        else Preparation(args.prepare, args.prepare_timeout),
     )
 
 
@@ -593,6 +598,11 @@ def _parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     child = worktree_subcommands.add_parser("setup", add_help=add_help)
     child.add_argument("--plan", required=True)
     child.add_argument("--step", required=True)
+    # The plan's own command for making the worktree ready, and its bound in seconds.
+    child.add_argument("--prepare")
+    child.add_argument(
+        "--prepare-timeout", dest="prepare_timeout", type=int, default=PREPARE_TIMEOUT
+    )
     child = worktree_subcommands.add_parser("prune", add_help=add_help)
     child.add_argument("--plan", required=True)
     child.add_argument("--step", action="append")
@@ -731,6 +741,7 @@ def gate_main(arguments: list[str]) -> int:
                 # Which run did the work this one is skipping. Without it a recovery run
                 # renders as a screen of no-ops with no account of who did them.
                 "recorded_run": marker["run_id"],
+                MARKED_AT: marked_at(context.working_directory, step),
             },
         )
         with survive_termination():

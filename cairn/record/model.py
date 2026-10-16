@@ -188,6 +188,10 @@ class StepRecord(TypedDict):
     position: str | None
     asked: str | None
     said: str | None
+    # The verify gate's own sentence, present only on a step the marker gate skipped and the
+    # verify gate then closed: a step recorded done that no longer holds, whose own words are
+    # an earlier run's ([54 C]).
+    gate_said: str | None
     verified: bool
     divergence: Divergence | None
     freshness: Freshness | None

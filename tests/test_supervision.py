@@ -80,7 +80,7 @@ from cairn.supervise import (
     reconcile,
     reconcile_status_file,
 )
-from cairn.topology import branch_name, worktrees_root_for
+from cairn.topology import Preparation, branch_name, worktrees_root_for
 from cairn.worktrees import (
     ABSENT,
     ANCESTOR_OF_PARENT,
@@ -636,6 +636,31 @@ class SubcommandsTakeTheMutex(RepositoryCase):
             )
         self.assertEqual(child.wait(timeout=120), 0)
         self.assertTrue((worktree / "README.md").exists())
+
+    def test_worktree_setup_runs_the_plans_prepare_from_its_own_arguments(self) -> None:
+        """[54 A], end to end: the arguments the emitter writes reach the subcommand."""
+        worktree = worktrees_root_for(self.repository, "demo") / "alpha"
+        outcome = self.run_subcommand(
+            self.repository, "worktree", "setup", "--plan", "demo", "--step", "alpha",
+            "--prepare", "touch prepared.txt", "--prepare-timeout", "30",
+        )
+        self.assertNotEqual(outcome.returncode, 0, "prepare wrote an unignored path")
+        report = json.loads((reports_of(self.root, "run_probe") / "probe.json").read_text())
+        self.assertEqual(report["cause"], "worktree_prepare_failed")
+        self.assertEqual(report["detail"]["changed"], ["prepared.txt"])
+        (worktree / "prepared.txt").unlink()
+        info = Path(git(worktree, ("rev-parse", "--git-path", "info/exclude")).stdout)
+        info = info if info.is_absolute() else worktree / info
+        info.parent.mkdir(parents=True, exist_ok=True)
+        info.write_text("prepared.txt\n", encoding="utf-8")
+        outcome = self.run_subcommand(
+            self.repository, "worktree", "setup", "--plan", "demo", "--step", "alpha",
+            "--prepare", "touch prepared.txt",
+        )
+        self.assertEqual(outcome.returncode, 0, outcome.stderr)
+        report = json.loads((reports_of(self.root, "run_probe") / "probe.json").read_text())
+        self.assertEqual(report["detail"]["prepared"]["command"], "touch prepared.txt")
+        self.assertTrue((worktree / "prepared.txt").exists())
 
     def test_a_long_wait_stops_the_moment_the_repository_changes_hands(self) -> None:
         """[27 D]: the predicate is arbitrary shell, relaunched for the whole of a bound
@@ -2320,6 +2345,86 @@ class AMarkerNeverOutrunsTheCommittedTree(RepositoryCase):
         self.assertEqual(result.status, "done")
         self.assertEqual(committed_paths_of_head(self.repository), ["own.txt"])
         self.assertEqual(result.detail["left_uncommitted"], ["theirs.txt"])
+
+
+class APlanPreparesEveryWorktree(RepositoryCase):
+    """[54 A]: a fresh worktree held none of the project's installed dependencies, so the
+    assertion's test runner did not exist there and a step whose work held was failed."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        (self.repository / ".gitignore").write_text(".venv/\n", encoding="utf-8")
+        git(self.repository, ("add", "--all"))
+        git(self.repository, ("commit", "--quiet", "-m", "ignore the environment"))
+        self.worktree = worktrees_root_for(self.repository, "demo") / "alpha"
+
+    def setup(self, command: str, timeout: int = 60) -> CommandResult:
+        return setup_worktree(
+            self.repository, self.worktree, "main", plan="demo", step="alpha",
+            prepare=Preparation(command, timeout),
+        )
+
+    def test_prepare_runs_in_the_worktree_it_created_and_in_every_reuse(self) -> None:
+        command = "mkdir -p .venv && pwd >> .venv/prepared"
+        created = self.setup(command)
+        self.assertEqual(created.detail["case"], "created")
+        reused = self.setup(command)
+        self.assertEqual(reused.detail["case"], "reused")
+        lines = (self.worktree / ".venv" / "prepared").read_text().splitlines()
+        self.assertEqual([Path(line).resolve() for line in lines], [self.worktree.resolve()] * 2)
+        prepared = reused.detail["prepared"]
+        self.assertEqual(prepared["command"], command)
+        self.assertGreaterEqual(prepared["seconds"], 0)
+
+    def test_no_prepare_is_reported_as_none(self) -> None:
+        result = setup_worktree(
+            self.repository, self.worktree, "main", plan="demo", step="alpha"
+        )
+        self.assertIsNone(result.detail["prepared"])
+
+    def test_a_failing_prepare_halts_setup_with_its_own_cause_and_its_output(self) -> None:
+        with self.assertRaises(CairnError) as caught:
+            self.setup("echo resolving >&2; echo 'error: no lockfile' >&2; exit 3")
+        self.assertEqual(caught.exception.cause, "worktree_prepare_failed")
+        self.assertIn("exited 3", str(caught.exception))
+        self.assertTrue(str(caught.exception).endswith(": error: no lockfile"))
+        self.assertEqual(caught.exception.detail["exit_code"], 3)
+        self.assertIn("resolving", caught.exception.detail["stderr"])
+
+    def test_a_prepare_that_outlives_its_bound_halts_setup(self) -> None:
+        with self.assertRaises(CairnError) as caught:
+            self.setup("sleep 5", timeout=1)
+        self.assertEqual(caught.exception.cause, "worktree_prepare_failed")
+        self.assertIn("did not finish within 1s", str(caught.exception))
+
+    def test_a_prepare_that_writes_a_path_git_does_not_ignore_halts_setup(self) -> None:
+        """A step's own worktree commits every dirty path, so this would land as its work."""
+        with self.assertRaises(CairnError) as caught:
+            self.setup("echo generated > client.py")
+        self.assertEqual(caught.exception.cause, "worktree_prepare_failed")
+        self.assertEqual(caught.exception.detail["changed"], ["client.py"])
+
+    def test_a_prepare_that_deletes_carried_work_halts_setup(self) -> None:
+        self.setup("mkdir -p .venv")
+        (self.worktree / "carried.txt").write_text("the halted attempt's\n", encoding="utf-8")
+        with self.assertRaises(CairnError) as caught:
+            self.setup("rm carried.txt")
+        self.assertEqual(caught.exception.detail["changed"], ["carried.txt"])
+
+    def test_a_prepare_whose_shell_cannot_start_halts_setup(self) -> None:
+        with (
+            patch("cairn.worktrees.PREPARE_SHELL", str(self.root / "no-such-shell")),
+            self.assertRaises(CairnError) as caught,
+        ):
+            self.setup("true")
+        self.assertEqual(caught.exception.cause, "worktree_prepare_failed")
+        self.assertIn("could not be started", str(caught.exception))
+
+    def test_work_a_halted_attempt_left_does_not_count_against_prepare(self) -> None:
+        self.setup("mkdir -p .venv")
+        (self.worktree / "carried.txt").write_text("the halted attempt's\n", encoding="utf-8")
+        result = self.setup("mkdir -p .venv")
+        self.assertEqual(result.detail["carried"], ["carried.txt"])
 
 
 class AStepsOwnWorktreeCommitsWhatAHaltedAttemptLeft(RepositoryCase):

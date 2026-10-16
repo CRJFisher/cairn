@@ -451,12 +451,21 @@ def emit_setup(node: Node) -> EngineStep:
     Writing it here as well would put a second spelling of one identity in the file, and the
     branch is what the ownership record is written under — so the two could disagree about
     which ref this step is answerable for.
+
+    The plan's `prepare` is the one value carried in, because it is the plan's own command
+    and nothing at run time could derive it. It travels as one quoted argument, so the engine
+    hands it to the subcommand as its literal text and only the subcommand's own shell runs
+    it, inside the worktree it was written for.
     """
     detail = node["detail"]
+    arguments = ["worktree", "setup", "--plan", str(detail["plan"]), "--step", str(node["step"])]
+    prepare = detail.get("prepare")
+    if prepare is None:
+        return _support_step(node["name"], node["working_directory"], arguments)
+    bound = int(detail["prepare_timeout"])
+    arguments.extend(("--prepare", str(prepare), "--prepare-timeout", str(bound)))
     return _support_step(
-        node["name"],
-        node["working_directory"],
-        ["worktree", "setup", "--plan", str(detail["plan"]), "--step", str(node["step"])],
+        node["name"], node["working_directory"], arguments, timeout=SUPPORT_TIMEOUT + bound
     )
 
 

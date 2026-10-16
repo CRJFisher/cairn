@@ -136,6 +136,9 @@ SUPPORT_RETRIES = 0
 # plan that says nothing gets the support bound. Measured: a whole-suite assertion took
 # 844 s against this default, so a plan asserting with a slow suite has to say so.
 VERIFY_TIMEOUT = SUPPORT_TIMEOUT
+# The plan's `prepare` is its own command too, bounded the same way: an install that takes
+# longer has to say so.
+PREPARE_TIMEOUT = SUPPORT_TIMEOUT
 
 # A support step's bound has to cover waiting for the git write mutex and then doing the
 # git work, and still leave room to write a report. These three are stated together
@@ -370,6 +373,8 @@ class Plan(TypedDict):
     default_kind: str
     default_model: str
     model_evidence: str | None
+    prepare: str | None
+    prepare_timeout: int
     id_collisions: list[Collision]
 
 
@@ -498,6 +503,15 @@ PLAN_FIELDS: Spec = {
     # edge's — the one bound that carries its own evidence.
     "default_model": {"type": str, "default": AGENT_MODEL},
     "model_evidence": {"type": str, "default": None, "nullable": True},
+    # The command that makes a fresh worktree ready to work and assert in. A worktree holds
+    # only what git tracks, so whatever the project installs or generates outside git is
+    # absent there until something puts it back ([54 A]).
+    "prepare": {"type": str, "default": None, "nullable": True},
+    "prepare_timeout": {
+        "type": int,
+        "default": PREPARE_TIMEOUT,
+        "check": positive_integer,
+    },
     "id_collisions": {"type": list, "default": []},
 }
 

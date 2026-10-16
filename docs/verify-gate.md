@@ -139,8 +139,9 @@ rather than three: its work, its assertion, a **remedy**, a **recheck**, and its
 
 **`cairn verify remedy` opens the session only over an assertion that ran and exited
 nonzero**, behind a step that reported its work `done` or `noop`. It declines a pass, an
-assertion that never ran, one a signal ended (`assertion_interrupted`), and a step that
-reported failure or is waiting on a person, and writes that decline as the remedy node's own
+assertion that never ran, one a signal ended (`assertion_interrupted`), one whose command
+never executed (`assertion_unrunnable`), and a step that reported failure or is waiting on a
+person, and writes that decline as the remedy node's own
 `noop` report. It fails **closed**: a fault opens no session. Before it decides, it
 completes the first assertion's account with the exit it read, so that account and its
 proof are filed exactly as they would be without a remedy.
@@ -258,6 +259,7 @@ never reached from one killed before it could write.
 | `quota_held`             | the step stopped at the subscription's allowance     | the gate                    |
 | `provider_failed`        | the session ended on a provider fault, unreported    | the gate                    |
 | `provider_unreachable`   | the session lost the provider, which did not return  | the gate                    |
+| `assertion_unrunnable`   | the assertion exited 126 or 127: it never executed   | the gate                    |
 
 `quota_held` is a step held longer than it may wait at the subscription's allowance, or one
 whose session met the limit and could not be resumed. Its work was not judged; its own report
@@ -285,6 +287,19 @@ it reports: a crash, a launch that failed, a limit on turns. Both are re-run rem
 `assertion_interrupted` is never `verify_failed`: an assertion the engine killed at its
 `verify_timeout`, or that anything else signalled, decided nothing about the work. Its own
 report says which of the two it was, and it is never filed as a proof another gate shares.
+
+`assertion_unrunnable` is never `verify_failed` either. Exit 127 is the shell saying the
+assertion's command was not found, and 126 that it was found and could not be executed:
+either way the assertion never judged the work. Most often what failed is the environment the
+assertion ran in — a worktree missing what the project installs outside git, which the plan's
+`prepare` restores ([plan-contract.md](plan-contract.md)). It can also be a program the step
+was meant to build and did not, so the gate records it with **no divergence** and a summary
+that quotes the last line the assertion wrote to standard error, read from the engine's own
+log for the assertion node, which names the missing command — _the assertion exited 127: the
+command it runs was not found where it ran, so it could not judge the work — sh: pytest:
+command not found_. It is never filed as a proof another gate shares, because a worktree
+beside it holding the same tree need not hold the same environment, and no remedy session
+opens over it. The run's next action is `fix_environment` ([run-model.md](run-model.md)).
 
 `gate_indeterminate` exists because folding an unreadable report into `not_reached` would
 claim a step never ran when it may have done all of its work.
@@ -321,11 +336,19 @@ and the session's `terminal_reason` — because the cause is broader than any on
 the gate's summary and the divergence beside it are then the same sentence about one step.
 
 **A marker that outlived its work is surfaced, not repaired.** A step whose marker is fresh
-is skipped, and its assertion still runs; if the tree has since regressed the assertion
-fails, the gate closes, and the divergence records a step reporting `noop` over an assertion
-that did not hold. Nothing deletes the marker, because a mismatch between marker and tree
-can be someone's later deliberate decision ([step-protocol.md](step-protocol.md)). Removing
-the marker is the operator's move, and the record is what tells them to make it.
+is skipped, and its assertion still runs; if the tree has since regressed the assertion fails
+and the gate closes `verify_failed`, with **no divergence**: `noop` is the marker gate's
+word, not an account the step's session gave this run. The summary says it plainly: the step
+was already recorded done, by the run its marker names, and its assertion no longer passes
+over the current tree. It names the commits since the marker, newest first — the marker gate
+records the commit that last wrote the marker when it finds the marker fresh, and the gate
+lists what landed after it, the five newest by hash and subject and the rest counted —
+because one of them is the likeliest to have undone the step. Where git cannot name that
+commit, the summary stops at the step and the run. The cascade behind it stands: in a chain,
+every dependent is `not_reached`, and the record collapses them into one line naming this
+step as the halt. Nothing deletes the marker, because a mismatch between marker and tree can
+be someone's later deliberate decision ([step-protocol.md](step-protocol.md)). Removing the
+marker is the operator's move, and the record is what tells them to make it.
 
 **A chain halt and a branch exclusion are distinguishable.** The engine spells both
 `skipped`, so the distinction is Cairn's: the gate records the `position` it was emitted at,

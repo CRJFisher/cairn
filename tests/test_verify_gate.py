@@ -33,6 +33,7 @@ from cairn.assertions import (
     REMEDY_OPEN_IT,
     SIGNALLED_EXIT,
     SOURCE_KEY,
+    UNRUNNABLE_EXITS,
     assertion_report,
     command_digest,
     decision_of,
@@ -53,7 +54,12 @@ from cairn.emitters import (
     emit_verify,
     verify_gate,
 )
-from cairn.layout import assertion_lock_path, assertion_result_path, reports_directory
+from cairn.layout import (
+    MARKED_AT,
+    assertion_lock_path,
+    assertion_result_path,
+    reports_directory,
+)
 from cairn.locks import exclusive_lock
 from cairn.plan.assertions import (
     END_STATE_SHAPES,
@@ -88,6 +94,7 @@ from cairn.verify import (
     REPORTED_REFUSED,
     REPORTED_UNREADABLE,
     Divergence,
+    assertion_said,
     divergence_line,
     exit_status_reference,
     judge,
@@ -718,6 +725,8 @@ class ARemedyIsOneSessionOverAnAssertionThatRanAndFailed(unittest.TestCase):
             "the assertion passed": ("done", "0"),
             "a signal ended the assertion": ("done", str(SIGNALLED_EXIT)),
             "the step reported failure": ("failed", "1"),
+            "the assertion's command was not found": ("done", "127"),
+            "the assertion's command could not be executed": ("done", "126"),
         }
         for reason, (status, verify_exit) in cases.items():
             with self.subTest(reason=reason):
@@ -1717,6 +1726,238 @@ class AStepThatReportedNothingIsNotAStepThatReportedFailure(unittest.TestCase):
                 self.assertFalse(found["record"])
 
 
+class AnAssertionThatNeverExecutedDecidedNothing(unittest.TestCase):
+    """[54 B]: an assertion exiting 127 in a fresh worktree, its test runner never installed
+    there, was recorded `verify_failed` with a divergence over a step whose work held."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        for arguments in (
+            ("init", "-b", "main"),
+            ("config", "user.email", "cairn@example.invalid"),
+            ("config", "user.name", "cairn"),
+            ("commit", "--allow-empty", "-m", "root"),
+        ):
+            subprocess.run(("git", *arguments), cwd=self.root, check=True, capture_output=True)
+        # Outside the tree, so the logs a test writes move no digest a proof is keyed on.
+        self.logs = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.logs)
+
+    def _context(self) -> RuntimeContext:
+        return RuntimeContext(
+            run_id="run-1", step_id=mark_name("a"), working_directory=self.root,
+            report_path=reports_of(self.root) / f"{mark_name('a')}.json",
+            runs_root=self.root / "runs",
+        )
+
+    def _ran(self) -> None:
+        work_report(self.root, "a", status="noop")
+        run_cli(
+            ["verify", "needed", "--step", "a", "--command-digest", "0" * 64],
+            runtime_env(self.root, step_id=verify_name("a")),
+            self.root,
+        )
+
+    def _gate(self, exit_text: str) -> tuple[Any, dict[str, Any]]:
+        """The gate as the engine runs it: given its own log path, beside the assertion's."""
+        own = self.logs / "mark_a.20261016.191423.134.034h36GQ.err"
+        own.touch()
+        with patch.dict(os.environ, {"DAG_RUN_STEP_STDERR_FILE": str(own)}):
+            return run_verify_gate("a", CHAIN, exit_text, self._context())
+
+    def test_exit_127_and_126_are_unrunnable_with_no_divergence(self) -> None:
+        for verify_exit, words in ((127, "was not found"), (126, "could not be executed")):
+            with self.subTest(verify_exit=verify_exit):
+                verdict = judge(verify_exit, report(status="noop"))
+                self.assertFalse(verdict["record"])
+                self.assertEqual(verdict["cause"], "assertion_unrunnable")
+                self.assertIsNone(verdict["divergence"])
+                self.assertIn(words, verdict["summary"])
+                self.assertIn("could not judge the work", verdict["summary"])
+
+    def test_a_step_that_vetoed_itself_is_still_its_own_veto(self) -> None:
+        self.assertEqual(judge(127, report(status="failed"))["cause"], "reported_failure")
+
+    def test_every_other_nonzero_exit_is_still_a_failed_assertion(self) -> None:
+        for verify_exit in (1, 2, 125, 128):
+            with self.subTest(verify_exit=verify_exit):
+                self.assertNotIn(verify_exit, UNRUNNABLE_EXITS)
+                self.assertEqual(judge(verify_exit, report())["cause"], "verify_failed")
+
+    def test_the_summary_quotes_the_last_line_the_assertion_wrote_to_stderr(self) -> None:
+        """Measured against Dagu 2.18.2: a precondition is handed its own log path, and the
+        assertion's log sits beside it as `<name>.<moment>.<run>.err`."""
+        self._ran()
+        older = self.logs / "verify_a.20261016.181423.091.034h36GQ.err"
+        older.write_text("an earlier attempt\n")
+        os.utime(older, (1_000_000_000, 1_000_000_000))
+        (self.logs / "verify_a.20261016.191423.091.034h36GQ.err").write_text(
+            "collecting\nsh: pytest: command not found\n\n"
+        )
+        (self.logs / "recheck_a.20261016.191423.091.034h36GQ.err").write_text("the recheck\n")
+        verdict, detail = self._gate("127")
+        self.assertEqual(verdict["cause"], "assertion_unrunnable")
+        self.assertTrue(verdict["summary"].endswith("— sh: pytest: command not found"))
+        self.assertNotIn("divergence", detail)
+
+    def test_a_remedied_step_quotes_its_second_assertion(self) -> None:
+        """The exit that became the verdict is the recheck's, so its log is the one quoted."""
+        (self.logs / "verify_a.20261016.191423.091.034h36GQ.err").write_text("the first\n")
+        (self.logs / "recheck_a.20261016.191423.091.034h36GQ.err").write_text("the recheck\n")
+        own = self.logs / "mark_a.20261016.191423.134.034h36GQ.err"
+        own.touch()
+        self.assertEqual(
+            assertion_said("a", True, {"DAG_RUN_STEP_STDERR_FILE": str(own)}), "the recheck"
+        )
+        self.assertEqual(
+            assertion_said("a", False, {"DAG_RUN_STEP_STDERR_FILE": str(own)}), "the first"
+        )
+
+    def test_the_gate_writes_what_it_decided_into_the_mark_report(self) -> None:
+        """The record reads the mark report, so the report is what this has to reach."""
+        self._ran()
+        log = self.logs / "verify_a.20261016.191423.091.034h36GQ.err"
+        log.write_text("sh: pytest: not found\n")
+        own = self.logs / "mark_a.20261016.191423.134.034h36GQ.err"
+        own.touch()
+        code, _, _ = run_cli(
+            ["verify", "gate", "--step", "a", "--position", CHAIN, "--verify-exit", "127"],
+            runtime_env(self.root, step_id=mark_name("a"), DAG_RUN_STEP_STDERR_FILE=str(own)),
+            self.root,
+        )
+        self.assertEqual(code, GATE_EXCLUDE_IT)
+        written = json.loads((reports_of(self.root) / f"{mark_name('a')}.json").read_text())
+        self.assertEqual(written["cause"], "assertion_unrunnable")
+        self.assertTrue(written["summary"].endswith("— sh: pytest: not found"))
+        self.assertEqual(written["detail"]["verify_exit"], 127)
+        self.assertNotIn("divergence", written["detail"])
+
+    def test_a_missing_log_leaves_the_summary_without_a_quote(self) -> None:
+        self._ran()
+        verdict, _ = self._gate("127")
+        self.assertEqual(verdict["cause"], "assertion_unrunnable")
+        self.assertTrue(verdict["summary"].endswith("could not judge the work"))
+
+    def test_an_unrunnable_assertion_is_never_a_proof_another_gate_shares(self) -> None:
+        """A worktree beside it holding the same tree need not hold the same environment.
+        The same gate over an assertion that ran and failed is the control: that proof is
+        shared."""
+        for exit_text, shared in (("1", True), ("127", False)):
+            with self.subTest(exit_text=exit_text):
+                shutil.rmtree(self.root / "runs", ignore_errors=True)
+                self._ran()
+                self._gate(exit_text)
+                account = assertion_report(reports_of(self.root), "a", "run-1")
+                assert account is not None
+                self.assertEqual(account["detail"][EXIT_KEY], int(exit_text))
+                work_report(self.root, "b", status="noop")
+                code, _, _ = run_cli(
+                    ["verify", "needed", "--step", "b", "--command-digest", "0" * 64],
+                    runtime_env(self.root, step_id=verify_name("b")),
+                    self.root,
+                )
+                self.assertEqual(code, NEEDED_SKIP_IT if shared else NEEDED_RUN_IT)
+                self.assertEqual(
+                    decision_of(assertion_report(reports_of(self.root), "b", "run-1")),
+                    DECISION_SHARED if shared else DECISION_RUN,
+                )
+
+
+class ADoneStepThatNoLongerHoldsIsSaidPlainly(unittest.TestCase):
+    """[54 C]: a recovery re-asserted a step its marker called done, the assertion failed,
+    and the record read like a step whose work had just failed."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        for arguments in (
+            ("init", "-b", "main"),
+            ("config", "user.email", "cairn@example.invalid"),
+            ("config", "user.name", "cairn"),
+        ):
+            self._git(*arguments)
+
+    def _git(self, *arguments: str) -> str:
+        return subprocess.run(
+            ("git", *arguments), cwd=self.root, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    def _commit(self, path: str, subject: str) -> str:
+        (self.root / path).parent.mkdir(parents=True, exist_ok=True)
+        (self.root / path).write_text(subject)
+        self._git("add", path)
+        self._git("commit", "-m", subject)
+        return self._git("rev-parse", "--short", "HEAD")
+
+    def _gate(self, marked: str | None) -> Any:
+        detail: dict[str, Any] = {"recorded_run": "run-0"}
+        if marked is not None:
+            detail[MARKED_AT] = marked
+        work_report(self.root, "a", status="noop", detail=detail)
+        run_cli(
+            ["verify", "needed", "--step", "a", "--command-digest", "0" * 64],
+            runtime_env(self.root, step_id=verify_name("a")),
+            self.root,
+        )
+        context = RuntimeContext(
+            run_id="run-1", step_id=mark_name("a"), working_directory=self.root,
+            report_path=reports_of(self.root) / f"{mark_name('a')}.json",
+            runs_root=self.root / "runs",
+        )
+        verdict, _ = run_verify_gate("a", CHAIN, "1", context)
+        return verdict
+
+    def test_the_summary_names_the_run_that_recorded_it_and_the_commits_since(self) -> None:
+        self._commit(".steps/a.done", "cairn(a): A")
+        marked = self._git("rev-parse", "HEAD")
+        first = self._commit("src/one.py", "refactor the parser")
+        second = self._commit("src/two.py", "drop the legacy path")
+        verdict = self._gate(marked)
+        self.assertFalse(verdict["record"])
+        self.assertEqual(verdict["cause"], "verify_failed")
+        # `noop` is the marker gate's word, not this run's account, so nothing diverges.
+        self.assertIsNone(verdict["divergence"])
+        self.assertIn(
+            "already recorded done by run run-0, and its assertion no longer passes over the "
+            "current tree (it exited 1)",
+            verdict["summary"],
+        )
+        self.assertIn(
+            f"2 commit(s) since its marker: {second} drop the legacy path; "
+            f"{first} refactor the parser",
+            verdict["summary"],
+        )
+
+    def test_a_long_history_is_listed_to_a_bound_and_counted_whole(self) -> None:
+        self._commit(".steps/a.done", "cairn(a): A")
+        marked = self._git("rev-parse", "HEAD")
+        for index in range(7):
+            self._commit(f"src/{index}.py", f"change {index}")
+        summary = self._gate(marked)["summary"]
+        self.assertIn("7 commit(s) since its marker", summary)
+        self.assertIn("change 6", summary)
+        self.assertNotIn("change 1;", summary)
+        self.assertTrue(summary.endswith("; and 2 more"))
+
+    def test_nothing_committed_since_the_marker_is_said(self) -> None:
+        self._commit(".steps/a.done", "cairn(a): A")
+        summary = self._gate(self._git("rev-parse", "HEAD"))["summary"]
+        self.assertTrue(summary.endswith("nothing has been committed since its marker"))
+
+    def test_a_marker_no_commit_names_still_reads_as_a_done_step(self) -> None:
+        self._commit("README.md", "root")
+        summary = self._gate(None)["summary"]
+        self.assertIn("already recorded done by run run-0", summary)
+        self.assertNotIn("since its marker", summary)
+
+    def test_a_step_that_did_its_work_this_run_keeps_the_ordinary_summary(self) -> None:
+        verdict = judge(1, report(status="done"))
+        self.assertEqual(verdict["summary"], "the assertion exited 1 over a step reporting 'done'")
+
+
 class TheGateIsStatedOnce(unittest.TestCase):
     def test_the_frozen_set_is_exactly_these_causes(self) -> None:
         """Iterating the tuple can only catch an addition; a literal catches a removal too."""
@@ -1736,6 +1977,7 @@ class TheGateIsStatedOnce(unittest.TestCase):
                 "quota_held",
                 "provider_failed",
                 "provider_unreachable",
+                "assertion_unrunnable",
             ),
         )
 

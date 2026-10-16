@@ -362,6 +362,14 @@ def validate(raw: Any, source_root: str | None = None) -> Result:
             )
         )
 
+    if plan["prepare"] is not None and not plan["prepare"].strip():
+        errors.append(
+            Finding(
+                "plan_prepare",
+                "the plan's prepare is blank, so it names no command to make a worktree ready",
+            )
+        )
+
     steps = graph["steps"]
     if not steps:
         errors.append(Finding("empty_graph", "the graph contains no steps"))

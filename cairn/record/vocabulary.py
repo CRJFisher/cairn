@@ -196,6 +196,10 @@ NEXT_RERUN = "rerun"
 # The run halted at an assertion a signal ended. A re-run as it stands meets the same end,
 # so the cause of the signal is the thing to change first.
 NEXT_FIX_ASSERTION = "fix_assertion"
+# The run halted at an assertion whose command never executed where it ran. The work was not
+# judged, and a re-run over the same environment meets the same shell, so the environment
+# is the thing to settle first ([54 B]).
+NEXT_FIX_ENVIRONMENT = "fix_environment"
 # The run stopped at a step held at the subscription's allowance. The work is not wrong, so
 # the re-run is worth making once the window it was held on reopens, and not before.
 NEXT_AWAIT_ALLOWANCE = "await_allowance"
@@ -212,6 +216,7 @@ NEXT_ACTIONS: tuple[str, ...] = (
     NEXT_SETTLE_MERGE,
     NEXT_RERUN,
     NEXT_FIX_ASSERTION,
+    NEXT_FIX_ENVIRONMENT,
     NEXT_AWAIT_ALLOWANCE,
     NEXT_ALLOWANCE_ELSEWHERE,
     NEXT_START_SCHEDULER,
@@ -282,6 +287,7 @@ __all__ = [
     "NEXT_AWAIT_ALLOWANCE",
     "NEXT_DECIDE",
     "NEXT_FIX_ASSERTION",
+    "NEXT_FIX_ENVIRONMENT",
     "NEXT_NOTHING",
     "NEXT_RERUN",
     "NEXT_SETTLE_MERGE",

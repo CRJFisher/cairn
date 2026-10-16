@@ -91,6 +91,19 @@ def normalise(value: object, *, limit: int = TEXT_LIMIT) -> str:
     return _cap(_strip(str(value), keep=KEPT_CONTROLS).strip(), limit)
 
 
+def last_line(value: object, *, limit: int = LINE_LIMIT) -> str | None:
+    """The last line that says anything, flattened, or None where nothing did.
+
+    A command that fails names why on its last line of standard error far more often than
+    anywhere else — `command not found`, a missing module, a refused permission.
+    """
+    for line in reversed(str(value).splitlines()):
+        flat = flatten(line, limit=limit)
+        if flat:
+            return flat
+    return None
+
+
 def normalise_all(values: object, *, limit: int = LIST_LIMIT) -> list[str]:
     """A list an agent controls, bounded in both directions."""
     if not isinstance(values, list):
@@ -131,6 +144,7 @@ __all__ = [
     "TEXT_LIMIT",
     "as_count",
     "flatten",
+    "last_line",
     "normalise",
     "normalise_all",
     "since",

@@ -83,6 +83,16 @@ For each unit of work the plan names:
   with an assertion. It adds one more session per step, so a document that says nothing
   leaves it out.
 
+### How a worktree is made ready
+
+A command the documents state for setting the project up — "run `uv sync --frozen` first",
+"install with `npm ci`" — is `plan.prepare`, quoted verbatim the way a verify command is, and a
+bound stated beside it is `plan.prepare_timeout`. Every isolated step's worktree runs it
+before the step works there ([plan-contract.md](plan-contract.md)), because a worktree holds
+only what git tracks. A document that states no such command leaves `prepare` out. The parse
+report shows the command, or that there is none, so the person confirming it sees whether a
+worktree will hold what the assertions call.
+
 ### The model the plan's sessions open on
 
 A model the document states for the whole plan — "all steps should use sonnet 5.5", "run this

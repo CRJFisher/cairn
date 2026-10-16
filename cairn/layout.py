@@ -48,6 +48,10 @@ ASSERTIONS_DIRECTORY = "assertions"
 # ([assertions.py]). `cairn marker write` remains its only writer.
 MARKER_DIRECTORY = ".steps"
 MARKER_SUFFIX = ".done"
+# The key, in a fresh marker's `noop` report, naming the commit that last wrote the marker.
+# Its reader is the verify gate, which names what landed since where a done step's assertion
+# no longer passes ([verify.py]).
+MARKED_AT = "marked_at"
 RECORD_FILE = "record.json"
 # What the engine itself said while it was taking a run on. Not the run's logs — those are
 # the engine's own, under its home, and the view reads them. This is the start command's
@@ -258,6 +262,7 @@ __all__ = [
     "HEADROOM_DIRECTORY",
     "HEADROOM_ENDPOINT_ENV",
     "HOLDS_DIRECTORY",
+    "MARKED_AT",
     "MARKER_DIRECTORY",
     "MARKER_SUFFIX",
     "NOTIFY_COMMAND_ENV",

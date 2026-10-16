@@ -136,7 +136,7 @@ contract as the name is.
 | Role     | `detail` keys                                                                       |
 | -------- | ----------------------------------------------------------------------------------- |
 | `lock`   | `action`, `plan`                                                                    |
-| `setup`  | `plan`, `branch`, `worktree`, `base`                                                |
+| `setup`  | `plan`, `branch`, `worktree`, `base`, `prepare`, `prepare_timeout`                  |
 | `work`   | `kind`                                                                              |
 | `verify` | `command` for a step's assertion; `merge`, `candidates`, `into` for a merge's proof |
 | `mark`   | `verified`, `position`                                                              |
@@ -235,6 +235,18 @@ per-attempt baseline that protects their work ([cli-contract.md](cli-contract.md
 commit cannot carry there — dirty submodule content, for one — is work the assertion passed
 over that `HEAD` would not hold, so the commit refuses as `work_left_uncommitted`, names the
 paths, unstages what it staged and withdraws the marker so the next run redoes the step.
+
+**A worktree is prepared before its step works in it.** A worktree holds only what git
+tracks, so where the plan states `prepare` ([plan-contract.md](plan-contract.md)), `worktree
+setup` runs it under `/bin/sh` in the worktree once convergence is done — created or reused,
+every time — after the write mutex is released, bounded by the plan's `prepare_timeout`. The
+setup node's own bound is the support bound plus that one. A `prepare` that exits nonzero,
+outlives its bound, or changes a path git does not ignore halts setup as
+`worktree_prepare_failed`, with the command's last line of output in its summary and the
+tail of each channel in its detail, so the halt names the missing environment rather than
+surfacing later as a step whose assertion failed. Its report records `prepared`, the command
+and how long it took. A chain step stands in the repository the run was started from, which
+has no setup node, so `prepare` never runs for one.
 
 `cairn worktree prune` runs `git worktree remove` inside the write mutex. Uncommitted work
 in a worktree is a killed agent's output, so a dirty worktree is kept and reported as
