@@ -289,7 +289,7 @@ def _lock(args: argparse.Namespace, context: RuntimeContext) -> CommandResult:
             {"released": dict(record)},
         )
     # Checked at the run's first act rather than trusted: a scheduler on this machine would
-    # re-execute every failed run of the last day, Cairn's or not (09).
+    # re-execute every failed run of the last day that does not override it (09).
     assert_dag_retry_disabled(
         Path(args.base_config) if args.base_config else base_config_path()
     )

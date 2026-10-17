@@ -79,9 +79,13 @@ keeps its own hashed one. An account somebody already claimed is reported as hel
 the same end state. A claim that cannot be made at all stops the server Cairn just started,
 because the two acceptable end states are a claimed server and no server.
 
-**Nothing about a run depends on any of this.** `dagu start` runs a workflow with no server,
-a run whose view was declined is the same run, and a server Cairn did not start is never
-stopped, restarted or reconfigured by Cairn.
+**Nothing about a run depends on any of this.** `dagu start` runs a workflow with no server
+and no scheduler, a run whose view was declined is the same run, and an engine process Cairn
+did not start — a server or a scheduler — is never stopped, restarted or reconfigured by
+Cairn. A scheduler already up beside a run cannot replay it, because the definition declares
+no DAG-level retry and that declaration overrides the base configuration
+([workflow.md](workflow.md)); the start says so in a
+`scheduler` line and leaves the process as it found it.
 
 ## There are two daemons, and only one is dangerous
 

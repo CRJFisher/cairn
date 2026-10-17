@@ -94,6 +94,12 @@ of ten, a file emitting zero ran ten steps at a time — exactly as a file omitt
 did — while a file emitting a positive number ran that many. Zero is inheritance wearing the
 shape of an override, so the emitter states a number no wave can exceed.
 
+**`retry_policy: {limit: 0}` is a real override.** Measured against Dagu 2.18.2 with
+`base.yaml` arming a limit of three: a failed run of a file omitting the policy stored that
+limit and was indexed as a retry candidate, which is what the scheduler's retry scanner reads;
+a failed run of a file declaring zero stored none and was not indexed. So no scheduler
+replays a run Cairn started.
+
 The release runs as the workflow's `handler_on.exit` rather than as a node, because the
 engine never dispatches a step whose dependency failed and a failed run must still give its
 repository back.

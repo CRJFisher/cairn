@@ -1,8 +1,8 @@
 """The engine's machine-wide base configuration, read and edited without a YAML parser.
 
 Every DAG on the machine inherits this file. A DAG-level retry policy armed in it would
-re-execute every failed run of the last day, Cairn's or not, and for Cairn a failed run is an
-agent session that mutated a repository; a catch-up window armed in it replays every cron slot
+re-execute every failed run of the last day whose definition declares no policy of its own —
+and a run Cairn did not write may well be an agent session that mutated a repository; a catch-up window armed in it replays every cron slot
 a stopped scheduler missed. The engine writes the file on its first invocation with the window
 armed and retry left commented out. So both are checked rather than assumed — retry before
 any run, the window before any scheduler — and one command writes both off.
@@ -260,8 +260,8 @@ def assert_dag_retry_disabled(path: Path) -> None:
     raise CairnError(
         "base_retry_enabled",
         f"{path} declares a limit of {policy.limit}, so a scheduler would re-execute every "
-        "failed run on "
-        f"this machine, Cairn's or not. Run `{DISABLE_COMMAND}` to fix it",
+        "failed run on this machine whose definition does not override it. Cairn runs "
+        f"nothing on a machine armed this way; `{DISABLE_COMMAND}` writes it off",
         detail={"path": str(path), "limit": policy.limit},
     )
 

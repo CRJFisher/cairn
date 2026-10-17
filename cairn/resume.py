@@ -6,7 +6,7 @@ queue should start again when the allowance reopens rather than when the person 
 ([44], [principle 4](../PRINCIPLES.md)).
 
 **It is not a scheduler.** The engine's own scheduler carries a retry scanner that
-re-executes every failed run on the machine, Cairn's and not ([docs/triggers.md]), and
+re-executes failed runs across the machine ([docs/triggers.md]), and
 nothing here needs one running. What the run's release arms is one detached process, waiting
 on one moment, for one run — started the way `run start` starts the engine, so it outlives
 the session and the terminal that armed it.

@@ -31,6 +31,7 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
+from cairn.baseconfig import assert_dag_retry_disabled, base_config_path
 from cairn.core import EXIT_OK, CairnError
 from cairn.enginehome import run_records_path
 from cairn.forecast import forecast, queue_of
@@ -43,6 +44,7 @@ from cairn.marker import mint_occasion
 from cairn.record.store import build_run_record
 from cairn.record.vocabulary import RESUME_REFUSED, RESUME_STARTED
 from cairn.resume import Waiter, cancel, supersede
+from cairn.schedule import beside_a_run, scheduler_status
 from cairn.skill.explain import WouldDo, explainable, meaning, why_excluded, would_do
 from cairn.skill.resolve import (
     OccasionDecision,
@@ -186,6 +188,21 @@ def _say_what_it_will_cost(repository: Path, account: WouldDo) -> None:
             print(f"blind    {blind}")
 
 
+def _say_what_is_already_running() -> None:
+    """A scheduler the run is started beside, said so nobody clears it out of the way.
+
+    Read and never acted on: the run needs no engine process, and one Cairn did not start
+    is the person's ([55 A]). A sentence and never a precondition, so a registry that could
+    not be read costs the sentence and nothing else.
+    """
+    try:
+        said = beside_a_run(scheduler_status())
+    except (CairnError, OSError):
+        return
+    if said is not None:
+        print(f"scheduler {said}")
+
+
 def _admitted_graph(admission: Admission) -> str | None:
     """The graph digest the admitted bytes carry — the very bytes the engine will run."""
     try:
@@ -279,6 +296,10 @@ def _cmd_start(args: argparse.Namespace) -> int:
         # run's own stays as the backstop for a tree that dirties itself in between ([24 D]).
         refuse_unresolved_merge(repository)
         refuse_dirty_repository(repository)
+        # The same function the run's first act refuses through, so a machine whose base
+        # configuration arms DAG-level retry is refused before anything is written rather
+        # than by a run that started and failed at its first node.
+        assert_dag_retry_disabled(base_config_path())
         # Asked here rather than where it is used: it shells out to the engine and can
         # refuse, and every refusal has to happen before the launch is composed.
         records = run_records_path()
@@ -317,6 +338,7 @@ def _cmd_start(args: argparse.Namespace) -> int:
         # A forecast is a sentence a person weighs, never a precondition on the run: a
         # record that could not be read costs the sentence and nothing else ([45 B]).
         print(f"forecast could not be stated: {unread}")
+    _say_what_is_already_running()
 
     started = start(where, records=records, wait=bool(args.wait))
     if not started.taken_on:

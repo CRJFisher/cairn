@@ -309,8 +309,11 @@ go-ahead, and nothing is quoted or asked first. It prints the durable identity a
 `launching`, with the engine's view address beside it, launches the engine detached, and records the run id and the engine invocation in
 the run's directory, so a start whose process died still left a name a recovery can quote.
 Every refusal — a definition that no longer matches its plan, an engine that is not the
-pin, a shell the engine cannot start a run from, and an engine that cannot say where it
-keeps its run history — happens before anything starts. `start` exits `1` on a refusal and
+pin, a shell the engine cannot start a run from, an engine that cannot say where it
+keeps its run history, and a base configuration that arms DAG-level retry — happens before
+anything starts. It starts and stops no engine process besides the run's own: where a
+scheduler is already running it says so in a `scheduler` line naming its process, and
+leaves it running. `start` exits `1` on a refusal and
 `0` once the engine has been handed the run **and** where the engine has neither taken it on
 nor exited within its bound, because in that case the run may still begin — whether a run
 worked is the record's answer and not this command's ([run-model.md](run-model.md)).

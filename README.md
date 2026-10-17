@@ -34,8 +34,8 @@ corpus, and run the suite.
 The installer puts the binary in a directory it adds to your `PATH`; `--install-dir <path>`
 overrides that. `--service no` is not optional advice: a one-shot run needs no daemon, no
 database and no scheduler, and the scheduler's retry scanner re-executes failed runs across
-the whole machine — which for Cairn means re-running agent sessions that already changed a
-repository.
+the whole machine — re-running whatever those runs did, which for an agent session is work
+that already changed a repository.
 
 **2. Cairn.** The checkout is the whole artifact — the package, the skill's documents and
 the fixtures — and nothing in it reaches outside itself:
@@ -420,8 +420,8 @@ Measured by `python3 -m scripts.measure_surface`. Tokens are an estimate at 4 ch
 | Read                          | What                                   | Characters | Lines | Tokens (est.) |
 | ----------------------------- | -------------------------------------- | ---------: | ----: | ------------: |
 | when Cairn is named           | the skill's description                |      `262` |   `1` |          `66` |
-| when Cairn is named           | `SKILL.md`                             |    `14903` | `208` |        `3726` |
-| when a capability is selected | `capabilities/running.md`, the largest |    `13955` | `207` |        `3489` |
+| when Cairn is named           | `SKILL.md`                             |    `14972` | `209` |        `3743` |
+| when a capability is selected | `capabilities/running.md`, the largest |    `15265` | `225` |        `3817` |
 
 **None of it is read unless asked for.** Cairn declares `disable-model-invocation: true`, so
 its description stays out of a session's context until someone types `/cairn` — a session

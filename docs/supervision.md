@@ -256,8 +256,12 @@ report never describes a dead run's steps as running.
 
 A running `dagu scheduler` reconciles zombies for free, which is tempting, and it is the
 wrong trade. The same process re-executes every failed run recorded on the machine in the
-previous 24 hours, including runs from directories it does not watch. For Cairn a failed run
-is an agent session that mutated a repository.
+previous 24 hours wherever a retry policy is armed, including runs from directories it does
+not watch, and a run Cairn did not write may be an agent session that mutated a repository.
+Cairn's own runs are out of its reach: the execution gate admits only a definition declaring
+a DAG-level limit of zero, and measured against Dagu 2.18.2 that declaration overrides an
+armed base configuration — the run stores no retry limit and is never indexed as a retry
+candidate.
 
 There is a second hazard in the same file and it has the same shape. The engine ships
 `catchup_window: "6h"`, and a scheduler starting after downtime executes every cron slot
@@ -284,8 +288,9 @@ as unreadable rather than guessed at.
 
 **Once per machine, before the first schedule:** `python3 -m cairn supervise base-config
 --disable`. Without it `cairn schedule start` refuses with `base_catchup_enabled`, and a
-`base.yaml` someone armed with a retry limit makes every `lock acquire` refuse with
-`base_retry_enabled`. Every such refusal names this command.
+`base.yaml` someone armed with a retry limit makes every `run start` refuse with
+`base_retry_enabled` before anything is written — and every `lock acquire`, for a run
+started any other way. Every such refusal names this command.
 
 ## The hang guard on every emitted step
 

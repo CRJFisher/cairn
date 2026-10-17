@@ -25,6 +25,7 @@ doc 17's.
 import ast
 import io
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -33,6 +34,7 @@ import tempfile
 import unittest
 from collections.abc import Callable, Sequence
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import UTC, datetime
 from itertools import combinations
 from pathlib import Path
 from typing import Any, cast
@@ -43,11 +45,19 @@ from cairn.enginehome import ENGINE_BINARY
 from cairn.gitio import runs_root
 from cairn.headroom import record_endpoint_choice
 from cairn.layout import RECORD_FILE, check_run_id
+from cairn.liveness import process_start_time
 from cairn.marker import mint_occasion
 from cairn.parameters import refuse_misfiled_records
 from cairn.parameters import repository as declared_repository
 from cairn.record.vocabulary import VERDICT_PRECEDENCE
 from cairn.report import phrases
+from cairn.schedule import (
+    SCHEDULER_INACCESSIBLE,
+    SCHEDULER_STOPPED,
+    SCHEDULER_UNKNOWN,
+    SchedulerStatus,
+    scheduler_status,
+)
 from cairn.skill import explain, resolve, surface, trigger
 from cairn.skill.cli import explain_main, run_main, view_main
 from cairn.skill.dispatch import (
@@ -1730,6 +1740,31 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
         document["env"][0]["PYTHONPATH"] = str(PACKAGE_ROOT)
         self.workflow.write_text(json.dumps(document), encoding="utf-8")
         self.launched: list[Sequence[str]] = []
+        # The machine's own base configuration and scheduler are stood in for in every test
+        # here, including those that drive `run_main` without `_start_argv`, so a start's
+        # outcome is the test's and never whatever this machine happens to hold.
+        self.base_config = self.root / "base.yaml"
+        self.base_config.write_text(
+            "retry_policy:\n  limit: 0\n  interval_sec: 1\n", encoding="utf-8"
+        )
+        self.scheduler: SchedulerStatus | Exception = SchedulerStatus(
+            SCHEDULER_UNKNOWN, [], None
+        )
+        for target, stand_in in (
+            ("cairn.skill.cli.base_config_path", self._base_config_path),
+            ("cairn.skill.cli.scheduler_status", self._scheduler_status),
+        ):
+            patcher = patch(target, side_effect=stand_in)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _base_config_path(self) -> Path:
+        return self.base_config
+
+    def _scheduler_status(self) -> SchedulerStatus:
+        if isinstance(self.scheduler, Exception):
+            raise self.scheduler
+        return self.scheduler
 
     def _said(self, argv: list[str]) -> tuple[int, str]:
         # Kept on the instance as well as returned, so a test can read what has been said
@@ -1902,6 +1937,107 @@ class TheCommandLineIsWhatTheSkillActuallyInvokes(unittest.TestCase):
         code, _ = self._start()
         self.assertEqual(code, 0)
         self.assertEqual(len(self.launched), 1)
+
+    def test_a_base_configuration_arming_retry_refuses_before_anything_is_written(
+        self,
+    ) -> None:
+        """Plan 55 A: the run's first act refuses this machine, so the start refuses it
+        first, naming the property and what clears it — never a scheduler to stop."""
+        self.base_config.write_text(
+            "retry_policy:\n  limit: 3\n  interval_sec: 60\n", encoding="utf-8"
+        )
+        code, said = self._start()
+        self.assertEqual(code, 1)
+        self.assertIn("base_retry_enabled", said)
+        self.assertIn("declares a limit of 3", said)
+        self.assertIn("supervise base-config --disable", said)
+        self.assertEqual(self.launched, [])
+        self.assertEqual(self._written(), [])
+
+    def test_a_base_configuration_cairn_cannot_read_refuses_before_anything_is_written(
+        self,
+    ) -> None:
+        self.base_config.write_text("retry_policy: three\n", encoding="utf-8")
+        code, said = self._start()
+        self.assertEqual(code, 1)
+        self.assertIn("base_config_unreadable", said)
+        self.assertEqual(self.launched, [])
+        self.assertEqual(self._written(), [])
+
+    def test_a_machine_with_no_base_configuration_starts(self) -> None:
+        self.base_config.unlink()
+        code, said = self._start()
+        self.assertEqual(code, 0, said)
+        self.assertEqual(len(self.launched), 1)
+
+    def test_a_start_beside_a_live_scheduler_says_so_and_signals_nothing(self) -> None:
+        """Plan 55 A, against the engine's own registry shape: the scheduler is this very
+        process, so Cairn's liveness probe really runs. Signal zero to that pid is the probe,
+        and it is the only signal a start sends."""
+        registry = self.root / "service-registry" / "scheduler"
+        registry.mkdir(parents=True)
+        started = process_start_time(os.getpid())
+        assert started is not None, "this platform cannot read its own start time"
+        (registry / "theirs.json").write_text(
+            json.dumps(
+                {
+                    "id": "theirs",
+                    "pid": os.getpid(),
+                    "startedAt": datetime.fromtimestamp(started, tz=UTC).isoformat(),
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.scheduler = scheduler_status(
+            registry=registry, pause=self.root / "paused.json"
+        )
+        self.assertEqual(len(self.scheduler.processes), 1)
+        signalled: list[tuple[int, int]] = []
+        real_kill = os.kill
+
+        def kill(pid: int, sig: int) -> None:
+            signalled.append((pid, sig))
+            real_kill(pid, sig)
+
+        def killpg(pgid: int, sig: int) -> None:
+            signalled.append((pgid, sig))
+
+        with patch("os.kill", side_effect=kill), patch("os.killpg", side_effect=killpg):
+            code, said = self._start()
+        self.assertEqual(code, 0, said)
+        self.assertEqual(len(self.launched), 1)
+        self.assertEqual([sig for _, sig in signalled if sig != 0], [])
+        lines = said.splitlines()
+        line = next(line for line in lines if line.startswith("scheduler "))
+        self.assertIn(f"running (pid {os.getpid()})", line)
+        self.assertIn("cannot replay it", line)
+        self.assertLess(
+            next(i for i, said_line in enumerate(lines) if said_line.startswith("launching")),
+            lines.index(line),
+        )
+        self.assertLess(
+            lines.index(line),
+            next(i for i, said_line in enumerate(lines) if said_line.startswith("started ")),
+        )
+
+    def test_a_start_with_no_scheduler_alive_says_nothing_about_one(self) -> None:
+        for state in (SCHEDULER_UNKNOWN, SCHEDULER_STOPPED, SCHEDULER_INACCESSIBLE):
+            with self.subTest(state=state):
+                self.launched.clear()
+                self.scheduler = SchedulerStatus(state, [], None)
+                code, said = self._start()
+                self.assertEqual(code, 0, said)
+                self.assertEqual(len(self.launched), 1)
+                self.assertFalse(
+                    [line for line in said.splitlines() if line.startswith("scheduler ")]
+                )
+
+    def test_a_scheduler_registry_that_cannot_be_read_costs_the_sentence_only(self) -> None:
+        self.scheduler = OSError("registry unreadable")
+        code, said = self._start()
+        self.assertEqual(code, 0, said)
+        self.assertEqual(len(self.launched), 1)
+        self.assertNotIn("registry unreadable", said)
 
     def test_an_unresolved_merge_refuses_before_anything_is_written(self) -> None:
         (self.repository / ".git" / "MERGE_HEAD").write_text("0" * 40 + "\n", encoding="utf-8")

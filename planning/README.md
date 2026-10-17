@@ -15,7 +15,7 @@ the one index: reading it answers "what is outstanding" without opening a docume
   Every document in `ideas/` is `idea`, and no document elsewhere is.
 - **Archive means nothing left to do in that document.** A plan with residue archives whole, and
   the residue becomes a new short document in `fixes/`, `features/` or `ideas/`, linked back.
-- **Numbers are global and never reused.** The next document is 56. Moving a document between
+- **Numbers are global and never reused.** The next document is 57. Moving a document between
   folders is a rename, and every link to it is rewritten in the same change.
 - **A document moves at most twice:** from `ideas/` to `features/` or `fixes/` when it gains an
   acceptance list, and from there to `archive/` when it closes.
@@ -24,18 +24,18 @@ the one index: reading it answers "what is outstanding" without opening a docume
 
 ## Live, in the order to take them
 
-| #   | Document                                                                                 | Kind    | State    | Outstanding                                                                                     |
-| --- | ---------------------------------------------------------------------------------------- | ------- | -------- | ----------------------------------------------------------------------------------------------- |
-| 55  | [Engine processes already running](fixes/55-engine-processes-already-running.md)         | fix     | proposed | Run reads the scheduler and stops nothing; asks only on an unsafe machine                       |
-| 51  | [Counting refused reports](fixes/51-counting-refused-reports.md)                         | fix     | proposed | Count report refusals over ten runs; decide whether the summary must also be shorter            |
-| 49  | [The allowance at a real limit](features/49-the-allowance-at-a-real-limit.md)            | feature | proposed | Record a real `rejected` event, resume after it, read the endpoint live, cost a step in percent |
-| 47  | [A second machine walks the README](features/47-a-second-machine-walks-the-readme.md)    | feature | proposed | A second person on a clean machine reaches a verified step; publish the cold-start time         |
-| 48  | [A generated workflow that travels](ideas/48-a-generated-workflow-that-travels.md)       | idea    | idea     | Make the interpreter portable, or keep it per-machine and guard it so a run is never green      |
-| 50  | [A model fallback the plan states](ideas/50-a-model-fallback-the-plan-states.md)         | idea    | idea     | Whether to let a plan name a cheaper model instead of holding                                   |
-| 35  | [Human in the loop](ideas/35-human-in-the-loop-steps.md)                                 | idea    | idea     | A run asks a person mid-step and carries on with the answer                                     |
-| 40  | [The task list as the tab source](ideas/40-task-list-as-the-tab-source.md)               | idea    | idea     | Findings for 36: read the agent's own task list instead of summarising the transcript           |
-| 36  | [Keeping tabs](ideas/36-keeping-tabs.md)                                                 | idea    | idea     | A live, plain-language summary of every running session                                         |
-| 37  | [One plane for watching and answering](ideas/37-one-plane-for-watching-and-answering.md) | idea    | idea     | One page for both, once 35 and 36 each work alone                                               |
+| #   | Document                                                                                       | Kind    | State    | Outstanding                                                                                       |
+| --- | ---------------------------------------------------------------------------------------------- | ------- | -------- | ------------------------------------------------------------------------------------------------- |
+| 51  | [Counting refused reports](fixes/51-counting-refused-reports.md)                               | fix     | proposed | Count report refusals over ten runs; decide whether the summary must also be shorter              |
+| 49  | [The allowance at a real limit](features/49-the-allowance-at-a-real-limit.md)                  | feature | proposed | Record a real `rejected` event, resume after it, read the endpoint live, cost a step in percent   |
+| 47  | [A second machine walks the README](features/47-a-second-machine-walks-the-readme.md)          | feature | proposed | A second person on a clean machine reaches a verified step; publish the cold-start time           |
+| 48  | [A generated workflow that travels](ideas/48-a-generated-workflow-that-travels.md)             | idea    | idea     | Make the interpreter portable, or keep it per-machine and guard it so a run is never green        |
+| 56  | [The base-retry gate guards no Cairn run](ideas/56-the-base-retry-gate-guards-no-cairn-run.md) | idea    | idea     | Whether `run start` and the first act should still refuse a machine whose retry cannot reach them |
+| 50  | [A model fallback the plan states](ideas/50-a-model-fallback-the-plan-states.md)               | idea    | idea     | Whether to let a plan name a cheaper model instead of holding                                     |
+| 35  | [Human in the loop](ideas/35-human-in-the-loop-steps.md)                                       | idea    | idea     | A run asks a person mid-step and carries on with the answer                                       |
+| 40  | [The task list as the tab source](ideas/40-task-list-as-the-tab-source.md)                     | idea    | idea     | Findings for 36: read the agent's own task list instead of summarising the transcript             |
+| 36  | [Keeping tabs](ideas/36-keeping-tabs.md)                                                       | idea    | idea     | A live, plain-language summary of every running session                                           |
+| 37  | [One plane for watching and answering](ideas/37-one-plane-for-watching-and-answering.md)       | idea    | idea     | One page for both, once 35 and 36 each work alone                                                 |
 
 ## Archive
 
@@ -70,4 +70,5 @@ the one index: reading it answers "what is outstanding" without opening a docume
 | 52  | [The merge reads the wrong step name](archive/52-the-merge-reads-the-wrong-step-name.md)                    | fix     | —                                                                                                                                                        |
 | 53  | [A reused worktree carries a halted run's work](archive/53-a-reused-worktree-carries-a-halted-runs-work.md) | fix     | —                                                                                                                                                        |
 | 54  | [A done step's re-check cascades](archive/54-a-done-steps-recheck-cascades.md)                              | fix     | —                                                                                                                                                        |
+| 55  | [Engine processes already running](archive/55-engine-processes-already-running.md)                          | fix     | Whether to keep the base-retry gate → [56](ideas/56-the-base-retry-gate-guards-no-cairn-run.md)                                                          |
 | —   | [What to fix first](archive/what-to-fix-first.md)                                                           | index   | The order it set is done. This table replaces it                                                                                                         |

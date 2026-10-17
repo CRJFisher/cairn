@@ -12,7 +12,8 @@
 
 **A schedule needs a scheduler process.** A cron firing and an external webhook run on the
 same thing: a scheduler, whose retry scanner re-executes every failed run recorded on this
-machine in the previous 24 hours — including runs Cairn never wrote, three attempts each.
+machine in the previous 24 hours — runs Cairn never wrote, three attempts each; Cairn's own
+declare no retry and are out of its reach.
 Scheduling installs what was asked for and says this plainly while it does; it is
 information and asks nothing.
 
@@ -43,7 +44,11 @@ needs no scheduler. Someone who says "I want to see the graph" is asking for
    `python3 -m cairn schedule start` **becomes** the scheduler and runs in the foreground
    until killed. It asserts at that moment that the machine is safe to run a scheduler on and
    refuses otherwise, naming every failed run it would have re-executed; `python3 -m cairn
-supervise base-config --disable` is what makes it safe.
+supervise base-config --disable` is what makes it safe. That command edits a file every
+   workflow on the machine inherits, so it is the person's: put one question with the ask
+   tool before running it. A scheduler already running is the person's and is never stopped
+   to make room: where `schedule status` reports one up, ask whether it is the one to rely
+   on rather than starting a second.
 
    **A foreground process is not an answer to "keep this firing nightly".** It dies with the
    terminal. `python3 -m cairn schedule service` prints this machine's own unit — a `launchd`

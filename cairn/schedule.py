@@ -405,6 +405,37 @@ def scheduler_status(
     return SchedulerStatus(state, processes, paused_since)
 
 
+# Only a process Cairn's own probe found alive is one a run is started beside. Every other
+# state either has nothing running or could not establish that anything is, and neither
+# changes what a run does.
+_ALIVE: tuple[str, ...] = (SCHEDULER_RUNNING, SCHEDULER_PAUSED)
+
+
+def beside_a_run(status: SchedulerStatus) -> str | None:
+    """What a scheduler already up means for a run being started, or None where none is.
+
+    It means nothing for the run, and that is what has to be said. A run needs no engine
+    process, so a live scheduler is never something to clear first; and it cannot replay
+    the run, because the execution gate admits only a definition declaring a DAG-level retry
+    limit of zero. Measured against Dagu 2.18.2, that declaration overrides an armed base
+    configuration: the run stores no retry limit and is never indexed as a retry candidate.
+    The hazard a scheduler carries is named wherever scheduling is, and a reader who sees
+    one running with no sentence about it improvises ([55 A]).
+    """
+    if status.state not in _ALIVE:
+        return None
+    pids = ", ".join(
+        str(process.pid)
+        for process in status.processes
+        if process.reading == liveness.PROCESS_LIVE
+    )
+    return (
+        f"{status.state} (pid {pids}) beside this run. The run needs no engine process "
+        "and this one cannot replay it: the definition declares no DAG-level retry. Cairn stops no "
+        "engine process it did not start, and this one is left as it is"
+    )
+
+
 def published_path(plan: str, *, dags: Path | None = None) -> Path:
     """Where a plan's definition has to be reachable from for a schedule to fire at all.
 
@@ -727,6 +758,7 @@ __all__ = [
     "SchedulerStatus",
     "ServicePlan",
     "assert_safe_to_start",
+    "beside_a_run",
     "describe_run",
     "failed_runs_since",
     "install",

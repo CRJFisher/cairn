@@ -26,9 +26,11 @@ not do into the next plan document, and starts nothing.
 ## Two rules above all others
 
 **A scheduler reaches runs Cairn never wrote.** A cron schedule and an external webhook both
-need a running scheduler, whose retry scanner re-executes every failed run on this machine
-from the last day — including runs Cairn never wrote. Scheduling installs what was asked for
-and says so; it asks nothing. Wanting to _watch_ a run is not scheduling.
+need a running scheduler, whose retry scanner re-executes failed runs on this machine from
+the last day — runs Cairn never wrote; Cairn's own declare no retry. Scheduling installs what
+was asked for and says so; it asks nothing. Wanting to _watch_ a run is not scheduling.
+**Cairn never stops, restarts, reconfigures or kills an engine process it did not start, and
+a run needs none to be running.**
 
 **A report triggers nothing.** Asking what happened is always safe, takes no lock, and
 starts no execution.
@@ -191,9 +193,8 @@ identically to a live one. Run and Report link to it rather than describing what
 **Cairn serves that view on request, and only that view.** The engine serves nothing until
 something starts it, so Run checks the address it is about to hand over and asks once where
 nothing is listening, and the server it starts then outlives the conversation that asked for
-it. Never a scheduler, by any door — wanting to see a graph is not the escalation. A server
-Cairn did not start is never stopped or reconfigured by it, and a port answering as something
-else is reported rather than taken over.
+it. Never a scheduler, by any door — wanting to see a graph is not the escalation. A port
+answering as something else is reported rather than taken over.
 
 Its command line is the one you already have for your other jobs, and the README says which
 of its verbs are worth pointing at. Cairn refuses exactly one: never `dagu retry`, because

@@ -82,6 +82,7 @@ from cairn.schedule import (
     SchedulerStatus,
     ServicePlan,
     assert_safe_to_start,
+    beside_a_run,
     failed_runs_since,
     install,
     installed,
@@ -1920,6 +1921,34 @@ class ScheduleStatusAnswersWhetherASchedulerExists(unittest.TestCase):
         found = self._status()
         self.assertEqual(found.state, SCHEDULER_RUNNING)
         self.assertIsNone(found.paused_since)
+
+    def test_a_run_started_beside_a_live_scheduler_says_so_naming_its_pid(self) -> None:
+        """Plan 55 A: the sentence that leaves nothing to improvise — the run needs no engine
+        process, this one cannot replay it, and it is left as it is."""
+        self._claim("gone-one", 999999, "2026-03-01T09:00:00+00:00")
+        self._live()
+        said = beside_a_run(self._status())
+        assert said is not None
+        self.assertIn(f"pid {os.getpid()})", said)
+        self.assertNotIn("999999", said)
+        self.assertIn("cannot replay it", said)
+        self.assertIn("stops no engine process it did not start", said)
+
+    def test_a_paused_scheduler_beside_a_run_is_said_as_paused(self) -> None:
+        self._live()
+        self._paused()
+        said = beside_a_run(self._status())
+        assert said is not None
+        self.assertTrue(said.startswith(SCHEDULER_PAUSED))
+
+    def test_nothing_is_said_beside_a_run_where_no_scheduler_was_found_alive(self) -> None:
+        """Unknown, stopped and inaccessible all change nothing about a run, so none of them
+        earns a sentence in its start."""
+        self.assertIsNone(beside_a_run(self._status()))
+        self._claim("gone-one", 999999, "2026-03-01T09:00:00+00:00")
+        self.assertIsNone(beside_a_run(self._status()))
+        (self.registry / "broken.json").write_text("{not json", encoding="utf-8")
+        self.assertIsNone(beside_a_run(self._status()))
 
     def test_every_state_has_a_sentence_of_its_own(self) -> None:
         self.assertEqual(set(SENTENCE_BY_SCHEDULER_STATE), set(SCHEDULER_STATES))

@@ -64,15 +64,21 @@ status` answers `serving`, `absent` or `foreign` and starts nothing. It is about
    the administrator account it claimed — the user and the password, said once because Cairn
    keeps no copy — and how to stop it, which loses nothing, because it holds no run state.
 
-6. **Start it.** The request is the go-ahead; nothing is put to the person first.
+   **An engine process already running is never in the run's way.** A run needs no server
+   and no scheduler, and one Cairn did not start is the person's — a `dagu server` on another
+   port, a scheduler seen in `ps`, whatever it is: never stop, restart, reconfigure or kill
+   it. No scheduler can replay a Cairn run, whose definition declares no DAG-level retry.
+
+6. **Start it.** The request is the go-ahead; nothing is put to the person first. The one
+   exception follows a `base_retry_enabled` refusal, under Refusals below.
    `python3 -m cairn run start --plan <slug> --repository <path> --session <path> --trigger
 <shape>`. The run
    id is minted for you; pass `--run-id` only to choose one. The branch comes from the
    definition, which already declares one; pass `--parent-branch <name>` only where the
    request asked for a different one. It refuses a definition that does not pass the
    execution gate, an engine that is not the pinned version, a shell the engine cannot start
-   a run from, and a working tree with uncommitted work or an unresolved merge in it — each
-   before anything is written.
+   a run from, a working tree with uncommitted work or an unresolved merge in it, and a
+   machine whose base configuration arms DAG-level retry — each before anything is written.
 
 7. **Hand over the address.** The command prints five lines — the repository and its
    provenance, the run id under `launching`, the branch, where the run can be watched, and
@@ -88,8 +94,11 @@ status` answers `serving`, `absent` or `foreign` and starts nothing. It is about
    occasion reading it took and what the other reading would have meant; say that too. After
    the occasion it prints the `forecast` step 4 describes, and — where the usage endpoint is
    off — a `blind` line naming the windows nothing can put a figure on below 90%. Repeat both:
-   a reader who does not know a window is unmeasured below 90% reads the silence as room. It
-   then returns as soon as the engine has taken the run on, not when the run ends: a long
+   a reader who does not know a window is unmeasured below 90% reads the silence as room.
+   Where a scheduler is already running it adds a `scheduler` line naming its process: it
+   cannot replay this run and is left as it is. Repeat that in one line too.
+
+   The command returns as soon as the engine has taken the run on, not when the run ends: a long
    plan is a blocked terminal otherwise, and an agent harness kills its own tool call long
    before that. The run keeps going without it; the engine is launched in its own session
    and its output goes to `runs/<run-id>/engine.log`.
@@ -139,8 +148,17 @@ outright. Both are the person's decision; neither is something to do on their be
 engine that is not the pinned version, **a shell the engine cannot start a run from**, an
 engine that cannot say where it keeps its run history, **a working tree with uncommitted work
 in it, or a merge, rebase or cherry-pick left unresolved** — the refusal names the paths, and
-a person settles them — and a definition that did not pass the execution gate. Clear the
-cause and start again.
+a person settles them — a definition that did not pass the execution gate, and **a base
+configuration that arms DAG-level retry** (`base_retry_enabled`). Clear the cause and start
+again.
+
+The last is the machine's, not the run's: its file is inherited by every workflow on it,
+the person's own included. **Put one question with the ask tool**, naming the file and the
+limit the refusal found. The answers are to let `python3 -m cairn supervise base-config
+--disable` write it off — which turns off DAG-level retry and catch-up replay for every
+workflow on the machine that does not declare its own — to edit the file themselves, or not
+to run. The run's own first act refuses that machine as well, and no engine process has any
+bearing on it.
 
 **Mid-run, over an edit that arrived after the start.** A step commits what its own session
 dirtied and leaves a path somebody else already had uncommitted. Where a step needed to
